@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/diago/audio"
-	"github.com/emiago/diago/media"
-	"github.com/emiago/diago/media/sdp"
+	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/sipgo/sip"
 )
 
@@ -156,7 +156,7 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 		return nil
 	}
 
-	bindIP := conf.bindIP
+	bindIP := conf.BindIP
 	if bindIP == nil {
 		var err error
 		bindIP, _, err = sip.ResolveInterfacesIP("ip4", nil)
@@ -168,12 +168,12 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	sess := &media.MediaSession{
 		Codecs:     slices.Clone(conf.Codecs),
 		Laddr:      net.UDPAddr{IP: bindIP, Port: 0},
-		ExternalIP: conf.externalIP,
+		ExternalIP: conf.ExternalIP,
 		Mode:       sdp.ModeSendrecv,
-		SecureRTP:  conf.secureRTP,
+		SecureRTP:  conf.SecureRTP,
 		SRTPAlg:    conf.SecureRTPAlg,
-		RTPNAT:     conf.rtpNAT,
-		DTLSConf:   conf.dtlsConf,
+		RTPNAT:     conf.RTPNAT,
+		DTLSConf:   conf.DTLSConf,
 	}
 
 	if err := sess.Init(); err != nil {

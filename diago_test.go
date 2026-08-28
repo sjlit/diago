@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emiago/diago/audio"
-	"github.com/emiago/diago/examples"
-	"github.com/emiago/diago/media"
-	"github.com/emiago/diago/media/sdp"
-	"github.com/emiago/diago/testdata"
+	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/examples"
+	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/media/sdp"
+	"github.com/sjlit/diago/testdata"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
@@ -75,7 +75,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
 		})
 
-		_, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, InviteOptions{})
+		_, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		if assert.Error(t, err) {
 			assert.Equal(t, "no SDP in response", err.Error())
 		}
@@ -88,7 +88,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 	})
 
 	t.Run("DefaultCallerID", func(t *testing.T) {
-		go dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, InviteOptions{})
+		go dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		req := <-reqCh
 
 		assert.Equal(t, dg.ua.Name(), req.From().Address.User)
@@ -113,7 +113,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
 		}, WithTransport(tran))
 
-		go dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"}, InviteOptions{})
+		go dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 
 		// Now check our req passed on client
 		req := <-reqCh
@@ -183,7 +183,7 @@ func TestDiagoNewDialog(t *testing.T) {
 	ctx := context.TODO()
 
 	t.Run("CloseNoError", func(t *testing.T) {
-		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"}, NewDialogOptions{})
+		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		dialog.Close()
 	})
@@ -200,11 +200,11 @@ func TestDiagoNewDialog(t *testing.T) {
 	// })
 
 	t.Run("FullDialog", func(t *testing.T) {
-		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"}, NewDialogOptions{})
+		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		defer dialog.Close()
 
-		err = dialog.Invite(ctx, InviteClientOptions{})
+		err = dialog.Invite(ctx)
 		require.NoError(t, err)
 		assert.NotEmpty(t, dialog.ID)
 
@@ -214,7 +214,7 @@ func TestDiagoNewDialog(t *testing.T) {
 		// assert.NotEmpty(t, dialog.ID)
 	})
 
-	// _, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, InviteOptions{})
+	// _, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 	// if assert.Error(t, err) {
 	// 	assert.Equal(t, "no SDP in response", err.Error())
 	// }
@@ -301,7 +301,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 			},
 		))
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, InviteOptions{Transport: "tcp"})
+	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	l16Audio := bytes.Repeat([]byte{0, 16, 96, 0}, l16Codec.Samples16()/4)
@@ -374,7 +374,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, InviteOptions{Transport: "tcp"})
+	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	// pb, err := d.PlaybackCreate()
@@ -461,7 +461,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, InviteOptions{Transport: "tcp"})
+	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	// pb, err := d.PlaybackCreate()

@@ -4,7 +4,7 @@
 package diagotest
 
 import (
-	"github.com/emiago/diago"
+	"github.com/sjlit/diago"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/siptest"

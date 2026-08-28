@@ -10,9 +10,9 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/emiago/diago"
-	"github.com/emiago/diago/examples"
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago"
+	"github.com/sjlit/diago/examples"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 )
 

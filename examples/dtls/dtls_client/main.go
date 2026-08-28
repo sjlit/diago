@@ -10,10 +10,10 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/diago"
-	"github.com/emiago/diago/audio"
-	"github.com/emiago/diago/examples"
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago"
+	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/examples"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
@@ -45,7 +45,7 @@ func main() {
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, diago.InviteOptions{Transport: "tcp"})
+	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, diago.WithDialogTransport("tcp"))
 	if err != nil {
 		panic(err)
 	}

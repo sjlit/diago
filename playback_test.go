@@ -10,7 +10,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

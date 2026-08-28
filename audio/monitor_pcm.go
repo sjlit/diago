@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/google/uuid"
 )
 

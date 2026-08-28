@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
@@ -139,23 +139,21 @@ type MediaConfig struct {
 	// Currently supported Single. Check media.SRTP... constants
 	// Experimental
 	SecureRTPAlg uint16
-	// Used internally
-	secureRTP  int // 0 - none, 1 - sdes
-	bindIP     net.IP
-	externalIP net.IP
-	rtpNAT     int
-	dtlsConf   media.DTLSConfig
+	// SecureRTP 0 - none, 1 - sdes
+	SecureRTP int
+	// BindIP is local IP used to bind RTP/RTCP listeners.
+	// When nil the interfaces IP is resolved on session creation.
+	BindIP net.IP
+	// ExternalIP is the IP advertised inside SDP (c= line).
+	ExternalIP net.IP
+	// RTPNAT 0 - disabled, 1 - learn source. Check media.RTPNAT options
+	RTPNAT int
+	// DTLSConf used for DTLS-SRTP
+	DTLSConf media.DTLSConfig
 
 	// TODO, For now it is global on media package
 	// RTPPortStart int
 	// RTPPortEnd   int
-}
-
-func (conf *MediaConfig) update(codecs []media.Codec, rtpNAT int) {
-	if codecs != nil {
-		conf.Codecs = codecs
-	}
-	conf.rtpNAT = rtpNAT
 }
 
 func WithMediaConfig(conf MediaConfig) DiagoOption {
@@ -282,11 +280,12 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 			DialogMedia:         DialogMedia{},
 			// TODO we may actually just build media session with this conf here
 			mediaConf: MediaConfig{
-				Codecs:     dg.mediaConf.Codecs,
-				secureRTP:  tran.MediaSRTP,
-				bindIP:     tran.mediaBindIP,
-				externalIP: tran.MediaExternalIP,
-				dtlsConf:   tran.MediaDTLSConf,
+				Codecs:    dg.mediaConf.Codecs,
+				SecureRTP: tran.MediaSRTP,
+				BindIP:    tran.mediaBindIP,
+
+				ExternalIP: tran.MediaExternalIP,
+				DTLSConf:   tran.MediaDTLSConf,
 			},
 		}
 
@@ -561,26 +560,43 @@ type InviteOptions struct {
 	Headers []sip.Header
 }
 
+// Options converts legacy options into SignalOptions
+func (o *InviteOptions) Options() ([]SignalOption, error) {
+	var opts []SignalOption
+	if o.Originator != nil {
+		opts = append(opts, WithOriginator(o.Originator))
+	}
+	if o.OnResponse != nil {
+		opts = append(opts, WithOnResponse(o.OnResponse))
+	}
+	if o.Transport != "" {
+		opts = append(opts, WithDialogTransport(o.Transport))
+	}
+	if o.Username != "" || o.Password != "" {
+		opts = append(opts, WithAuthCredentials(o.Username, o.Password))
+	}
+	if len(o.Headers) > 0 {
+		opts = append(opts, WithHeaders(o.Headers...))
+	}
+	return opts, nil
+}
+
 // Invite makes outgoing call leg and waits for answer.
 // It is helper that calls
 // - NewDialog
 // - dialog.Invite
 //
+// Options allow full call customization, checkout SignalOption.
+//
 // For better control more details use above functions instead.
 // If you want to bridge call then use helper InviteBridge
-func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts InviteOptions) (d *DialogClientSession, err error) {
-	d, err = dg.NewDialog(recipient, NewDialogOptions{Transport: opts.Transport})
+func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
+	d, err = dg.NewDialog(recipient, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := d.Invite(ctx, InviteClientOptions{
-		Originator: opts.Originator,
-		OnResponse: opts.OnResponse,
-		Headers:    opts.Headers,
-		Username:   opts.Username,
-		Password:   opts.Password,
-	}); err != nil {
+	if err := d.Invite(ctx, opts...); err != nil {
 		closeErr := d.Close()
 		return nil, errors.Join(err, closeErr)
 	}
@@ -596,24 +612,25 @@ func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts InviteOptio
 // Outgoing session will be added into bridge on answer
 // If bridge has Originator (first participant) it will be used for creating outgoing call leg as in B2BUA
 // When bridge is provided then this call will be bridged with any participant already present in bridge
-func (dg *Diago) InviteBridge(ctx context.Context, recipient sip.Uri, bridge *Bridge, opts InviteOptions) (d *DialogClientSession, err error) {
-	d, err = dg.NewDialog(recipient, NewDialogOptions{})
+func (dg *Diago) InviteBridge(ctx context.Context, recipient sip.Uri, bridge *Bridge, opts ...SignalOption) (d *DialogClientSession, err error) {
+	d, err = dg.NewDialog(recipient, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// Keep things compatible
-	if opts.Originator == nil {
-		opts.Originator = bridge.Originator
+	// Keep things compatible: bridge originator is default when not provided.
+	// Compute params once and reuse them so user-supplied SignalOption funcs
+	// run a single time.
+	params, err := newSignalParams(opts)
+	if err != nil {
+		d.Close()
+		return nil, err
+	}
+	if (params == nil || params.Originator == nil) && bridge.Originator != nil {
+		params.Originator = bridge.Originator
 	}
 
-	if err := d.Invite(ctx, InviteClientOptions{
-		Originator: opts.Originator,
-		OnResponse: opts.OnResponse,
-		Headers:    opts.Headers,
-		Username:   opts.Username,
-		Password:   opts.Password,
-	}); err != nil {
+	if err := d.inviteWithParams(ctx, params); err != nil {
 		return nil, errors.Join(err, d.Hangup(d.Context()), d.Close())
 	}
 
@@ -637,10 +654,37 @@ type NewDialogOptions struct {
 	TransportID string
 }
 
+// Options converts legacy options into SignalOptions
+func (o *NewDialogOptions) Options() []SignalOption {
+	var opts []SignalOption
+	if o.Transport != "" {
+		opts = append(opts, WithDialogTransport(o.Transport))
+	}
+	if o.TransportID != "" {
+		opts = append(opts, WithDialogTransportID(o.TransportID))
+	}
+	return opts
+}
+
 // NewDialog creates a new client dialog session after you can perform dialog Invite
 // - You call Invite(...) after this call followed with ACK
-func (dg *Diago) NewDialog(recipient sip.Uri, opts NewDialogOptions) (d *DialogClientSession, err error) {
-	transport := opts.Transport
+// Options allow selecting transport (WithDialogTransport, WithDialogTransportID),
+// overriding Contact and per-dialog media configuration.
+func (dg *Diago) NewDialog(recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	transport := ""
+	transportID := ""
+	var contact *sip.ContactHeader
+	if params != nil {
+		transport = params.Transport
+		transportID = params.TransportID
+		contact = params.Contact
+	}
+
 	if transport == "" && recipient.UriParams != nil {
 		if t, ok := recipient.UriParams.Get("transport"); t != "" && ok {
 			transport = t
@@ -648,15 +692,15 @@ func (dg *Diago) NewDialog(recipient sip.Uri, opts NewDialogOptions) (d *DialogC
 		}
 
 	}
-	tran, exists := dg.findTransport(transport, opts.TransportID)
+	tran, exists := dg.findTransport(transport, transportID)
 	if !exists {
 		return nil, fmt.Errorf("transport %s does not exists", transport)
 	}
 
-	return dg.newSipDialog(recipient, tran, opts)
+	return dg.newSipDialog(recipient, tran, contact)
 }
 
-func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, opts NewDialogOptions) (d *DialogClientSession, err error) {
+func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, contact *sip.ContactHeader) (d *DialogClientSession, err error) {
 	transport := tran.Transport
 
 	// TODO: remove this alloc of UA each time
@@ -666,6 +710,10 @@ func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, opts NewDialog
 		RewriteContact: tran.RewriteContact,
 	}
 	dg.contactHDRFromTransport(tran, &dialogUA.ContactHDR)
+	if contact != nil {
+		// Per dialog contact override
+		dialogUA.ContactHDR = *contact.Clone()
+	}
 
 	inviteReq := sip.NewRequest(sip.INVITE, recipient)
 	inviteReq.SetTransport(sip.NetworkToUpper(transport))
@@ -682,10 +730,10 @@ func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, opts NewDialog
 
 	d.mediaConfig = MediaConfig{
 		Codecs:     dg.mediaConf.Codecs,
-		secureRTP:  tran.MediaSRTP,
-		bindIP:     tran.mediaBindIP,
-		externalIP: tran.MediaExternalIP,
-		dtlsConf:   tran.MediaDTLSConf,
+		SecureRTP:  tran.MediaSRTP,
+		BindIP:     tran.mediaBindIP,
+		ExternalIP: tran.MediaExternalIP,
+		DTLSConf:   tran.MediaDTLSConf,
 	}
 
 	// This should be run on ACK

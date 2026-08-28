@@ -11,8 +11,8 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/diago"
-	"github.com/emiago/diago/examples"
+	"github.com/sjlit/diago"
+	"github.com/sjlit/diago/examples"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
@@ -73,7 +73,7 @@ func BridgeCall(d *diago.Diago, inDialog *diago.DialogServerSession, recipient s
 		return err
 	}
 
-	outDialog, err := d.InviteBridge(ctx, recipient, &bridge, diago.InviteOptions{})
+	outDialog, err := d.InviteBridge(ctx, recipient, &bridge)
 	if err != nil {
 		return err
 	}

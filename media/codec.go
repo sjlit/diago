@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emiago/diago/media/sdp"
+	"github.com/sjlit/diago/media/sdp"
 )
 
 var (

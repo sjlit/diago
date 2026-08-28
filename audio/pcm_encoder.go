@@ -10,7 +10,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 )
 
 /*

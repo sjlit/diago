@@ -17,7 +17,9 @@ import (
 type DialogSession interface {
 	Id() string
 	Context() context.Context
-	Hangup(ctx context.Context) error
+	// Hangup terminates the dialog. Options allow customizing headers of the
+	// outgoing BYE / decline response (ex. Reason header)
+	Hangup(ctx context.Context, opts ...SignalOption) error
 	Media() *DialogMedia
 	DialogSIP() *sipgo.Dialog
 	Do(ctx context.Context, req *sip.Request) (*sip.Response, error)
@@ -224,7 +226,7 @@ func dialogReferInvite(d DialogSession, dg *Diago, referToUri sip.Uri, remoteTar
 	// 	opts.Headers = append(opts.Headers, sip.HeaderClone(referredBy))
 	// }
 
-	referDialog, err := dg.NewDialog(referToUri, NewDialogOptions{})
+	referDialog, err := dg.NewDialog(referToUri)
 	if err != nil {
 		return err
 	}
@@ -295,7 +297,7 @@ type ReferTransaction struct {
 	remoteTarget sip.Uri
 }
 
-func (r *ReferTransaction) Accept(ctx context.Context, opts InviteClientOptions) (*DialogClientSession, error) {
+func (r *ReferTransaction) Accept(ctx context.Context, opts ...SignalOption) (*DialogClientSession, error) {
 	dg := r.dg
 	req := r.Refer
 	referToUri := r.referTo
@@ -306,7 +308,7 @@ func (r *ReferTransaction) Accept(ctx context.Context, opts InviteClientOptions)
 		return nil, fmt.Errorf("failed to send 202 Accepted")
 	}
 
-	referDialog, err := dg.NewDialog(referToUri, NewDialogOptions{})
+	referDialog, err := dg.NewDialog(referToUri, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -318,14 +320,14 @@ func (r *ReferTransaction) Accept(ctx context.Context, opts InviteClientOptions)
 	//    request).
 
 	err = func() error {
-		if h := req.GetHeader("refered-by"); h != nil {
-			opts.Headers = append(opts.Headers, sip.HeaderClone(h))
+		if h := req.GetHeader("Referred-By"); h != nil {
+			opts = append(opts, WithHeaders(sip.HeaderClone(h)))
 		}
-		if h := req.GetHeader("replaces"); h != nil {
-			opts.Headers = append(opts.Headers, sip.HeaderClone(h))
+		if h := req.GetHeader("Replaces"); h != nil {
+			opts = append(opts, WithHeaders(sip.HeaderClone(h)))
 		}
 
-		if err := referDialog.Invite(ctx, opts); err != nil {
+		if err := referDialog.Invite(ctx, opts...); err != nil {
 			return err
 		}
 

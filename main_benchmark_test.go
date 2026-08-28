@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
@@ -132,7 +132,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 						maxInvitesPerSec <- struct{}{}
 					}
 					dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					dialog, err := phone.Invite(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"}, InviteOptions{})
+					dialog, err := phone.Invite(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"})
 					cancel()
 
 					require.NoError(t, err)

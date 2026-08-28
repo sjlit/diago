@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
@@ -65,13 +65,13 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		dialog, err := dialer.Invite(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15010}, InviteOptions{
-			OnResponse: func(res *sip.Response) error {
+		dialog, err := dialer.Invite(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15010}, WithOnResponse(
+			func(res *sip.Response) error {
 				t.Log("Received resp", res.StatusCode)
 				allResponses = append(allResponses, *res.Clone())
 				return nil
 			},
-		})
+		))
 		if err != nil {
 			t.Log("Failed to dial", err)
 			return
@@ -135,7 +135,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 		require.NoError(t, err)
 
 		go func() {
-			dialog, err := dg.Invite(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15060}, InviteOptions{})
+			dialog, err := dg.Invite(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15060})
 			require.NoError(t, err)
 			<-dialog.Context().Done()
 			t.Log("Dialog done")
@@ -186,10 +186,10 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	err := uas.ServeBackground(ctx, func(d *DialogServerSession) {
 		// This is the reported role: the peer sends the initial INVITE and
 		// Diago answers it as the UAS. RTP NAT must not change the SIP flow.
-		err := d.AnswerOptions(AnswerOptions{
-			RTPNAT:        media.RTPNATSymetric,
-			OnMediaUpdate: func(*DialogMedia) {},
-		})
+		err := d.Answer(
+			WithRTPNAT(media.RTPNATSymetric),
+			WithOnMediaUpdate(func(*DialogMedia) {}),
+		)
 		require.NoError(t, err)
 		reader, err := d.AudioReader()
 		require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	err = peer.ServeBackground(ctx, func(*DialogServerSession) {})
 	require.NoError(t, err)
 
-	dialog, err := peer.Invite(ctx, sip.Uri{User: "service", Host: "127.0.0.1", Port: 15080}, InviteOptions{})
+	dialog, err := peer.Invite(ctx, sip.Uri{User: "service", Host: "127.0.0.1", Port: 15080})
 	require.NoError(t, err)
 	defer dialog.Close()
 	require.Contains(t, string(dialog.InviteRequest.Body()), " 0 8 101")
@@ -270,23 +270,21 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	}
 
 	dialCall := func() {
-		dialog, err := dialer.NewDialog(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15070}, NewDialogOptions{})
+		dialog, err := dialer.NewDialog(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15070})
 		require.NoError(t, err)
 
 		go func() {
-			err := dialog.Invite(ctx, InviteClientOptions{
-				OnRefer: func(referDialog *DialogClientSession) error {
-					// referDialog.
-					if err := referDialog.Invite(ctx, InviteClientOptions{}); err != nil {
-						return err
-					}
-					if err := referDialog.Ack(ctx); err != nil {
-						return err
-					}
+			err := dialog.Invite(ctx, WithOnRefer(func(referDialog *DialogClientSession) error {
+				// referDialog.
+				if err := referDialog.Invite(ctx); err != nil {
+					return err
+				}
+				if err := referDialog.Ack(ctx); err != nil {
+					return err
+				}
 
-					return referDialog.Hangup(ctx)
-				},
-			})
+				return referDialog.Hangup(ctx)
+			}))
 			require.NoError(t, err)
 
 			dialog.Ack(ctx)

@@ -10,7 +10,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 )
 
 var (

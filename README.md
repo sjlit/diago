@@ -1,6 +1,6 @@
 <img src="icons/diago-icon-text.svg" width="300" alt="DIAGO">
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/emiago/diago)](https://goreportcard.com/report/github.com/emiago/diago)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sjlit/diago)](https://goreportcard.com/report/github.com/sjlit/diago)
 ![Coverage](https://img.shields.io/badge/coverage-61.1%25-blue)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/emiago/diago)
 
@@ -19,7 +19,7 @@ Quick links:
 - [Getting started](https://emiago.github.io/diago/docs/getting_started/)
 - [Demo Examples](https://emiago.github.io/diago/docs/examples/)
 - [API Docs](https://emiago.github.io/diago/docs/api_docs/)
-- [GO Docs](https://pkg.go.dev/github.com/emiago/diago)
+- [GO Docs](https://pkg.go.dev/github.com/sjlit/diago)
 - [Roadmap](https://emiago.github.io/diago/docs/#core-roadmap)
 
 ## Important media API change
@@ -28,10 +28,10 @@ Quick links:
 object for media operations instead of accessing media through the dialog
 session.
 
-**Everyone is encouraged to try the [`media-webrtc-pion` branch](https://github.com/emiago/diago/tree/media-webrtc-pion)
+**Everyone is encouraged to try the [`media-webrtc-pion` branch](https://github.com/sjlit/diago/tree/media-webrtc-pion)
 and test the new returned-media API.**
 
-See [WEBRTC_PION_CHANGES.md](https://github.com/emiago/diago/blob/webrtc-pion/WEBRTC_PION_CHANGES.md)
+See [WEBRTC_PION_CHANGES.md](https://github.com/sjlit/diago/blob/webrtc-pion/WEBRTC_PION_CHANGES.md)
 for the API migration details. WebRTC is not the primary focus yet; this work
 will also bring the Pion media stack into Diago.
 
@@ -41,7 +41,7 @@ will also bring the Pion media stack into Diago.
 Follow me on [X/Twitter](https://twitter.com/emiago123) for regular updates
 
 **Tools/Service developed with diago:**
-- <img width="20" src="https://github.com/emiago/diagox/raw/main/images/diagox-icon-blue.png"> [github.com/emiago/diagox](https://github.com/emiago/diagox) simple Ingress/Egress and Registrar for SIP/RTP scaling
+- <img width="20" src="https://github.com/sjlit/diagox/raw/main/images/diagox-icon-blue.png"> [github.com/sjlit/diagox](https://github.com/sjlit/diagox) simple Ingress/Egress and Registrar for SIP/RTP scaling
 - <img width="20" src="https://github.com/emiago/gophone/raw/main/images/g2.png"> [github.com/emiago/gophone](https://github.com/emiago/gophone) CLI softphone for easy testing 
 
 ## RFCS

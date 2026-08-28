@@ -43,6 +43,11 @@ type RegisterOptions struct {
 	RetryInterval time.Duration
 	AllowHeaders  []string
 
+	// Contact overrides the default Contact header built from the transport
+	Contact *sip.ContactHeader
+	// Headers are appended to every REGISTER request of this transaction
+	Headers []sip.Header
+
 	OnRegistered func()
 
 	// Useragent default will be used on what is provided as NewUA()
@@ -64,7 +69,12 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 	expiry, allowHDRS := opts.Expiry, opts.AllowHeaders
 	// log := p.getLoggerCtx(ctx, "Register")
 	req := sip.NewRequest(sip.REGISTER, recipient)
-	req.AppendHeader(&contact)
+	if opts.Contact != nil {
+		// Per registration Contact override
+		req.AppendHeader(opts.Contact.Clone())
+	} else {
+		req.AppendHeader(&contact)
+	}
 
 	if opts.ProxyHost != "" {
 		req.SetDestination(opts.ProxyHost)
@@ -75,6 +85,12 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 	}
 	if allowHDRS != nil {
 		req.AppendHeader(sip.NewHeader("Allow", strings.Join(allowHDRS, ", ")))
+	}
+	for _, h := range opts.Headers {
+		if h == nil {
+			continue
+		}
+		req.AppendHeader(h)
 	}
 
 	// if opts.Username == "" {
@@ -95,8 +111,14 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 	return t
 }
 
-func (t *RegisterTransaction) Register(ctx context.Context) error {
-	if err := t.register(ctx); err != nil {
+// Register sends the initial REGISTER. Options allow customizing Contact,
+// extra headers and the final request of this registration attempt.
+func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return err
+	}
+	if err := t.register(ctx, params); err != nil {
 		return err
 	}
 
@@ -105,15 +127,19 @@ func (t *RegisterTransaction) Register(ctx context.Context) error {
 	}
 	return nil
 }
-func (t *RegisterTransaction) register(ctx context.Context) error {
+func (t *RegisterTransaction) register(ctx context.Context, params *SignalParams) error {
 	username, password := t.opts.Username, t.opts.Password
 	client := t.client
-	req := t.Origin
-	contact := req.Contact().Clone()
+	req := t.Origin.Clone()
+	if err := applyRequestSignal(req, params); err != nil {
+		return err
+	}
+	// Hold a reference to req's Contact header. Mutations made through this
+	// variable persist on req itself, so a subsequent DigestAuth retry (line 210)
+	// also sees the NAT-learned address.
+	contact := req.Contact()
 
 	res, err := func() (*sip.Response, error) {
-
-		contact := req.Contact()
 		if contact.Address.Port == 0 && net.ParseIP(contact.Address.Host) != nil {
 
 			sipgo.ClientRequestRegisterBuild(client, req)
@@ -175,8 +201,10 @@ func (t *RegisterTransaction) register(ctx context.Context) error {
 			contact.Address.Host = received
 		}
 
-		// Update contact address of NAT
-		req.ReplaceHeader(contact)
+		// contact is req's actual Contact header, so the mutations above
+		// already updated the in-flight request. Propagate the learned
+		// contact to origin so the next register reuses it.
+		t.Origin.ReplaceHeader(contact.Clone())
 	}
 
 	if res.StatusCode == sip.StatusUnauthorized || res.StatusCode == sip.StatusProxyAuthRequired {
@@ -262,19 +290,36 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 	return retry
 }
 
-func (t *RegisterTransaction) Unregister(ctx context.Context) error {
-	req := t.Origin
+// Unregister unregisters the contact. Options allow customizing the request.
+func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return err
+	}
+	req := t.Origin.Clone()
 
 	req.RemoveHeader("Expires")
 	req.RemoveHeader("Contact")
 	req.AppendHeader(sip.NewHeader("Contact", "*"))
 	expires := sip.ExpiresHeader(0)
 	req.AppendHeader(&expires)
+	if err := applyRequestSignal(req, params); err != nil {
+		return err
+	}
 	return t.doRequest(ctx, req)
 }
 
-func (t *RegisterTransaction) Qualify(ctx context.Context) error {
-	return t.doRequest(ctx, t.Origin)
+// Qualify refreshes the registration. Options allow customizing the request.
+func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return err
+	}
+	req := t.Origin.Clone()
+	if err := applyRequestSignal(req, params); err != nil {
+		return err
+	}
+	return t.doRequest(ctx, req)
 }
 
 func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request) error {

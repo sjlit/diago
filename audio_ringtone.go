@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/diago/audio"
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/media"
 )
 
 // AudioRingtone is playback for ringtone

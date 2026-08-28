@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/diago"
-	"github.com/emiago/diago/examples"
+	"github.com/sjlit/diago"
+	"github.com/sjlit/diago/examples"
 	"github.com/emiago/sipgo"
 )
 

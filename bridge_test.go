@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emiago/diago/audio"
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
@@ -131,7 +131,7 @@ func TestIntegrationBridging(t *testing.T) {
 			return
 		}
 
-		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.200", Port: 5090}, &bridge, InviteOptions{})
+		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.200", Port: 5090}, &bridge)
 		if err != nil {
 			t.Log("Dialing failed", err)
 			return
@@ -191,7 +191,7 @@ func TestIntegrationBridging(t *testing.T) {
 		defer ua.Close()
 
 		dg := newDialer(ua)
-		dialog, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090}, InviteOptions{})
+		dialog, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog.Close()
 
@@ -259,7 +259,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		dialogs := make([]*DialogClientSession, 3)
 		for i := range 3 {
 			t.Log("Inviting", "i", i)
-			dialog, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090}, InviteOptions{})
+			dialog, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 			require.NoError(t, err)
 			dialogs[i] = dialog
 		}
@@ -306,11 +306,11 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		bridge = NewBridgeMix()
 		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 
-		dialog1, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090}, InviteOptions{})
+		dialog1, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog1.Hangup(dialog1.Context())
 
-		dialog2, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090}, InviteOptions{})
+		dialog2, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog2.Hangup(dialog2.Context())
 

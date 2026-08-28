@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo/sip"
 	"github.com/pion/rtp"
 )

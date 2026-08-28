@@ -9,7 +9,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/emiago/diago/testdata"
+	"github.com/sjlit/diago/testdata"
 	"github.com/stretchr/testify/require"
 )
 

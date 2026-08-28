@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emiago/diago/media"
+	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/require"
@@ -73,7 +73,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		err := phone.ServeBackground(context.TODO(), func(d *DialogServerSession) {})
 		require.NoError(t, err)
 
-		dialog, err := phone.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 15060}, InviteOptions{})
+		dialog, err := phone.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 15060})
 		require.NoError(t, err)
 		defer dialog.Close()
 
