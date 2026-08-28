@@ -145,7 +145,7 @@ func (p *AudioPlayback) playURL(urlStr string, written *int64) error {
 		}()
 
 		n, err := p.streamWav(bufferReader, p.writer)
-		*written = n
+		*written += n
 		p.totalWritten += n
 
 		// Closing reader to stop writing routine
@@ -165,7 +165,7 @@ func (p *AudioPlayback) playURL(urlStr string, written *int64) error {
 
 	wavBuf := bytes.NewReader(samples)
 	n, err := p.streamWav(wavBuf, p.writer)
-	*written = n
+	*written += n
 	p.totalWritten += n
 
 	return err

@@ -536,7 +536,7 @@ func (d *DialogMedia) PlaybackCreate() (AudioPlayback, error) {
 	return p, nil
 }
 
-// PlaybackControlCreate creates playback for audio with controls like mute unmute
+// PlaybackControlCreate creates playback with controls like mute, stop, pause, resume and replay
 func (d *DialogMedia) PlaybackControlCreate() (AudioPlaybackControl, error) {
 	// NOTE we should avoid returning pointers for any IN dialplan to avoid heap
 	mprops := MediaProps{}
@@ -546,9 +546,7 @@ func (d *DialogMedia) PlaybackControlCreate() (AudioPlaybackControl, error) {
 		return AudioPlaybackControl{}, fmt.Errorf("no media setup")
 	}
 	// Audio is controled via audio reader/writer
-	control := &audioControl{
-		Writer: w,
-	}
+	control := newAudioControl(w)
 
 	p := AudioPlaybackControl{
 		AudioPlayback: NewAudioPlayback(control, mprops.Codec),

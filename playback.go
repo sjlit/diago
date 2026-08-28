@@ -20,6 +20,20 @@ var (
 	PlaybackBufferSize = 3840 // For now largest we support. 48000 sample rate with 2 channels
 )
 
+// Playback errors. PlaybackStopped and PlaybackReplayed also match io.EOF
+// for backward compatibility with code treating EOF as successful end.
+var (
+	// ErrPlaybackStopped is returned by Play when playback was stopped with
+	// Stop() or by DTMF interrupt. It also matches io.EOF.
+	ErrPlaybackStopped = errors.New("playback stopped")
+	// ErrPlaybackReplayed is returned by Play when replay was requested with
+	// Replay() and playback will restart from the beginning. It also matches io.EOF.
+	ErrPlaybackReplayed = errors.New("playback replayed")
+	// ErrSourceNotReplayable is returned when replay is requested but playback
+	// source can not be restarted (generic reader without io.Seeker support).
+	ErrSourceNotReplayable = errors.New("playback source is not replayable")
+)
+
 var playBufPool = sync.Pool{
 	New: func() any {
 		// Increase this size if there will be support for larger pools
@@ -78,7 +92,11 @@ func (p *AudioPlayback) Play(reader io.Reader, mimeType string) (int64, error) {
 	}
 
 	p.totalWritten += written
-	if errors.Is(err, io.EOF) {
+	switch {
+	case errors.Is(err, ErrPlaybackStopped), errors.Is(err, ErrPlaybackReplayed):
+		// Do not mask stop/replay with success
+		return written, err
+	case errors.Is(err, io.EOF):
 		return written, nil
 	}
 	return written, err

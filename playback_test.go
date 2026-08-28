@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/sjlit/diago/media"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,10 +86,11 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 		playback, err := dialog.PlaybackControlCreate()
 		require.NoError(t, err)
 
+		// Stop before play is cleared when new play starts
 		playback.Stop()
 		written, err := playback.PlayFile("testdata/files/demo-echodone.wav")
 		require.NoError(t, err)
-		assert.EqualValues(t, 0, written)
+		require.Greater(t, written, int64(10000))
 	})
 
 	t.Run("default", func(t *testing.T) {
