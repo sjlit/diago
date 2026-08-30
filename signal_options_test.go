@@ -223,10 +223,10 @@ func TestLegacyOptionsMigrators(t *testing.T) {
 
 	p, err := newSignalParams(opts)
 	require.NoError(t, err)
-	assert.Equal(t, "tcp", p.Transport)
-	assert.Equal(t, "u", p.Username)
-	assert.Equal(t, "p", p.Password)
-	assert.Equal(t, "1", p.Headers[0].Value())
+	assert.Equal(t, "tcp", p.Dialog.Transport)
+	assert.Equal(t, "u", p.Dialog.Username)
+	assert.Equal(t, "p", p.Dialog.Password)
+	assert.Equal(t, "1", p.Msg.Headers[0].Value())
 
 	legacyClient := InviteClientOptions{
 		EarlyMediaDetect: true,
@@ -236,13 +236,13 @@ func TestLegacyOptionsMigrators(t *testing.T) {
 	require.NoError(t, err)
 	p, err = newSignalParams(opts)
 	require.NoError(t, err)
-	assert.True(t, p.EarlyMediaDetect)
-	assert.Equal(t, "u2", p.Username)
+	assert.True(t, p.Dialog.EarlyMediaDetect)
+	assert.Equal(t, "u2", p.Dialog.Username)
 
 	legacyDialog := NewDialogOptions{TransportID: "tr1"}
 	p, err = newSignalParams(legacyDialog.Options())
 	require.NoError(t, err)
-	assert.Equal(t, "tr1", p.TransportID)
+	assert.Equal(t, "tr1", p.Dialog.TransportID)
 }
 
 // TestSignalOptionsFieldCoverage directly exercises every SignalOption factory
@@ -251,7 +251,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 	t.Run("WithBody", func(t *testing.T) {
 		p, err := newSignalParams([]SignalOption{WithBody([]byte("custom-sdp"))})
 		require.NoError(t, err)
-		assert.Equal(t, []byte("custom-sdp"), p.Body)
+		assert.Equal(t, []byte("custom-sdp"), p.Msg.Body)
 	})
 
 	t.Run("WithMediaSession rejects nil", func(t *testing.T) {
@@ -263,17 +263,17 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		sess := &media.MediaSession{}
 		p, err := newSignalParams([]SignalOption{WithMediaSession(sess)})
 		require.NoError(t, err)
-		assert.Same(t, sess, p.MediaSession)
+		assert.Same(t, sess, p.Media.MediaSession)
 	})
 
 	t.Run("WithMediaDTLS stores pointer copy", func(t *testing.T) {
 		conf := media.DTLSConfig{}
 		p, err := newSignalParams([]SignalOption{WithMediaDTLS(conf)})
 		require.NoError(t, err)
-		require.NotNil(t, p.MediaDTLSConf)
+		require.NotNil(t, p.Media.MediaDTLSConf)
 		// Mutating the original must not affect the stored copy.
 		conf.Certificates = []tls.Certificate{}
-		assert.Empty(t, p.MediaDTLSConf.Certificates)
+		assert.Empty(t, p.Media.MediaDTLSConf.Certificates)
 	})
 
 	t.Run("WithRequestMutator rejects nil fn", func(t *testing.T) {
@@ -302,7 +302,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 			return nil
 		})})
 		require.NoError(t, err)
-		require.NotNil(t, p.MutateResponse)
+		require.NotNil(t, p.Msg.MutateResponse)
 	})
 
 	t.Run("WithDialogTransport / WithDialogTransportID", func(t *testing.T) {
@@ -311,8 +311,8 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 			WithDialogTransportID("tr-1"),
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "tcp", p.Transport)
-		assert.Equal(t, "tr-1", p.TransportID)
+		assert.Equal(t, "tcp", p.Dialog.Transport)
+		assert.Equal(t, "tr-1", p.Dialog.TransportID)
 	})
 
 	t.Run("WithOriginator rejects nil", func(t *testing.T) {
@@ -323,14 +323,14 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 	t.Run("WithAuthCredentials", func(t *testing.T) {
 		p, err := newSignalParams([]SignalOption{WithAuthCredentials("u", "p")})
 		require.NoError(t, err)
-		assert.Equal(t, "u", p.Username)
-		assert.Equal(t, "p", p.Password)
+		assert.Equal(t, "u", p.Dialog.Username)
+		assert.Equal(t, "p", p.Dialog.Password)
 	})
 
 	t.Run("WithEarlyMediaDetect", func(t *testing.T) {
 		p, err := newSignalParams([]SignalOption{WithEarlyMediaDetect()})
 		require.NoError(t, err)
-		assert.True(t, p.EarlyMediaDetect)
+		assert.True(t, p.Dialog.EarlyMediaDetect)
 	})
 
 	t.Run("WithOnMediaUpdate / WithOnRefer / WithOnResponse", func(t *testing.T) {
@@ -345,9 +345,9 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		require.NoError(t, err)
 		// Functions are not directly comparable; just assert they are non-nil
 		// after registration.
-		assert.NotNil(t, p.OnMediaUpdate)
-		assert.NotNil(t, p.OnRefer)
-		assert.NotNil(t, p.OnResponse)
+		assert.NotNil(t, p.Dialog.OnMediaUpdate)
+		assert.NotNil(t, p.Dialog.OnRefer)
+		assert.NotNil(t, p.Dialog.OnResponse)
 	})
 
 	t.Run("WithBody overrides signalMediaConfig precedence", func(t *testing.T) {
@@ -366,7 +366,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		// signalMediaConfig is only used when MediaSession is nil; here it
 		// is non-nil, so the granular options are ignored by design.
 		_ = signalMediaConfig(base, p)
-		assert.Same(t, sess, p.MediaSession)
+		assert.Same(t, sess, p.Media.MediaSession)
 	})
 
 	t.Run("applyRequestSignal nil params is no-op", func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestBuildReInviteRequest(t *testing.T) {
 		assert.Equal(t, "application/sdp", req.GetHeader("Content-Type").Value())
 	})
 
-	t.Run("params.Body replaces base SDP", func(t *testing.T) {
+	t.Run("params.Msg.Body replaces base SDP", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		override := []byte("v=0\r\no=- custom\r\n")
 		p, err := newSignalParams([]SignalOption{WithBody(override)})
@@ -396,7 +396,7 @@ func TestBuildReInviteRequest(t *testing.T) {
 		assert.Equal(t, override, req.Body())
 	})
 
-	t.Run("defaultContact applied when params.Contact unset", func(t *testing.T) {
+	t.Run("defaultContact applied when params.Msg.Contact unset", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		def := &sip.ContactHeader{Address: sip.Uri{User: "default", Host: "127.0.0.1", Port: 5060}}
 		require.NoError(t, buildReInviteRequest(req, baseSDP, def, nil))
@@ -406,7 +406,7 @@ func TestBuildReInviteRequest(t *testing.T) {
 		assert.Equal(t, "default", cont.Address.User)
 	})
 
-	t.Run("params.Contact overrides defaultContact", func(t *testing.T) {
+	t.Run("params.Msg.Contact overrides defaultContact", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		def := &sip.ContactHeader{Address: sip.Uri{User: "default", Host: "127.0.0.1", Port: 5060}}
 		override := &sip.ContactHeader{Address: sip.Uri{User: "override", Host: "9.9.9.9", Port: 7777}}

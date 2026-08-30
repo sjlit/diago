@@ -25,14 +25,23 @@ type RTPReader interface {
 	ReadRTP(buf []byte, p *rtp.Packet) (int, error)
 }
 
+// RTPReaderRaw is a raw byte-level RTP reader abstraction.
+//
+// Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
 type RTPReaderRaw interface {
 	ReadRTPRaw(buf []byte) (int, error)
 }
 
+// RTCPReader is an RTCP reader abstraction.
+//
+// Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
 type RTCPReader interface {
 	ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error)
 }
 
+// RTPCReaderRaw is a raw byte-level RTCP reader abstraction.
+//
+// Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
 type RTPCReaderRaw interface {
 	ReadRTCPRaw(buf []byte) (int, error)
 }

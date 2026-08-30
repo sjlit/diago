@@ -12,9 +12,21 @@ import (
 )
 
 // SignalParams carries per-call signaling customizations applied by SignalOption.
-// A nil *SignalParams means "use defaults". Not all fields apply to every API;
-// fields that are irrelevant to the called method are ignored.
+// It is constructed by the library (newSignalParams); user code customizes it
+// through the With* constructors or custom option closures. A nil *SignalParams
+// means "use defaults". Not all groups apply to every API; fields irrelevant to
+// the called method are ignored, and each method's godoc states what it honors.
 type SignalParams struct {
+	// Msg shapes the outgoing SIP message (request or response).
+	Msg SignalMsgParams
+	// Media overrides the per-call media configuration.
+	Media SignalMediaParams
+	// Dialog controls dialog establishment and lifecycle callbacks.
+	Dialog SignalDialogParams
+}
+
+// SignalMsgParams shapes the outgoing SIP message.
+type SignalMsgParams struct {
 	// Headers are appended to the outgoing SIP message (request or response).
 	// Nil headers are skipped.
 	Headers []sip.Header
@@ -32,11 +44,17 @@ type SignalParams struct {
 	// AnswerLate, RespondSDP); Trying/Ringing always ignore it.
 	Body []byte
 
-	// Media overrides applied on top of the dialog media config.
-	// Precedence: MediaSession > granular options > dialog defaults.
-	// Granular fields (Codecs, RTPNAT, MediaBindIP, MediaExternalIP, MediaDTLSConf)
-	// are silently ignored when MediaSession is set, since the caller takes full
-	// ownership of the session.
+	// MutateRequest is the last-chance hook invoked just before a request is sent.
+	MutateRequest func(req *sip.Request) error
+	// MutateResponse is the last-chance hook invoked just before a response is sent.
+	MutateResponse func(res *sip.Response) error
+}
+
+// SignalMediaParams overrides the per-call media configuration on top of the
+// dialog media config. Precedence: MediaSession > granular options > dialog
+// defaults. Granular fields are silently ignored when MediaSession is set,
+// since the caller takes full ownership of the session.
+type SignalMediaParams struct {
 	Codecs          []media.Codec
 	RTPNAT          *int
 	MediaBindIP     net.IP
@@ -46,19 +64,10 @@ type SignalParams struct {
 	// MediaSession allows passing a fully custom/pre-created media session.
 	// When set the library skips its own media session creation and uses this one.
 	MediaSession *media.MediaSession
+}
 
-	// OnResponse is invoked for responses during dialog establishment (client side).
-	OnResponse func(res *sip.Response) error
-	// OnMediaUpdate is called on media updates (re-INVITE).
-	OnMediaUpdate func(d *DialogMedia)
-	// OnRefer is called on successful REFER handling.
-	OnRefer OnReferDialogFunc
-
-	// MutateRequest is the last-chance hook invoked just before a request is sent.
-	MutateRequest func(req *sip.Request) error
-	// MutateResponse is the last-chance hook invoked just before a response is sent.
-	MutateResponse func(res *sip.Response) error
-
+// SignalDialogParams controls dialog establishment and lifecycle callbacks.
+type SignalDialogParams struct {
 	// Transport selects the transport by name ("udp", "tcp", ...). NewDialog only.
 	Transport string
 	// TransportID selects the transport by its configured ID. NewDialog only.
@@ -72,6 +81,13 @@ type SignalParams struct {
 	// EarlyMediaDetect stops dialog establishment when 183 Session Progress
 	// with SDP is received. ErrClientEarlyMedia is returned. Invite only.
 	EarlyMediaDetect bool
+
+	// OnResponse is invoked for responses during dialog establishment (client side).
+	OnResponse func(res *sip.Response) error
+	// OnMediaUpdate is called on media updates (re-INVITE).
+	OnMediaUpdate func(d *DialogMedia)
+	// OnRefer is called on successful REFER handling.
+	OnRefer OnReferDialogFunc
 }
 
 // SignalOption configures per-call signaling behavior of diago APIs.
@@ -99,20 +115,20 @@ func signalMediaConfig(base MediaConfig, p *SignalParams) MediaConfig {
 	if p == nil {
 		return conf
 	}
-	if p.Codecs != nil {
-		conf.Codecs = p.Codecs
+	if p.Media.Codecs != nil {
+		conf.Codecs = p.Media.Codecs
 	}
-	if p.RTPNAT != nil {
-		conf.RTPNAT = *p.RTPNAT
+	if p.Media.RTPNAT != nil {
+		conf.RTPNAT = *p.Media.RTPNAT
 	}
-	if p.MediaBindIP != nil {
-		conf.BindIP = p.MediaBindIP
+	if p.Media.MediaBindIP != nil {
+		conf.BindIP = p.Media.MediaBindIP
 	}
-	if p.MediaExternalIP != nil {
-		conf.ExternalIP = p.MediaExternalIP
+	if p.Media.MediaExternalIP != nil {
+		conf.ExternalIP = p.Media.MediaExternalIP
 	}
-	if p.MediaDTLSConf != nil {
-		conf.DTLSConf = *p.MediaDTLSConf
+	if p.Media.MediaDTLSConf != nil {
+		conf.DTLSConf = *p.Media.MediaDTLSConf
 	}
 	return conf
 }
@@ -152,30 +168,30 @@ func applyRequestSignal(req *sip.Request, params *SignalParams) error {
 	if params == nil {
 		return nil
 	}
-	if params.Contact != nil {
-		setSignalContact(req, params.Contact)
+	if params.Msg.Contact != nil {
+		setSignalContact(req, params.Msg.Contact)
 	}
-	applySignalHeaders(req, params.Headers)
-	if params.MutateRequest != nil {
-		return params.MutateRequest(req)
+	applySignalHeaders(req, params.Msg.Headers)
+	if params.Msg.MutateRequest != nil {
+		return params.Msg.MutateRequest(req)
 	}
 	return nil
 }
 
 // buildReInviteRequest fills a re-INVITE request from base SDP body and
-// SignalParams: it applies default Contact (if non-nil), lets params.Contact
+// SignalParams: it applies default Contact (if non-nil), lets params.Msg.Contact
 // override, swaps the body when WithBody is set, sets Content-Type, and runs
 // the request mutator. Caller is responsible for sending the request.
 func buildReInviteRequest(req *sip.Request, baseSDP []byte, defaultContact *sip.ContactHeader, params *SignalParams) error {
 	body := baseSDP
-	if params != nil && params.Body != nil {
-		body = params.Body
+	if params != nil && params.Msg.Body != nil {
+		body = params.Msg.Body
 	}
-	if defaultContact != nil && (params == nil || params.Contact == nil) {
+	if defaultContact != nil && (params == nil || params.Msg.Contact == nil) {
 		req.AppendHeader(defaultContact)
 	}
-	if params != nil && params.Contact != nil {
-		setSignalContact(req, params.Contact)
+	if params != nil && params.Msg.Contact != nil {
+		setSignalContact(req, params.Msg.Contact)
 	}
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.SetBody(body)
@@ -190,7 +206,7 @@ func WithHeaders(headers ...sip.Header) SignalOption {
 				return fmt.Errorf("WithHeaders: nil header provided")
 			}
 		}
-		p.Headers = append(p.Headers, headers...)
+		p.Msg.Headers = append(p.Msg.Headers, headers...)
 		return nil
 	}
 }
@@ -207,7 +223,7 @@ func WithContact(contact *sip.ContactHeader) SignalOption {
 		if contact == nil {
 			return fmt.Errorf("WithContact: contact header is nil")
 		}
-		p.Contact = contact
+		p.Msg.Contact = contact
 		return nil
 	}
 }
@@ -216,7 +232,7 @@ func WithContact(contact *sip.ContactHeader) SignalOption {
 // "application/sdp" unless provided within Headers.
 func WithBody(body []byte) SignalOption {
 	return func(p *SignalParams) error {
-		p.Body = body
+		p.Msg.Body = body
 		return nil
 	}
 }
@@ -224,7 +240,7 @@ func WithBody(body []byte) SignalOption {
 // WithCodecs overrides the codecs offered in the SDP for this call.
 func WithCodecs(codecs ...media.Codec) SignalOption {
 	return func(p *SignalParams) error {
-		p.Codecs = codecs
+		p.Media.Codecs = codecs
 		return nil
 	}
 }
@@ -234,7 +250,7 @@ func WithCodecs(codecs ...media.Codec) SignalOption {
 func WithRTPNAT(n int) SignalOption {
 	return func(p *SignalParams) error {
 		v := n
-		p.RTPNAT = &v
+		p.Media.RTPNAT = &v
 		return nil
 	}
 }
@@ -245,7 +261,7 @@ func WithMediaBindIP(ip net.IP) SignalOption {
 		if ip == nil {
 			return fmt.Errorf("WithMediaBindIP: ip is nil")
 		}
-		p.MediaBindIP = ip
+		p.Media.MediaBindIP = ip
 		return nil
 	}
 }
@@ -256,7 +272,7 @@ func WithMediaExternalIP(ip net.IP) SignalOption {
 		if ip == nil {
 			return fmt.Errorf("WithMediaExternalIP: ip is nil")
 		}
-		p.MediaExternalIP = ip
+		p.Media.MediaExternalIP = ip
 		return nil
 	}
 }
@@ -265,7 +281,7 @@ func WithMediaExternalIP(ip net.IP) SignalOption {
 func WithMediaDTLS(conf media.DTLSConfig) SignalOption {
 	return func(p *SignalParams) error {
 		c := conf
-		p.MediaDTLSConf = &c
+		p.Media.MediaDTLSConf = &c
 		return nil
 	}
 }
@@ -277,7 +293,7 @@ func WithMediaSession(m *media.MediaSession) SignalOption {
 		if m == nil {
 			return fmt.Errorf("WithMediaSession: media session is nil")
 		}
-		p.MediaSession = m
+		p.Media.MediaSession = m
 		return nil
 	}
 }
@@ -285,7 +301,7 @@ func WithMediaSession(m *media.MediaSession) SignalOption {
 // WithOnResponse sets a response callback used during dialog establishment (client side).
 func WithOnResponse(fn func(res *sip.Response) error) SignalOption {
 	return func(p *SignalParams) error {
-		p.OnResponse = fn
+		p.Dialog.OnResponse = fn
 		return nil
 	}
 }
@@ -293,7 +309,7 @@ func WithOnResponse(fn func(res *sip.Response) error) SignalOption {
 // WithOnMediaUpdate sets the media update callback (re-INVITE handling).
 func WithOnMediaUpdate(fn func(d *DialogMedia)) SignalOption {
 	return func(p *SignalParams) error {
-		p.OnMediaUpdate = fn
+		p.Dialog.OnMediaUpdate = fn
 		return nil
 	}
 }
@@ -301,7 +317,7 @@ func WithOnMediaUpdate(fn func(d *DialogMedia)) SignalOption {
 // WithOnRefer sets the REFER handler callback.
 func WithOnRefer(fn OnReferDialogFunc) SignalOption {
 	return func(p *SignalParams) error {
-		p.OnRefer = fn
+		p.Dialog.OnRefer = fn
 		return nil
 	}
 }
@@ -314,7 +330,7 @@ func WithRequestMutator(fn func(req *sip.Request) error) SignalOption {
 		if fn == nil {
 			return fmt.Errorf("WithRequestMutator: fn is nil")
 		}
-		p.MutateRequest = fn
+		p.Msg.MutateRequest = fn
 		return nil
 	}
 }
@@ -327,7 +343,7 @@ func WithResponseMutator(fn func(res *sip.Response) error) SignalOption {
 		if fn == nil {
 			return fmt.Errorf("WithResponseMutator: fn is nil")
 		}
-		p.MutateResponse = fn
+		p.Msg.MutateResponse = fn
 		return nil
 	}
 }
@@ -336,7 +352,7 @@ func WithResponseMutator(fn func(res *sip.Response) error) SignalOption {
 // NewDialog only.
 func WithDialogTransport(name string) SignalOption {
 	return func(p *SignalParams) error {
-		p.Transport = name
+		p.Dialog.Transport = name
 		return nil
 	}
 }
@@ -345,7 +361,7 @@ func WithDialogTransport(name string) SignalOption {
 // NewDialog only.
 func WithDialogTransportID(id string) SignalOption {
 	return func(p *SignalParams) error {
-		p.TransportID = id
+		p.Dialog.TransportID = id
 		return nil
 	}
 }
@@ -357,7 +373,7 @@ func WithOriginator(o DialogSession) SignalOption {
 		if o == nil {
 			return fmt.Errorf("WithOriginator: originator is nil")
 		}
-		p.Originator = o
+		p.Dialog.Originator = o
 		return nil
 	}
 }
@@ -366,8 +382,8 @@ func WithOriginator(o DialogSession) SignalOption {
 // Invite/Register only.
 func WithAuthCredentials(username string, password string) SignalOption {
 	return func(p *SignalParams) error {
-		p.Username = username
-		p.Password = password
+		p.Dialog.Username = username
+		p.Dialog.Password = password
 		return nil
 	}
 }
@@ -377,7 +393,7 @@ func WithAuthCredentials(username string, password string) SignalOption {
 // Invite only.
 func WithEarlyMediaDetect() SignalOption {
 	return func(p *SignalParams) error {
-		p.EarlyMediaDetect = true
+		p.Dialog.EarlyMediaDetect = true
 		return nil
 	}
 }

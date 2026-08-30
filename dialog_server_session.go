@@ -73,15 +73,15 @@ func (d *DialogServerSession) Transport() string {
 func (d *DialogServerSession) respondSignal(statusCode int, reason string, body []byte, params *SignalParams) error {
 	res := sip.NewResponseFromRequest(d.InviteRequest, statusCode, reason, body)
 	if params != nil {
-		if params.Contact != nil {
-			setSignalContact(res, params.Contact)
+		if params.Msg.Contact != nil {
+			setSignalContact(res, params.Msg.Contact)
 		}
-		applySignalHeaders(res, params.Headers)
+		applySignalHeaders(res, params.Msg.Headers)
 		if body != nil && res.ContentType() == nil {
 			res.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 		}
-		if params.MutateResponse != nil {
-			if err := params.MutateResponse(res); err != nil {
+		if params.Msg.MutateResponse != nil {
+			if err := params.Msg.MutateResponse(res); err != nil {
 				return err
 			}
 		}
@@ -101,6 +101,8 @@ func (d *DialogServerSession) byeSignal(ctx context.Context, params *SignalParam
 	return d.DialogServerSession.WriteBye(ctx, bye)
 }
 
+// Trying sends 100 Trying.
+// Honors: msg (Headers, Contact, MutateResponse); Body is ignored.
 func (d *DialogServerSession) Trying(opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -118,6 +120,8 @@ func (d *DialogServerSession) Progress() error {
 
 // ProgressMedia sends 183 Session Progress and creates early media
 //
+// Honors: msg (Headers, Contact, Body, MutateResponse), media (all).
+//
 // Experimental: Naming of API might change
 func (d *DialogServerSession) ProgressMedia(opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
@@ -131,8 +135,8 @@ func (d *DialogServerSession) ProgressMedia(opts ...SignalOption) error {
 	}
 
 	body := rtpSess.Sess.LocalSDP()
-	if params != nil && params.Body != nil {
-		body = params.Body
+	if params != nil && params.Msg.Body != nil {
+		body = params.Msg.Body
 	}
 	if err := d.respondSignal(sip.StatusSessionInProgress, "Session Progress", body, params); err != nil {
 		return err
@@ -154,6 +158,9 @@ func (d *DialogServerSession) ProgressMediaOptions(opt ProgressMediaOptions) err
 	return d.ProgressMedia(opts...)
 }
 
+// ProgressMediaOptions is the legacy option struct for ProgressMedia.
+//
+// Deprecated: Use ProgressMedia with SignalOptions.
 type ProgressMediaOptions struct {
 	// Codecs that will be used
 	Codecs []media.Codec
@@ -164,7 +171,7 @@ type ProgressMediaOptions struct {
 
 // setupProgressMedia initializes (early) media session for 183 response.
 func (d *DialogServerSession) setupProgressMedia(params *SignalParams) (*media.RTPSession, error) {
-	sess := params.MediaSession
+	sess := params.Media.MediaSession
 	if sess == nil {
 		conf := signalMediaConfig(d.mediaConf, params)
 		if err := d.initMediaSessionFromConf(conf); err != nil {
@@ -179,6 +186,8 @@ func (d *DialogServerSession) setupProgressMedia(params *SignalParams) (*media.R
 	return rtpSess, nil
 }
 
+// Ringing sends 180 Ringing.
+// Honors: msg (Headers, Contact, MutateResponse); Body is ignored.
 func (d *DialogServerSession) Ringing(opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -203,6 +212,7 @@ func (d *DialogServerSession) RemoteContact() *sip.ContactHeader {
 
 // RespondSDP responds with 200 OK and provided SDP body.
 // Options can customize status headers and Contact of the response.
+// Honors: msg (Headers, Contact, MutateResponse); Body is ignored (use the body argument).
 func (d *DialogServerSession) RespondSDP(body []byte, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -214,6 +224,9 @@ func (d *DialogServerSession) RespondSDP(body []byte, opts ...SignalOption) erro
 // Answer creates media session and answers
 // After this new AudioReader and AudioWriter are created for audio manipulation
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
+// Honors: msg (Headers, Contact, Body, MutateResponse), dialog (OnMediaUpdate,
+// OnRefer); media overrides only apply when Answer creates the media session
+// itself (no early media from ProgressMedia).
 // NOTE: Not final API
 func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
@@ -222,11 +235,11 @@ func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 	}
 	d.mu.Lock()
 	if params != nil {
-		if params.OnRefer != nil {
-			d.onReferDialog = params.OnRefer
+		if params.Dialog.OnRefer != nil {
+			d.onReferDialog = params.Dialog.OnRefer
 		}
-		if params.OnMediaUpdate != nil {
-			d.onMediaUpdate = params.OnMediaUpdate
+		if params.Dialog.OnMediaUpdate != nil {
+			d.onMediaUpdate = params.Dialog.OnMediaUpdate
 		}
 	}
 	sess := d.mediaSession
@@ -236,8 +249,8 @@ func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 	if sess != nil {
 		// This will now block until ACK received with 64*T1 as max.
 		body := sess.LocalSDP()
-		if params != nil && params.Body != nil {
-			body = params.Body
+		if params != nil && params.Msg.Body != nil {
+			body = params.Msg.Body
 		}
 		if err := d.respondSignal(sip.StatusOK, "OK", body, params); err != nil {
 			return err
@@ -259,7 +272,7 @@ func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 // newAnswerRTPSession creates RTP session for answering. It honors custom
 // media session passed with options, otherwise builds one from media config.
 func (d *DialogServerSession) newAnswerRTPSession(params *SignalParams) (*media.RTPSession, error) {
-	sess := params.MediaSession
+	sess := params.Media.MediaSession
 	if sess == nil {
 		conf := signalMediaConfig(d.mediaConf, params)
 		if err := d.initMediaSessionFromConf(conf); err != nil {
@@ -270,6 +283,9 @@ func (d *DialogServerSession) newAnswerRTPSession(params *SignalParams) (*media.
 	return media.NewRTPSession(sess), nil
 }
 
+// AnswerOptions is the legacy option struct for Answer.
+//
+// Deprecated: Use Answer with SignalOptions.
 type AnswerOptions struct {
 	// OnMediaUpdate triggers when media update happens. It is blocking func, so make sure you exit
 	OnMediaUpdate func(d *DialogMedia)
@@ -332,8 +348,8 @@ func (d *DialogServerSession) answerSession(rtpSess *media.RTPSession, params *S
 	d.mu.Unlock()
 
 	body := sess.LocalSDP()
-	if params != nil && params.Body != nil {
-		body = params.Body
+	if params != nil && params.Msg.Body != nil {
+		body = params.Msg.Body
 	}
 
 	// This will now block until ACK received with 64*T1 as max.
@@ -374,6 +390,7 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 
 // AnswerLate does answer with Late offer.
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
+// Honors: msg (Headers, Contact, Body, MutateResponse), media (all).
 func (d *DialogServerSession) AnswerLate(opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -396,8 +413,8 @@ func (d *DialogServerSession) AnswerLate(opts ...SignalOption) error {
 	d.mu.Unlock()
 
 	body := localSDP
-	if params != nil && params.Body != nil {
-		body = params.Body
+	if params != nil && params.Msg.Body != nil {
+		body = params.Msg.Body
 	}
 	// This will now block until ACK received with 64*T1 as max.
 	// How to let caller to cancel this?
@@ -447,6 +464,8 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 // otherwise the INVITE is declined with 480 (and nil is returned — declining
 // succeeded). Options allow customizing headers (ex. Reason), Contact and body
 // of the outgoing message. See docs/contracts.md §7 for the full matrix.
+// Honors: msg (Headers, Contact, MutateRequest on BYE, MutateResponse on 480 decline);
+// Body is ignored.
 func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -460,6 +479,8 @@ func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) 
 	return d.respondSignal(sip.StatusTemporarilyUnavailable, "Temporarly unavailable", nil, params)
 }
 
+// ReInvite sends a re-INVITE with the current media session.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
 func (d *DialogServerSession) ReInvite(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -504,8 +525,8 @@ func (d *DialogServerSession) ReInvite(ctx context.Context, opts ...SignalOption
 // media MUST BE Forked
 func (d *DialogServerSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *SignalParams) error {
 	sdpBody := ms.LocalSDP()
-	if params != nil && params.Body != nil {
-		sdpBody = params.Body
+	if params != nil && params.Msg.Body != nil {
+		sdpBody = params.Msg.Body
 	}
 
 	// NOTE: we do not change original invite request
@@ -514,8 +535,8 @@ func (d *DialogServerSession) reInviteMediaSession(ctx context.Context, ms *medi
 	d.mu.Unlock()
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
-	if params != nil && params.Contact != nil {
-		setSignalContact(req, params.Contact)
+	if params != nil && params.Msg.Contact != nil {
+		setSignalContact(req, params.Msg.Contact)
 	}
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.SetBody(sdpBody)
@@ -718,6 +739,7 @@ func (d *DialogServerSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
 func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -736,6 +758,7 @@ func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) er
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
 func (d *DialogServerSession) Unhold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {

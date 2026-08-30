@@ -557,6 +557,10 @@ func (dg *Diago) HandleFunc(f ServeDialogFunc) {
 	dg.serveHandler = f
 }
 
+// InviteOptions is the legacy per-call option struct for Invite.
+//
+// Deprecated: Use Diago.Invite with SignalOptions; convert existing structs
+// with Options().
 type InviteOptions struct {
 	Originator DialogSession
 	OnResponse func(res *sip.Response) error
@@ -595,16 +599,23 @@ func (o *InviteOptions) Options() ([]SignalOption, error) {
 // - dialog.Invite
 //
 // Options allow full call customization, checkout SignalOption.
+// Each SignalOption func is executed exactly once for the whole call setup.
+// The final ACK is sent without options; call Ack directly if you need ACK headers.
+// Honors: everything DialogClientSession.Invite honors.
 //
 // For better control more details use above functions instead.
 // If you want to bridge call then use helper InviteBridge
 func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
-	d, err = dg.NewDialog(recipient, opts...)
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return nil, err
+	}
+	d, err = dg.newDialogWithParams(recipient, params)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := d.Invite(ctx, opts...); err != nil {
+	if err := d.inviteWithParams(ctx, params); err != nil {
 		closeErr := d.Close()
 		return nil, errors.Join(err, closeErr)
 	}
@@ -620,22 +631,23 @@ func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts ...SignalOp
 // Outgoing session will be added into bridge on answer
 // If bridge has Originator (first participant) it will be used for creating outgoing call leg as in B2BUA
 // When bridge is provided then this call will be bridged with any participant already present in bridge
+// Honors: everything DialogClientSession.Invite honors; Originator defaults to
+// the bridge originator when not set. Options execute exactly once.
 func (dg *Diago) InviteBridge(ctx context.Context, recipient sip.Uri, bridge *Bridge, opts ...SignalOption) (d *DialogClientSession, err error) {
-	d, err = dg.NewDialog(recipient, opts...)
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return nil, err
+	}
+	d, err = dg.newDialogWithParams(recipient, params)
 	if err != nil {
 		return nil, err
 	}
 
 	// Keep things compatible: bridge originator is default when not provided.
-	// Compute params once and reuse them so user-supplied SignalOption funcs
-	// run a single time.
-	params, err := newSignalParams(opts)
-	if err != nil {
-		d.Close()
-		return nil, err
-	}
-	if (params == nil || params.Originator == nil) && bridge.Originator != nil {
-		params.Originator = bridge.Originator
+	// Params are computed once above, so user-supplied SignalOption funcs
+	// run a single time across dialog creation and Invite.
+	if (params == nil || params.Dialog.Originator == nil) && bridge.Originator != nil {
+		params.Dialog.Originator = bridge.Originator
 	}
 
 	if err := d.inviteWithParams(ctx, params); err != nil {
@@ -655,6 +667,10 @@ func (dg *Diago) InviteBridge(ctx context.Context, recipient sip.Uri, bridge *Br
 	return d, nil
 }
 
+// NewDialogOptions is the legacy option struct for NewDialog.
+//
+// Deprecated: Use NewDialog with SignalOptions; convert existing structs
+// with Options().
 type NewDialogOptions struct {
 	// Transport or protocol that should be used
 	Transport string
@@ -678,19 +694,27 @@ func (o *NewDialogOptions) Options() []SignalOption {
 // - You call Invite(...) after this call followed with ACK
 // Options allow selecting transport (WithDialogTransport, WithDialogTransportID),
 // overriding Contact and per-dialog media configuration.
+// Honors: dialog (Transport, TransportID), msg (Contact); the remaining fields
+// are honored by the later Invite call.
 func (dg *Diago) NewDialog(recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
 	params, err := newSignalParams(opts)
 	if err != nil {
 		return nil, err
 	}
+	return dg.newDialogWithParams(recipient, params)
+}
 
+// newDialogWithParams creates a client dialog session from pre-computed params.
+// It exists so helpers (Invite, InviteBridge) can execute user-supplied
+// SignalOption funcs a single time across dialog creation and Invite.
+func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *SignalParams) (d *DialogClientSession, err error) {
 	transport := ""
 	transportID := ""
 	var contact *sip.ContactHeader
 	if params != nil {
-		transport = params.Transport
-		transportID = params.TransportID
-		contact = params.Contact
+		transport = params.Dialog.Transport
+		transportID = params.Dialog.TransportID
+		contact = params.Msg.Contact
 	}
 
 	if transport == "" && recipient.UriParams != nil {
@@ -960,10 +984,18 @@ func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {
 	return cli
 }
 
+// DialogCacheServer gives access to the internal dialog cache of server dialogs.
+//
+// Deprecated: Internal cache accessor; not part of the public API surface and
+// will be unexported.
 func (dg *Diago) DialogCacheServer() DialogCache[*DialogServerSession] {
 	return dg.cache.server
 }
 
+// DialogCacheClient gives access to the internal dialog cache of client dialogs.
+//
+// Deprecated: Internal cache accessor; not part of the public API surface and
+// will be unexported.
 func (dg *Diago) DialogCacheClient() DialogCache[*DialogClientSession] {
 	return dg.cache.client
 }

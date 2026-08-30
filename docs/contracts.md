@@ -286,3 +286,63 @@ remain functional for compatibility but must not be mixed with the gates.
 | `BridgeMix` stop via conn deadlines | Same name — mixStop/mixStopWait use the read gate |
 | `media.Copy` / `CopyWithBuf` in cancellable flows | `media.CopyContext` / `CopyWithBufContext` |
 | `AudioPlayback.Play/PlayFile/PlayURL` | `PlayContext` / `PlayFileContext` / `PlayURLContext` (also on control and DTMF variants) |
+
+## 10. API surface conventions
+
+### One per-call option style
+
+`SignalOption` is the single functional-option style for per-call customization.
+It is accepted by every signaling method (server progress/answer, client
+invite/bye/refer-side requests, REGISTER) and by `NewDialog`. Legacy option
+structs survive only as migration input: `InviteOptions`, `NewDialogOptions`
+and `InviteClientOptions` carry an `Options()` converter and are deprecated;
+`ProgressMediaOptions` and `AnswerOptions` are consumed only through their
+deprecated wrapper methods, which convert inline. `ReferClientOptions`/
+`ReferServerOptions` are NOT deprecated — `Refer` has no SignalOption variant
+and `ReferOptions` is the granular REFER API. `RegisterOptions` stays the
+primary Register API and provides `Options()` for the signal-representable
+fields (credentials, Contact, Headers).
+
+### Single-execution guarantee
+
+Every public API executes each user-supplied `SignalOption` func **exactly
+once**. Multi-stage helpers (`Diago.Invite`, `Diago.InviteBridge`) compute the
+`SignalParams` once and pass them through internal params-aware paths
+(`newDialogWithParams`, `inviteWithParams`). Options with side effects are safe
+to pass. Tests in `diago_test.go` lock this guarantee.
+
+### Option scopes and per-method honors
+
+`SignalParams` is grouped by concern: **msg** (Headers, Contact, Body,
+MutateRequest, MutateResponse — outgoing message shaping), **media** (Codecs,
+RTPNAT, MediaBindIP, MediaExternalIP, MediaDTLSConf, MediaSession — consumed
+only via `signalMediaConfig` and the media-install sites), **dialog**
+(Transport, TransportID, Originator, Username, Password, EarlyMediaDetect,
+OnResponse, OnMediaUpdate, OnRefer). Fields irrelevant to the called method are
+ignored; each method's godoc states which groups it honors. Credentials passed
+via `WithAuthCredentials` are honored by `Invite` and by REGISTER
+(`Register`/`Unregister`/`Qualify`), falling back to `RegisterOptions`.
+
+### Getter-options
+
+`WithAudioReaderMediaProps` / `WithAudioWriterMediaProps` are the only
+output-options: they fill the caller's `MediaProps` with the negotiated codec
+and addresses. Every other option is input-only.
+
+### Global mutable variables (inventory, see recommendation 4)
+
+`media.RTPPortStart`/`RTPPortEnd`, `media.RTPBufSize`,
+`media.SDPCodecPreferLocalOrder`,
+`media.RTPProfileSAVPDisable`, `media.RTPDebug`, `PlaybackBufferSize`,
+`HTTPDebug`, `DefaultPlaybackHTTPClient` are process-global and mutable. They
+predate the option system; moving them into `MediaConfig`/`Diago` scope is
+tracked as a separate work item.
+
+### Deprecated surface
+
+Deprecated symbols (round-2 cancellation migration table in §9 plus the dead/near-dead
+APIs annotated with `// Deprecated:`) are kept functional until the next
+breaking release. Removed in this round: the unreachable `ReferTransaction`
+cluster (`ReferTransaction`, `OnReferTransactionFunc`,
+`dialogHandleReferTransaction`) — the live REFER path is
+`OnReferDialogFunc`/`dialogHandleRefer`.

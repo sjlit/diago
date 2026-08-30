@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,7 +66,87 @@ func TestDiagoRegister(t *testing.T) {
 }
 
 func TestDiagoRegisterAuthorization(t *testing.T) {
-	t.Skip("Do test with sending Register and authorization returned")
+	var authValue atomic.Value
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		if req.GetHeader("Authorization") == nil {
+			res := sip.NewResponseFromRequest(req, 401, "Unauthorized", nil)
+			res.AppendHeader(sip.NewHeader("WWW-Authenticate", `Digest realm="test", nonce="abc123", algorithm=MD5`))
+			return res
+		}
+		authValue.Store(req.GetHeader("Authorization").Value())
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	ctx := context.TODO()
+
+	t.Run("SignalOptionCredentials", func(t *testing.T) {
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"}, RegisterOptions{})
+		require.NoError(t, err)
+
+		err = rtx.Register(ctx, WithAuthCredentials("aliceFromSignal", "secret"))
+		require.NoError(t, err)
+		assert.Contains(t, authValue.Load(), `username="aliceFromSignal"`)
+	})
+
+	t.Run("RegisterOptionsFallback", func(t *testing.T) {
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "bob", Host: "localhost"}, RegisterOptions{Username: "bobFromOpts", Password: "pw"})
+		require.NoError(t, err)
+
+		err = rtx.Register(ctx)
+		require.NoError(t, err)
+		assert.Contains(t, authValue.Load(), `username="bobFromOpts"`)
+	})
+}
+
+// TestDiagoInviteOptionsRunOnce locks the single-execution guarantee: a user
+// SignalOption func must run exactly once across Diago.Invite dialog creation
+// and Invite.
+func TestDiagoInviteOptionsRunOnce(t *testing.T) {
+	var runs atomic.Int32
+	reqCh := make(chan *sip.Request, 4)
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		reqCh <- req
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW})
+		return sip.NewResponseFromRequest(req, 200, "OK", body)
+	})
+
+	ctx := context.TODO()
+	d, err := dg.Invite(ctx, sip.Uri{User: "alice", Host: "localhost"},
+		func(p *SignalParams) error {
+			runs.Add(1)
+			p.Msg.Headers = append(p.Msg.Headers, sip.NewHeader("X-Test-Run", "once"))
+			return nil
+		})
+	require.NoError(t, err)
+	defer d.Close()
+
+	assert.Equal(t, int32(1), runs.Load(), "user SignalOption must execute exactly once per Diago.Invite")
+	require.NoError(t, d.Hangup(d.Context()))
+
+	req := <-reqCh
+	assert.NotNil(t, req.GetHeader("X-Test-Run"), "option-applied header must be present on the INVITE")
+}
+
+// TestDiagoInviteBridgeOptionsRunOnce locks the same guarantee for InviteBridge.
+func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
+	var runs atomic.Int32
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW})
+		return sip.NewResponseFromRequest(req, 200, "OK", body)
+	})
+
+	bridge := NewBridge()
+	ctx := context.TODO()
+	d, err := dg.InviteBridge(ctx, sip.Uri{User: "alice", Host: "localhost"}, &bridge,
+		func(p *SignalParams) error {
+			runs.Add(1)
+			return nil
+		})
+	require.NoError(t, err)
+	defer d.Close()
+
+	assert.Equal(t, int32(1), runs.Load(), "user SignalOption must execute exactly once per Diago.InviteBridge")
+	require.NoError(t, d.Hangup(d.Context()))
 }
 
 func TestDiagoInviteCallerID(t *testing.T) {

@@ -20,6 +20,10 @@ import (
 	"github.com/sjlit/diago/media"
 )
 
+// Bridger is the interface satisfied by Bridge and BridgeMix.
+//
+// Deprecated: The library never accepts this interface; pass *Bridge or
+// *BridgeMix concretely. It will be removed.
 type Bridger interface {
 	AddDialogSession(d DialogSession) error
 }
@@ -67,6 +71,10 @@ func (b *Bridge) Init(log *slog.Logger) {
 	}
 }
 
+// GetDialogs returns the list of dialogs added to the bridge.
+//
+// Deprecated: Not synchronized with bridge state and not used by the library;
+// keep track of the sessions you added yourself.
 func (b *Bridge) GetDialogs() []DialogSession {
 	return b.dialogs
 }
@@ -362,6 +370,8 @@ func (b *BridgeMix) String() string {
 
 // DialogSessionsList returns list of dialogs in bridge
 // It is not safe to use dialogs for media until they are removed from bridge
+//
+// Deprecated: Not used by the library; keep track of the sessions you added yourself.
 func (b *BridgeMix) DialogSessionsList() []DialogSession {
 	b.mu.Lock()
 	defer b.mu.Unlock()

@@ -62,6 +62,8 @@ func (d *DialogClientSession) Id() string {
 //   - provisional response received (early dialog): BYE on the early dialog
 //   - confirmed: BYE, waits for 200
 //   - already ended: returns nil silently
+//
+// Honors: msg (Headers, Contact, MutateRequest).
 func (d *DialogClientSession) Hangup(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -217,6 +219,8 @@ func (o *InviteClientOptions) WithCaller(displayName string, callerID string, ho
 // Options allow customizing Contact, From, custom headers, SDP body, media
 // (IP, codecs, fully custom media session) and a final request mutator.
 //
+// Honors: msg (Headers, Contact, Body, MutateRequest), media (all), dialog (all).
+//
 // Errors:
 // - sipgo.ErrDialogResponse
 // - ErrClientEarlyMedia
@@ -232,10 +236,10 @@ func (d *DialogClientSession) Invite(ctx context.Context, opts ...SignalOption) 
 }
 
 // inviteWithParams performs the Invite flow using a pre-computed *SignalParams.
-// It exists so callers (e.g. InviteBridge) can compute params once and avoid
-// running user-supplied SignalOption funcs twice.
+// It exists so callers (e.g. Diago.Invite, InviteBridge) can compute params once
+// and avoid running user-supplied SignalOption funcs twice.
 func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *SignalParams) error {
-	if params == nil || params.MediaSession == nil {
+	if params == nil || params.Media.MediaSession == nil {
 		conf := signalMediaConfig(d.mediaConfig, params)
 		if err := d.initMediaSessionFromConf(conf); err != nil {
 			return err
@@ -245,9 +249,9 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *Sign
 		// Originator we must Fork the session: the originator branch in
 		// invite() rewrites Codecs and applies RemoteSDP/SetRemoteAddr, and
 		// we don't want to mutate a session that the caller may reuse.
-		sess := params.MediaSession
-		if params.Originator != nil {
-			sess = params.MediaSession.Fork()
+		sess := params.Media.MediaSession
+		if params.Dialog.Originator != nil {
+			sess = params.Media.MediaSession.Fork()
 		}
 		d.mu.Lock()
 		if d.mediaSession == nil {
@@ -261,11 +265,11 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *Sign
 func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, params *SignalParams) error {
 	sess := med.mediaSession
 	inviteReq := d.InviteRequest
-	originator := params.Originator
+	originator := params.Dialog.Originator
 
 	// Custom headers must be applied before originator logic so it can
 	// detect user provided From header
-	applySignalHeaders(inviteReq, params.Headers)
+	applySignalHeaders(inviteReq, params.Msg.Headers)
 
 	if originator != nil {
 		// In case originator then:
@@ -339,15 +343,15 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 
 	dialogCli := d.UA
 	// Honor custom Contact, otherwise use dialog default one
-	if params.Contact != nil {
-		setSignalContact(inviteReq, params.Contact)
+	if params.Msg.Contact != nil {
+		setSignalContact(inviteReq, params.Msg.Contact)
 	} else {
 		inviteReq.AppendHeader(&dialogCli.ContactHDR)
 	}
 
 	body := sess.LocalSDP()
-	if params.Body != nil {
-		body = params.Body
+	if params.Msg.Body != nil {
+		body = params.Msg.Body
 	}
 	inviteReq.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	inviteReq.SetBody(body)
@@ -359,8 +363,8 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 	}
 
 	// Last chance for full customization of the request
-	if params.MutateRequest != nil {
-		if err := params.MutateRequest(inviteReq); err != nil {
+	if params.Msg.MutateRequest != nil {
+		if err := params.Msg.MutateRequest(inviteReq); err != nil {
 			return err
 		}
 	}
@@ -375,8 +379,8 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 	// These are read under d.mu in handleRefer and handleReInviteACK,
 	// so write them under the same lock to avoid a data race.
 	d.mu.Lock()
-	med.onMediaUpdate = params.OnMediaUpdate
-	d.onReferDialog = params.OnRefer
+	med.onMediaUpdate = params.Dialog.OnMediaUpdate
+	d.onReferDialog = params.Dialog.OnRefer
 	d.mu.Unlock()
 	// reuse UDP listener
 	// Problem if listener is unspecified IP sipgo will not map this to listener
@@ -394,12 +398,12 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 		return err
 	}
 	ansOpts := sipgo.AnswerOptions{
-		Username:   params.Username,
-		Password:   params.Password,
-		OnResponse: params.OnResponse,
+		Username:   params.Dialog.Username,
+		Password:   params.Dialog.Password,
+		OnResponse: params.Dialog.OnResponse,
 	}
 
-	if params.EarlyMediaDetect {
+	if params.Dialog.EarlyMediaDetect {
 		return d.waitAnswerEarly(ctx, med, ansOpts)
 	}
 
@@ -516,6 +520,7 @@ func (d *DialogClientSession) applyRemoteSDP(med *DialogMedia, remoteSDP []byte)
 // Ack acknowledgeds media
 // Before Ack normally you want to setup more stuff like bridging
 // Options allow customizing headers of the ACK request.
+// Honors: msg (Headers, Contact, MutateRequest).
 func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -572,6 +577,7 @@ func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, bod
 
 // ReInvite sends new invite based on current media session
 // Options allow customizing Contact, headers, SDP body and to mutate the final request.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
 func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -653,8 +659,8 @@ func (d *DialogClientSession) reInviteDo(ctx context.Context, req *sip.Request) 
 // media MUST BE Forked
 func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *SignalParams) error {
 	sdpBody := ms.LocalSDP()
-	if params != nil && params.Body != nil {
-		sdpBody = params.Body
+	if params != nil && params.Msg.Body != nil {
+		sdpBody = params.Msg.Body
 	}
 
 	// NOTE: we do not change original invite request
@@ -664,8 +670,8 @@ func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *medi
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
 	req.AppendHeader(d.InviteRequest.Contact())
-	if params != nil && params.Contact != nil {
-		setSignalContact(req, params.Contact)
+	if params != nil && params.Msg.Contact != nil {
+		setSignalContact(req, params.Msg.Contact)
 	}
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.SetBody(sdpBody)
@@ -799,6 +805,7 @@ func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
 func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -817,6 +824,7 @@ func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) er
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
 func (d *DialogClientSession) Unhold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {

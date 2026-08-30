@@ -16,14 +16,24 @@ import (
 type RTPWriter interface {
 	WriteRTP(p *rtp.Packet) error
 }
+
+// RTPWriterRaw is a raw byte-level RTP writer abstraction.
+//
+// Deprecated: No use; use RTPPacketWriter instead. It will be removed.
 type RTPWriterRaw interface {
 	WriteRTPRaw(buf []byte) (int, error) // -> io.Writer
 }
 
+// RTCPWriter is an RTCP writer abstraction.
+//
+// Deprecated: No use; use RTPPacketWriter instead. It will be removed.
 type RTCPWriter interface {
 	WriteRTCP(p rtcp.Packet) error
 }
 
+// RTCPWriterRaw is a raw byte-level RTCP writer abstraction.
+//
+// Deprecated: No use; use RTPPacketWriter instead. It will be removed.
 type RTCPWriterRaw interface {
 	WriteRTCPRaw(buf []byte) (int, error) // -> io.Writer
 }
@@ -103,6 +113,10 @@ func (w *RTPPacketWriter) clockReset() {
 	}
 }
 
+// ClockDisable stops the internal media clock ticker.
+//
+// Deprecated: Not part of the stable-handle contract; the clock is owned and
+// managed by the write pipeline. It will be removed.
 func (w *RTPPacketWriter) ClockDisable() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -113,6 +127,10 @@ func (w *RTPPacketWriter) ClockDisable() {
 	w.clockTicker = nil
 }
 
+// ClockEnable restarts the internal media clock ticker.
+//
+// Deprecated: Not part of the stable-handle contract; the clock is owned and
+// managed by the write pipeline. It will be removed.
 func (w *RTPPacketWriter) ClockEnable() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -144,6 +162,9 @@ func (p *RTPPacketWriter) InitTimestamp() uint32 {
 	return p.initTimestamp
 }
 
+// DelayTimestamp shifts next RTP timestamp by an offset.
+//
+// Deprecated: Not part of the stable-handle contract. It will be removed.
 func (p *RTPPacketWriter) DelayTimestamp(ofsset uint32) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -209,6 +230,10 @@ func (p *RTPPacketWriter) writeSamplesUnsafe(writer RTPWriter, payload []byte, s
 	return len(pkt.Payload), err
 }
 
+// Writer returns the raw writer chain element behind the handle.
+//
+// Deprecated: Bypasses the stable-handle pipeline (pause gates, hot swap);
+// write through RTPPacketWriter itself. It will be removed.
 func (w *RTPPacketWriter) Writer() RTPWriter {
 	w.mu.RLock()
 	defer w.mu.RUnlock()

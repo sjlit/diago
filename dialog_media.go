@@ -171,6 +171,11 @@ func (d *DialogMedia) onCloseUnsafe(f func() error) {
 	d.onClose = f
 }
 
+// InitMediaSession manually installs a media session and its stable handles.
+//
+// Deprecated: Media session creation is owned by DialogMedia and driven by the
+// signaling lifecycle (ProgressMedia/Answer, re-INVITE). Manual initialization
+// is not supported; see docs/contracts.md for the ownership model.
 func (d *DialogMedia) InitMediaSession(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -497,7 +502,7 @@ func WithAudioWriterMediaProps(p *MediaProps) AudioWriterOption {
 	}
 }
 
-// WithAudioReaderRTPStats creates RTP Statistics interceptor on audio reader
+// WithAudioWriterRTPStats creates RTP Statistics interceptor on audio writer
 func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
 	return func(d *DialogMedia) error {
 		w := media.RTPStatsWriter{
@@ -585,6 +590,9 @@ func (d *DialogMedia) audioWriterProps(p *MediaProps) (io.Writer, error) {
 
 // SetAudioWriter adds/changes audio reader.
 // Use this when you want to have pipelines of your audio
+//
+// Deprecated: Use AudioWriter options (WithAudioWriterDTMF, WithAudioWriterMonitor)
+// to extend the pipeline; they keep the stable-handle chain consistent.
 func (d *DialogMedia) SetAudioWriter(r io.Writer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

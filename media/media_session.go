@@ -248,6 +248,11 @@ func (s *MediaSession) Init() error {
 	return nil
 }
 
+// InitWithListeners wires pre-created RTP/RTCP listeners into the session.
+//
+// Deprecated: MediaSession setup is performed by diago's signaling layer
+// (see docs/contracts.md). Construct sessions through diago APIs instead;
+// manual init is not part of the supported flow.
 func (s *MediaSession) InitWithListeners(lRTP net.PacketConn, lRTCP net.PacketConn, raddr *net.UDPAddr) {
 	s.Mode = sdp.ModeSendrecv
 	s.rtpConn = lRTP
@@ -266,6 +271,9 @@ func (s *MediaSession) String() string {
 }
 
 // InitWithSDP allows creating media session with own SDP and bypassing other needs
+//
+// Deprecated: MediaSession setup is performed by diago's signaling layer
+// (see docs/contracts.md). Construct sessions through diago APIs instead.
 func (s *MediaSession) InitWithSDP(localSDP []byte) error {
 	s.sdp = localSDP
 	sd := sdp.SessionDescription{}
@@ -1027,6 +1035,10 @@ func (m *MediaSession) ReadRTPRaw(buf []byte) (int, error) {
 	return n, err
 }
 
+// ReadRTPRawDeadline reads raw RTP bytes with a one-shot read deadline.
+//
+// Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
+// gates on RTPPacketReader (PauseRead, ReadContext); see docs/contracts.md §5.
 func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) {
 	m.rtpConn.SetReadDeadline(t)
 	return m.ReadRTPRaw(buf)
@@ -1090,6 +1102,10 @@ func (m *MediaSession) ReadRTCPRaw(buf []byte) (int, net.Addr, error) {
 	return n, a, err
 }
 
+// ReadRTCPRawDeadline reads raw RTCP bytes with a one-shot read deadline.
+//
+// Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
+// gates on RTPPacketReader (PauseRead, ReadContext); see docs/contracts.md §5.
 func (m *MediaSession) ReadRTCPRawDeadline(buf []byte, t time.Time) (int, error) {
 	if m.rtcpConn == nil {
 		// just block
@@ -1189,12 +1205,18 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 	return nil
 }
 
+// WriteRTCPDeadline writes an RTCP packet with a one-shot write deadline.
+//
+// Deprecated: Use RTPPacketWriter (stable handle) for writing; deadline pokes
+// from component code are forbidden, see docs/contracts.md §5.
 func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) error {
 	m.rtcpConn.SetWriteDeadline(deadline)
 	return m.WriteRTCP(p)
 }
 
 // Use this to write Multi RTCP packets if they can fit in MTU=1500
+//
+// Deprecated: Use RTPPacketWriter (stable handle) for writing; see docs/contracts.md §5.
 func (m *MediaSession) WriteRTCPs(pkts []rtcp.Packet) error {
 	data, err := rtcpMarshal(pkts)
 	if err != nil {

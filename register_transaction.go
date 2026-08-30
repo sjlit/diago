@@ -55,6 +55,25 @@ type RegisterOptions struct {
 	// UserAgentHostname string
 }
 
+// Options converts the signal-representable fields (credentials, Contact,
+// Headers) into SignalOptions for use with RegisterTransaction methods. The
+// remaining fields (ProxyHost, Expiry, RetryInterval, AllowHeaders,
+// OnRegistered) configure the transaction itself and have no SignalOption
+// equivalent.
+func (o *RegisterOptions) Options() []SignalOption {
+	var opts []SignalOption
+	if o.Username != "" || o.Password != "" {
+		opts = append(opts, WithAuthCredentials(o.Username, o.Password))
+	}
+	if o.Contact != nil {
+		opts = append(opts, WithContact(o.Contact))
+	}
+	if len(o.Headers) > 0 {
+		opts = append(opts, WithHeaders(o.Headers...))
+	}
+	return opts
+}
+
 type RegisterTransaction struct {
 	opts   RegisterOptions
 	Origin *sip.Request
@@ -113,6 +132,8 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 
 // Register sends the initial REGISTER. Options allow customizing Contact,
 // extra headers and the final request of this registration attempt.
+// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password);
+// credentials fall back to RegisterOptions when not provided via options.
 func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -127,8 +148,25 @@ func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption
 	}
 	return nil
 }
-func (t *RegisterTransaction) register(ctx context.Context, params *SignalParams) error {
+
+// signalCredentials overlays credentials passed via WithAuthCredentials on top
+// of the ones from RegisterOptions. Empty SignalOption fields fall back to the
+// RegisterOptions values.
+func (t *RegisterTransaction) signalCredentials(params *SignalParams) (string, string) {
 	username, password := t.opts.Username, t.opts.Password
+	if params != nil {
+		if params.Dialog.Username != "" {
+			username = params.Dialog.Username
+		}
+		if params.Dialog.Password != "" {
+			password = params.Dialog.Password
+		}
+	}
+	return username, password
+}
+
+func (t *RegisterTransaction) register(ctx context.Context, params *SignalParams) error {
+	username, password := t.signalCredentials(params)
 	client := t.client
 	req := t.Origin.Clone()
 	if err := applyRequestSignal(req, params); err != nil {
@@ -291,6 +329,7 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 }
 
 // Unregister unregisters the contact. Options allow customizing the request.
+// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password).
 func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -306,10 +345,11 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOpti
 	if err := applyRequestSignal(req, params); err != nil {
 		return err
 	}
-	return t.doRequest(ctx, req)
+	return t.doRequest(ctx, req, params)
 }
 
 // Qualify refreshes the registration. Options allow customizing the request.
+// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password).
 func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -319,13 +359,13 @@ func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption)
 	if err := applyRequestSignal(req, params); err != nil {
 		return err
 	}
-	return t.doRequest(ctx, req)
+	return t.doRequest(ctx, req, params)
 }
 
-func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request) error {
+func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, params *SignalParams) error {
 	// log := p.getLoggerCtx(ctx, "Register")
 	client := t.client
-	username, password := t.opts.Username, t.opts.Password
+	username, password := t.signalCredentials(params)
 	// Send request and parse response
 	// req.SetDestination(*dst)
 	req.RemoveHeader("Via")
