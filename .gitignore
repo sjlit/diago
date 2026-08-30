@@ -1,4 +1,6 @@
 /go.work*
+.zcode
+.claude
 /diagox
 /cmd
 /TODO.md

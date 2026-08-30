@@ -226,6 +226,10 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 		SRTPAlg:    conf.SecureRTPAlg,
 		RTPNAT:     conf.RTPNAT,
 		DTLSConf:   conf.DTLSConf,
+
+		RTPPortStart:             conf.RTPPortStart,
+		RTPPortEnd:               conf.RTPPortEnd,
+		SDPCodecPreferLocalOrder: conf.SDPCodecPreferLocalOrder,
 	}
 
 	if err := sess.Init(); err != nil {

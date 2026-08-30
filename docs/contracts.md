@@ -331,12 +331,21 @@ and addresses. Every other option is input-only.
 
 ### Global mutable variables (inventory, see recommendation 4)
 
-`media.RTPPortStart`/`RTPPortEnd`, `media.RTPBufSize`,
-`media.SDPCodecPreferLocalOrder`,
-`media.RTPProfileSAVPDisable`, `media.RTPDebug`, `PlaybackBufferSize`,
-`HTTPDebug`, `DefaultPlaybackHTTPClient` are process-global and mutable. They
-predate the option system; moving them into `MediaConfig`/`Diago` scope is
-tracked as a separate work item.
+Instance-scoped via `MediaConfig` (zero value inherits the package global):
+`RTPPortStart`/`RTPPortEnd` (local RTP port range, fed into the session) and
+`SDPCodecPreferLocalOrder` (per-session negotiation policy). Both are carried
+through `Fork()`. The per-dialog config is built from the global `MediaConfig`
+with transport values overlaid, so all fields propagate.
+
+Kept process-global, deliberately:
+`media.RTPBufSize` (pools and the jitter buffer capture it lazily at first
+use — set once at startup), `media.RTPProfileSAVPDisable` (bool flag where
+"unset" and "false" are indistinguishable, so no clean per-instance fallback),
+debug/log knobs (`media.RTPDebug`, `RTCPDebug`, `RTPDebugTracer`,
+`DTLSDebug`, `SetDefaultLogger`), the RTCP hook defaults and
+`media.RTPSourceLock` (captured once per `NewRTPSession`), plus diago's
+`PlaybackBufferSize`, `HTTPDebug`, `DefaultPlaybackHTTPClient`. Moving any of
+these is a separate work item.
 
 ### Deprecated surface
 
@@ -346,3 +355,71 @@ breaking release. Removed in this round: the unreachable `ReferTransaction`
 cluster (`ReferTransaction`, `OnReferTransactionFunc`,
 `dialogHandleReferTransaction`) — the live REFER path is
 `OnReferDialogFunc`/`dialogHandleRefer`.
+
+## 11. Shutdown and resource ownership
+
+`Diago.Shutdown(ctx)` stops a Diago instance in two phases:
+
+1. **Dialogs first** (signaling still alive): every dialog tracked in the
+   dialog caches is hung up and closed, which also closes its media sockets
+   and evicts the cache entry. Per-dialog hangup behavior:
+   - Confirmed dialog → BYE sent and awaited.
+   - Early server dialog (pre-confirmed) → 480 decline sent (a freshly
+     received INVITE that has not yet reached a state is treated the same).
+   - Confirmed client dialog without an Invite response → `Hangup` returns
+     `ErrDialogNotAnswered`; the dialog is still closed.
+   Each dialog gets a per-dialog hangup timeout bounded by `ctx`
+   (default 3s, see `shutdownDialogHangupTimeout`); errors are joined into
+   the Shutdown return value.
+2. **Listeners last**: the SIP listeners started by `Serve`/`ServeBackground`
+   are cancelled and awaited. Listener teardown races with phase 1: any
+   INVITE admitted by a still-running listener during phase 1 is not part of
+   the walk, but its natural lifecycle (handler return → BYE → `Close` →
+   cache eviction) still cleans it up. The cache entry may therefore stay
+   populated briefly after Shutdown returns; it is not a leak.
+
+State-machine effects on the `Diago` instance:
+
+- `Shutdown` sets the terminal flag immediately on entry, **before** phase 1
+  or 2 run. Once `Shutdown` is called (regardless of outcome), further
+  `Serve`/`ServeBackground` calls return an error and any in-flight `Serve`
+  observes the flag at its second pre-lock check and refuses to spawn
+  listeners.
+- `Shutdown` is idempotent; a second call sees an empty cache and a nil
+  `serveCancel`, returns `nil` (or the residual timeout error from the
+  first call's listener wait).
+- Listeners are not cancelled at Shutdown's first entry; they keep serving
+  until phase 2. Concurrent callers of `Serve` are rejected, not delayed.
+
+Ownership matrix:
+
+| Resource | Owner | Shutdown behavior |
+|---|---|---|
+| Server dialogs (from INVITE) | Diago cache | Hangup + Close |
+| Client dialogs (from ACK/Confirmed) | Diago cache | Hangup + Close |
+| Client dialogs pre-ACK (inviting/early) | Caller (holds the Invite ctx) | Not reachable — cancel the Invite ctx (sends CANCEL), see §6 |
+| RTP/RTCP media sockets | Per dialog | Closed with the dialog |
+| SIP listeners | Diago serve loop | Closed and awaited |
+| `sipgo.UserAgent` | Caller (may be shared by several Diago instances) | NOT closed — call `ua.Close()` yourself |
+| Register transactions / qualify loops | Caller goroutines | Not stopped — cancel their ctx (triggers Unregister), ideally before Shutdown |
+| Bridges | Caller | Reached indirectly through their dialogs |
+| Registered SIP handlers | sipgo (cannot be deregistered) | Harmless: listeners are closed, so no new requests arrive |
+
+Notes:
+- In-flight serve handlers may run concurrently with phase 1; their own
+  Hangup/Close on an already-torn-down dialog is a tolerated no-op path
+  (same semantics as a handler hanging up while the framework tears down,
+  §6). Media I/O after `Close` returns EOF/ErrDialogClosed; handlers should
+  treat those as terminal.
+- If `ctx` expires before the listeners exit, Shutdown returns the timeout
+  error but already-hung-up dialogs stay torn down; media sockets close with
+  dialogs regardless. The terminal flag and `serving` reset are observed by
+  callers even on the timeout path.
+- Passing an already-canceled `ctx` to `Shutdown` makes every per-dialog
+  `Hangup` fail immediately with `context.Canceled`, producing one such error
+  per cached dialog (joined into the return value). For a fast best-effort
+  shutdown, use `context.Background()`; supply a small but positive deadline
+  if you want a hard cap on phase 1.
+- `Shutdown` does not deregister SIP handlers from sipgo — that registry is
+  immutable for the server's lifetime. Once the listeners are closed, no new
+  requests arrive and the handlers become unreachable.

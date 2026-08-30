@@ -16,12 +16,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/dtls/v3"
 	"github.com/emiago/sipgo/sip"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/srtp/v3"
+	"github.com/sjlit/diago/media/sdp"
 )
 
 // RTPTracer receives decoded RTP packets when RTPDebug is enabled.
@@ -34,12 +34,18 @@ type RTPTracer interface {
 }
 
 var (
-	// RTPPortStart and RTPPortEnd allows defining rtp port range for media
+	// RTPPortStart and RTPPortEnd allows defining rtp port range for media.
+	// They are the process-wide fallback: MediaConfig.RTPPortStart/RTPPortEnd
+	// (and the per-session fields set from it) take precedence when non-zero.
 	RTPPortStart  = 0
 	RTPPortEnd    = 0
 	rtpPortOffset = atomic.Int32{}
 
-	// When reading RTP use at least MTU size. Increase this
+	// RTPBufSize is the minimum size of buffers used on RTP read paths (MTU
+	// guard). It is a PROCESS-WIDE constant: sync.Pools and the jitter buffer
+	// capture it lazily at first use, so changing it mid-process has
+	// inconsistent effect. Set it once at startup before any media flows.
+	// There is intentionally no per-instance override yet.
 	RTPBufSize = 1500
 
 	// RTPDebug/RTCPDebug enable synchronous packet tracing on media paths.
@@ -51,16 +57,22 @@ var (
 	// RTPProfileSAVPDisable disables offering RTP/SAVP and keeps standard RTP/AVP for backward compatibilit needs
 	//
 	// Experimental
+	// Kept process-global: it is a bool flag where "unset" and "false" are
+	// indistinguishable, so a per-instance override cannot fall back cleanly.
 	RTPProfileSAVPDisable = false
-
-	// RTPNAT options
-	RTPNATDisabled = 0
-	RTPNATSymetric = 1
 
 	// SDP codec exchanges
 	// 0 (Default) - answerer prefers offerer order recomended by rfc
 	// 1 - answerer prefers local order
+	// Process-wide fallback: MediaConfig.SDPCodecPreferLocalOrder (and the
+	// per-session field set from it) takes precedence when non-zero.
 	SDPCodecPreferLocalOrder int = 0
+)
+
+// RTPNAT options
+const (
+	RTPNATDisabled = 0
+	RTPNATSymetric = 1
 )
 
 // RTPDebugTracer sets the tracer used when RTPDebug is enabled.
@@ -156,6 +168,14 @@ type MediaSession struct {
 	Codecs []Codec
 
 	sdp []byte
+
+	// Creation-time config normally set from diago's MediaConfig. Zero values
+	// fall back to the package globals (RTPPortStart/RTPPortEnd,
+	// SDPCodecPreferLocalOrder). Set only in the Config phase (before Init);
+	// carried through Fork for re-INVITE consistency.
+	RTPPortStart             int
+	RTPPortEnd               int
+	SDPCodecPreferLocalOrder int
 
 	// Mode is sdp mode. Check consts sdp.ModeRecvOnly etc...
 	Mode string
@@ -364,6 +384,12 @@ func (s *MediaSession) Fork() *MediaSession {
 		remoteProto:   s.remoteProto,
 		srtpRemoteTag: s.srtpRemoteTag,
 		DTLSConf:      s.DTLSConf,
+
+		// Carry creation-time config so re-INVITE forks keep the same
+		// port range and negotiation policy.
+		RTPPortStart:             s.RTPPortStart,
+		RTPPortEnd:               s.RTPPortEnd,
+		SDPCodecPreferLocalOrder: s.SDPCodecPreferLocalOrder,
 	}
 	return &cp
 }
@@ -819,8 +845,13 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 
 	DefaultLogger().Debug("Remote Codecs Update", "local", s.Codecs, "remote", codecs)
 
-	// Some systems may like to answer with local order of preference
-	if SDPCodecPreferLocalOrder > 0 && answerer {
+	// Some systems may like to answer with local order of preference.
+	// Per-session value from MediaConfig wins; fall back to the package global.
+	preferLocalOrder := s.SDPCodecPreferLocalOrder
+	if preferLocalOrder == 0 {
+		preferLocalOrder = SDPCodecPreferLocalOrder
+	}
+	if preferLocalOrder > 0 && answerer {
 		filter := make([]Codec, 0, len(codecs))
 		for _, lc := range s.Codecs {
 			for _, c := range codecs {
@@ -874,17 +905,27 @@ func (s *MediaSession) DTMFCodec() Codec {
 
 // Listen creates listeners instead
 func (s *MediaSession) createListeners(laddr *net.UDPAddr) error {
+	// Per-session port range from MediaConfig; fall back to package globals
+	// when unset (zero).
+	portStart, portEnd := s.RTPPortStart, s.RTPPortEnd
+	if portStart == 0 {
+		portStart = RTPPortStart
+	}
+	if portEnd == 0 {
+		portEnd = RTPPortEnd
+	}
+
 	// var err error
 
 	if laddr.Port != 0 {
 		return s.listenRTPandRTCP(laddr)
 	}
 
-	if laddr.Port == 0 && RTPPortStart > 0 && RTPPortEnd > RTPPortStart {
+	if laddr.Port == 0 && portStart > 0 && portEnd > portStart {
 		// Get next available port
-		port := RTPPortStart + int(rtpPortOffset.Load())
+		port := portStart + int(rtpPortOffset.Load())
 		var err error
-		for ; port < RTPPortEnd; port += 2 {
+		for ; port < portEnd; port += 2 {
 			laddr.Port = port
 			err = s.listenRTPandRTCP(laddr)
 			if err == nil {
@@ -892,10 +933,10 @@ func (s *MediaSession) createListeners(laddr *net.UDPAddr) error {
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("no available ports in range %d:%d: %w", RTPPortStart, RTPPortEnd, err)
+			return fmt.Errorf("no available ports in range %d:%d: %w", portStart, portEnd, err)
 		}
 		// Add some offset so that we use more from range
-		offset := (port + 2 - RTPPortStart) % (RTPPortEnd - RTPPortStart)
+		offset := (port + 2 - portStart) % (portEnd - portStart)
 		rtpPortOffset.Store(int32(offset)) // Reset to zero with module
 		return nil
 	}
