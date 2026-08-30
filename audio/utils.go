@@ -74,7 +74,10 @@ func FadeOut(pcmData []byte, props PCMProps, dur time.Duration) error {
 }
 
 func PCMMix(dstBuf []byte, mixedBuf []byte, readBuf []byte) int {
-	n := len(readBuf)
+	// Keep 16-bit sample alignment across all buffers, otherwise an odd-sized
+	// or short read would panic on the last 2-byte sample
+	n := min(len(dstBuf), len(mixedBuf), len(readBuf))
+	n &^= 1
 	for i := 0; i < n; i += 2 {
 		current := int16(binary.LittleEndian.Uint16(mixedBuf[i:]))
 		frame := int16(binary.LittleEndian.Uint16(readBuf[i:]))
@@ -96,7 +99,10 @@ func PCMMix(dstBuf []byte, mixedBuf []byte, readBuf []byte) int {
 }
 
 func PCMUnmix(dstBuf []byte, mixedBuf []byte, readBuf []byte) {
-	n := len(readBuf)
+	// Keep 16-bit sample alignment across all buffers, otherwise an odd-sized
+	// or short read would panic on the last 2-byte sample
+	n := min(len(dstBuf), len(mixedBuf), len(readBuf))
+	n &^= 1
 	for i := 0; i < n; i += 2 {
 		current := int16(binary.LittleEndian.Uint16(mixedBuf[i:]))
 		frame := int16(binary.LittleEndian.Uint16(readBuf[i:]))

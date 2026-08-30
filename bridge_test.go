@@ -337,3 +337,13 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 	})
 }
+
+// Regression: unmixStream used to process the full mix length even when the
+// stream contributed fewer bytes, writing stale buffer bytes to the wire
+func TestUnmixStreamShortBuffer(t *testing.T) {
+	mixed := []byte{10, 0, 20, 0, 30, 0}
+	stream := []byte{5, 0} // only one sample read from this stream
+
+	out := unmixStream(stream, mixed)
+	require.Equal(t, []byte{5, 0}, out)
+}

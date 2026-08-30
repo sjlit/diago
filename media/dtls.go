@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 
 	"github.com/emiago/dtls/v3"
 	"github.com/emiago/dtls/v3/pkg/crypto/elliptic"
@@ -18,7 +19,9 @@ import (
 )
 
 var (
-	DTLSDebug bool
+	// DTLSDebug enables DTLS handshake logging. Atomic so it can be flipped
+	// while handshakes run
+	DTLSDebug atomic.Bool
 )
 
 const (
@@ -110,7 +113,7 @@ func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
 		}
 	}
 
-	if DTLSDebug {
+	if DTLSDebug.Load() {
 		loggerFactory := logging.NewDefaultLoggerFactory()
 		loggerFactory.DefaultLogLevel = logging.LogLevelTrace
 		config.LoggerFactory = loggerFactory

@@ -11,15 +11,16 @@ import (
 
 type AudioStereoRecordingWav struct {
 	wawWriter *audio.WavWriter
-	mon       audio.MonitorPCMStereo
+	// mon is a pointer, the monitor embeds mutexes and must never be copied by value
+	mon *audio.MonitorPCMStereo
 }
 
 func (r *AudioStereoRecordingWav) AudioReader() *audio.MonitorPCMStereo {
-	return &r.mon
+	return r.mon
 }
 
 func (r *AudioStereoRecordingWav) AudioWriter() *audio.MonitorPCMStereo {
-	return &r.mon
+	return r.mon
 }
 
 func (r *AudioStereoRecordingWav) Close() error {
@@ -29,22 +30,22 @@ func (r *AudioStereoRecordingWav) Close() error {
 	)
 }
 
-func newDialogRecordingWav(wawFile *os.File, ar io.Reader, arProps MediaProps, aw io.Writer, awProps MediaProps) (AudioStereoRecordingWav, error) {
+func newDialogRecordingWav(wawFile *os.File, ar io.Reader, arProps MediaProps, aw io.Writer, awProps MediaProps) (*AudioStereoRecordingWav, error) {
 	if arProps.Codec != awProps.Codec {
-		return AudioStereoRecordingWav{}, fmt.Errorf("codecs of reader and writer need to match for stereo")
+		return nil, fmt.Errorf("codecs of reader and writer need to match for stereo")
 	}
 	codec := awProps.Codec
 	// Create wav file to store recording
 	// Now create WavWriter to have Wav Container written
 	wavWriter := audio.NewWavWriter(wawFile)
 
-	mon := audio.MonitorPCMStereo{}
+	mon := &audio.MonitorPCMStereo{}
 	if err := mon.Init(wavWriter, codec, ar, aw); err != nil {
 		wavWriter.Close()
-		return AudioStereoRecordingWav{}, err
+		return nil, err
 	}
 
-	r := AudioStereoRecordingWav{
+	r := &AudioStereoRecordingWav{
 		wawWriter: wavWriter,
 		mon:       mon,
 	}

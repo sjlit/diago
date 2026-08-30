@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"sync"
 	"time"
@@ -15,6 +16,14 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 )
+
+// u32Saturate converts to uint32 saturating at the largest value instead of truncating
+func u32Saturate(v uint64) uint32 {
+	if v > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(v)
+}
 
 // RTP session is RTP ReadWriter with control (RTCP) reporting
 // Session is identified by network address and port pair to which data should be sent and received
@@ -76,9 +85,11 @@ type RTPReadStats struct {
 	FirstPktSequenceNumber uint16
 	LastSequenceNumber     uint16
 	lastSeq                RTPExtendedSequenceNumber
-	// tracks first pkt seq in this interval to calculate loss of packets
-	IntervalFirstPktSeqNum uint16
-	IntervalPacketsCount   uint16
+	// tracks first pkt seq in this interval to calculate loss of packets.
+	// Ext variant keeps cycles, so interval math survives sequence wrap
+	IntervalFirstPktSeqNum    uint16
+	IntervalFirstPktSeqNumExt uint64
+	IntervalPacketsCount      uint16
 
 	PacketsCount uint64
 	OctetCount   uint64
@@ -345,6 +356,7 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 
 	if stats.IntervalFirstPktSeqNum == 0 {
 		stats.IntervalFirstPktSeqNum = readPkt.SequenceNumber
+		stats.IntervalFirstPktSeqNumExt = stats.lastSeq.ReadExtendedSeq()
 	}
 
 	// stats.lastRTPTime = now
@@ -451,7 +463,10 @@ func (s *RTPSession) Monitor() error {
 		return err
 	}
 
-	errchan := make(chan error)
+	// Buffered so the reader goroutine can always deliver its result and run
+	// monitorWG.Done(), even when Monitor() already returned via rtcpClosed.
+	// Unbuffered here deadlocks MonitorClose(), which waits on monitorWG.
+	errchan := make(chan error, 1)
 	go func() {
 		defer s.monitorWG.Done()
 		errchan <- s.readRTCP()
@@ -653,6 +668,7 @@ func (s *RTPSession) writeRTCP(now time.Time) error {
 
 	// Reset any current reading interval stats
 	s.readStats.IntervalFirstPktSeqNum = 0
+	s.readStats.IntervalFirstPktSeqNumExt = 0
 	s.readStats.IntervalPacketsCount = 0
 
 	// Add interceptor
@@ -689,8 +705,8 @@ func (s *RTPSession) parseSenderReport(senderReport *rtcp.SenderReport, now time
 		SSRC:        ssrc,
 		NTPTime:     NTPTimestamp(now),
 		RTPTime:     writeStats.lastPacketTimestamp + uint32(rtpTimestampOffset),
-		PacketCount: uint32(min(writeStats.PacketsCount, 1<<32)), // Saturate to largest 32 bit value
-		OctetCount:  uint32(min(writeStats.OctetCount, 1<<32)),
+		PacketCount: u32Saturate(writeStats.PacketsCount),
+		OctetCount:  u32Saturate(writeStats.OctetCount),
 	}
 
 	if s.readStats.SSRC > 0 {
@@ -701,17 +717,22 @@ func (s *RTPSession) parseSenderReport(senderReport *rtcp.SenderReport, now time
 }
 
 func (s *RTPSession) parseReceptionReport(receptionReport *rtcp.ReceptionReport, now time.Time) {
-	var sequenceCycles uint16 = 0 // TODO have sequence cycles handled
-
 	// Read stats
 	readStats := &s.readStats
 	lastExtendedSeq := &readStats.lastSeq
+	extendedSeq := lastExtendedSeq.ReadExtendedSeq()
 
 	// fraction loss is caluclated as packets loss / number expected in interval as fixed point number with point number at the left edge
-	receivedLastSeq := int64(lastExtendedSeq.ReadExtendedSeq())
-	readIntervalExpectedPkts := receivedLastSeq - int64(readStats.IntervalFirstPktSeqNum)
+	receivedLastSeq := int64(extendedSeq)
+	readIntervalExpectedPkts := receivedLastSeq - int64(readStats.IntervalFirstPktSeqNumExt)
 	readIntervalLost := max(readIntervalExpectedPkts-int64(readStats.IntervalPacketsCount), 0)
-	fractionLost := float64(readIntervalLost) / float64(readIntervalExpectedPkts) // Can be negative
+	// Empty interval (no packets arrived since last report, e.g. peer muted or stream
+	// stalled) has no meaningful loss fraction and is reported as zero, never as
+	// fabricated 100% loss. Single packet intervals guard against division by zero
+	fractionLost := 0.0
+	if readStats.IntervalPacketsCount > 0 && readIntervalExpectedPkts > 0 {
+		fractionLost = float64(readIntervalLost) / float64(readIntervalExpectedPkts)
+	}
 
 	// Watch OUT FOR -1
 	expectedPkts := uint64(receivedLastSeq) - uint64(readStats.FirstPktSequenceNumber)
@@ -729,12 +750,12 @@ func (s *RTPSession) parseReceptionReport(receptionReport *rtcp.ReceptionReport,
 	// TODO handle multiple SSRC
 	*receptionReport = rtcp.ReceptionReport{
 		SSRC:               readStats.SSRC,
-		FractionLost:       uint8(max(fractionLost*256, 0)),                         // Can be negative. Saturate to zero
-		TotalLost:          uint32(min(expectedPkts-readStats.PacketsCount, 1<<32)), // Saturate to largest 32 bit value
-		LastSequenceNumber: uint32(sequenceCycles)<<16 + uint32(readStats.LastSequenceNumber),
+		FractionLost:       uint8(max(fractionLost*256, 0)), // Can be negative. Saturate to zero
+		TotalLost:          u32Saturate(expectedPkts - readStats.PacketsCount),
+		LastSequenceNumber: uint32(extendedSeq & 0xFFFFFFFF),            // 16 bit cycles + 16 bit seq
 		Jitter:             uint32(readStats.jitter),                    // TODO
 		LastSenderReport:   uint32(readStats.lastSenderReportNTP >> 16), // LSR
-		Delay:              uint32(delay.Seconds() * 65356),             // DLSR
+		Delay:              uint32(delay.Seconds() * 65536),             // DLSR
 	}
 }
 
@@ -750,7 +771,7 @@ func calcRTT(now time.Time, lastSenderReport uint32, delaySenderReport uint32) (
 	skewed = now32-delaySenderReport < lastSenderReport
 
 	secs := rtt32 & 0xFFFF0000 >> 16           // higher 16 bits
-	fracs := float64(rtt32&0x0000FFFF) / 65356 // lower 16 bits
+	fracs := float64(rtt32&0x0000FFFF) / 65536 // lower 16 bits
 	rtt = time.Duration(secs)*time.Second + time.Duration(fracs*float64(time.Second))
 
 	return

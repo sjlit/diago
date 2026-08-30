@@ -35,11 +35,11 @@ func (t *testRTPTracer) RTPTraceWrite(laddr string, raddr string, packet *rtp.Pa
 }
 
 func TestRTPDebugTracer(t *testing.T) {
-	prevDebug := RTPDebug
-	prevTracer := rtpTracer
-	prevLogger := defLogger
+	prevDebug := RTPDebug.Load()
+	prevTracer := rtpTracerCurrent()
+	prevLogger := defLoggerPtr.Load()
 	t.Cleanup(func() {
-		RTPDebug = prevDebug
+		RTPDebug.Store(prevDebug)
 		RTPDebugTracer(prevTracer)
 		SetDefaultLogger(prevLogger)
 	})
@@ -59,11 +59,11 @@ func TestRTPDebugTracer(t *testing.T) {
 		Payload: []byte("payload"),
 	}
 
-	RTPDebug = false
+	RTPDebug.Store(false)
 	require.NoError(t, sess.WriteRTP(pkt))
 	require.Empty(t, tracer.writes)
 
-	RTPDebug = true
+	RTPDebug.Store(true)
 	require.NoError(t, sess.WriteRTP(pkt))
 	require.Len(t, tracer.writes, 1)
 	require.Equal(t, sess.Laddr.String(), tracer.writes[0].laddr)
@@ -93,7 +93,7 @@ func TestRTPDebugTracer(t *testing.T) {
 	require.Equal(t, pkt.Payload, tracer.reads[0].packet.Payload)
 
 	RTPDebugTracer(nil)
-	require.Nil(t, rtpTracer)
+	require.Nil(t, rtpTracerCurrent())
 
 	var logs bytes.Buffer
 	SetDefaultLogger(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -102,15 +102,15 @@ func TestRTPDebugTracer(t *testing.T) {
 }
 
 func TestRTPDebugTracerSkipsFailedWrite(t *testing.T) {
-	prevDebug := RTPDebug
-	prevTracer := rtpTracer
+	prevDebug := RTPDebug.Load()
+	prevTracer := rtpTracerCurrent()
 	t.Cleanup(func() {
-		RTPDebug = prevDebug
+		RTPDebug.Store(prevDebug)
 		RTPDebugTracer(prevTracer)
 	})
 
 	tracer := &testRTPTracer{}
-	RTPDebug = true
+	RTPDebug.Store(true)
 	RTPDebugTracer(tracer)
 
 	sess := &MediaSession{

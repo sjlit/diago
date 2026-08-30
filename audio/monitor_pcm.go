@@ -311,6 +311,9 @@ func (m *MonitorPCMStereo) interleave() error {
 		clear(readBuf1[n1:n])
 		clear(readBuf2[n2:n])
 
+		// Keep 16-bit sample alignment on a final partial chunk
+		n &^= 1
+
 		// interleave
 		copyN := 0
 		for i, j := 0, 0; i < n; i += size {

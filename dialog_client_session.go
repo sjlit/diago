@@ -517,8 +517,8 @@ func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) err
 
 	// NOTE it generally advisable todo this after successfull ACK:
 	// Server may not even listen yet as it is waiting for ACK
-	if d.mediaSession != nil {
-		if err := d.mediaSession.Finalize(); err != nil {
+	if ms := d.MediaSession(); ms != nil {
+		if err := ms.Finalize(); err != nil {
 			return err
 		}
 	}
@@ -562,6 +562,10 @@ func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption
 	}
 
 	d.mu.Lock()
+	if d.mediaSession == nil {
+		d.mu.Unlock()
+		return errors.New("dialog session not answered")
+	}
 	sdpBody := d.mediaSession.LocalSDP()
 	contact := d.remoteContactUnsafe()
 	d.mu.Unlock()
@@ -765,7 +769,12 @@ func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerT
 		}
 	}
 
-	return d.mediaSession.Finalize()
+	// Read via locked getter: sdpUpdateUnsafe above may have replaced the media
+	// session, and a BYE/re-INVITE on another transaction goroutine writes it too
+	if ms := d.MediaSession(); ms != nil {
+		return ms.Finalize()
+	}
+	return nil
 }
 
 func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTransaction) error {
@@ -778,7 +787,11 @@ func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) er
 	if err != nil {
 		return err
 	}
-	m := d.MediaSession().Fork()
+	ms := d.MediaSession()
+	if ms == nil {
+		return errors.New("dialog session not answered")
+	}
+	m := ms.Fork()
 	m.Mode = sdp.ModeSendonly
 	if err := d.reInviteMediaSession(ctx, m, params); err != nil {
 		return err
@@ -792,7 +805,11 @@ func (d *DialogClientSession) Unhold(ctx context.Context, opts ...SignalOption) 
 	if err != nil {
 		return err
 	}
-	m := d.MediaSession().Fork()
+	ms := d.MediaSession()
+	if ms == nil {
+		return errors.New("dialog session not answered")
+	}
+	m := ms.Fork()
 	m.Mode = sdp.ModeSendrecv
 	if err := d.reInviteMediaSession(ctx, m, params); err != nil {
 		return err

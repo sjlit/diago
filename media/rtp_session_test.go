@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -290,6 +291,98 @@ func TestRTPSessionFork(t *testing.T) {
 	require.NoError(t, fork.MonitorClose())
 }
 
+// Regression: blocking Monitor() leaked its RTCP reader goroutine when returning
+// via rtcpClosed, which deadlocked any later MonitorClose() on monitorWG.Wait()
+func TestRTPSessionMonitorCloseAfterMonitor(t *testing.T) {
+	rtpConn, rtpPeer := net.Pipe()
+	rtcpConn, rtcpPeer := net.Pipe()
+	t.Cleanup(func() {
+		_ = rtpPeer.Close()
+		_ = rtcpPeer.Close()
+	})
+
+	sess := &MediaSession{
+		Codecs:    []Codec{CodecAudioUlaw},
+		Mode:      sdp.ModeSendrecv,
+		Laddr:     net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234},
+		Raddr:     net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9876},
+		rtcpRaddr: net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9877},
+		rtpConn:   &pipePacketConn{Conn: rtpConn},
+		rtcpConn:  &pipePacketConn{Conn: rtcpConn},
+	}
+	rtpSess := NewRTPSession(sess)
+
+	monitorDone := make(chan struct{})
+	var monitorErr error
+	go func() {
+		defer close(monitorDone)
+		monitorErr = rtpSess.Monitor()
+	}()
+
+	require.NoError(t, rtpSess.MonitorClose())
+
+	select {
+	case <-time.After(3 * time.Second):
+		t.Error("MonitorClose did not return, monitor goroutines leaked")
+	case <-monitorDone:
+	}
+	// Monitor may legitimately report the session as closed when Close() races
+	// with its startup. The regression this test guards is the deadlock above
+	if monitorErr != nil {
+		t.Logf("Monitor returned: %v", monitorErr)
+	}
+}
+
+func TestReceptionReportFractionLost(t *testing.T) {
+	newSess := func() *RTPSession {
+		s := &RTPSession{}
+		s.readStats.SSRC = 1234
+		s.readStats.FirstPktSequenceNumber = 100
+		s.readStats.PacketsCount = 10
+		return s
+	}
+
+	// Regression: interval without received packets (peer muted, stream stalled)
+	// used to be reported as 100% packet loss (FractionLost=255)
+	t.Run("empty interval reports zero loss", func(t *testing.T) {
+		s := newSess()
+		s.readStats.IntervalFirstPktSeqNumExt = 0
+		s.readStats.IntervalPacketsCount = 0
+		s.readStats.lastSeq.InitSeq(100)
+		s.readStats.lastSeq.UpdateSeq(200)
+
+		rr := rtcp.ReceptionReport{}
+		s.parseReceptionReport(&rr, time.Now())
+		assert.Equal(t, uint8(0), rr.FractionLost)
+	})
+
+	// Regression: exactly one packet in interval produced division by zero (NaN)
+	t.Run("single packet interval", func(t *testing.T) {
+		s := newSess()
+		s.readStats.IntervalFirstPktSeqNumExt = 200
+		s.readStats.IntervalPacketsCount = 1
+		s.readStats.lastSeq.InitSeq(100)
+		s.readStats.lastSeq.UpdateSeq(200)
+
+		rr := rtcp.ReceptionReport{}
+		s.parseReceptionReport(&rr, time.Now())
+		assert.Equal(t, uint8(0), rr.FractionLost)
+	})
+
+	t.Run("loss fraction", func(t *testing.T) {
+		s := newSess()
+		// 10 expected, 8 received in the interval
+		s.readStats.IntervalFirstPktSeqNumExt = 100
+		s.readStats.IntervalPacketsCount = 8
+		s.readStats.lastSeq.InitSeq(100)
+		s.readStats.lastSeq.UpdateSeq(110)
+
+		rr := rtcp.ReceptionReport{}
+		s.parseReceptionReport(&rr, time.Now())
+		assert.Equal(t, uint8(51), rr.FractionLost) // 2/10 * 256
+	})
+}
+
 func TestRTTCalc(t *testing.T) {
 	now := time.Now()
 	lsrTime := now.Add(-6 * time.Second)
@@ -300,7 +393,7 @@ func TestRTTCalc(t *testing.T) {
 	assert.False(t, skewed)
 	assert.Equal(t, 6*time.Second, dur)
 
-	dur, skewed = calcRTT(now, lsr, 5*65356) // Delay was 5 second
+	dur, skewed = calcRTT(now, lsr, 5*65536) // Delay was 5 second
 	assert.False(t, skewed)
 	// Due to dividing this can not be exact
 	assert.GreaterOrEqual(t, dur, 1*time.Second)
@@ -342,7 +435,10 @@ func TestRTPSessionSourceLockProtection(t *testing.T) {
 	rtpSessRead, rtpSessWrite := pipeRTP(9876, 1234)
 	rtpSessRead.sourceLock = true // Enable source locking
 
+	var writerDone sync.WaitGroup
+	writerDone.Add(1)
 	go func() {
+		defer writerDone.Done()
 		var seq uint16 = 1
 		for ; seq < 5; seq++ {
 			pkt := rtp.Packet{
@@ -361,4 +457,7 @@ func TestRTPSessionSourceLockProtection(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, uint16(4), pkt.SequenceNumber)
+	// Wait for the writer, otherwise its RTP writes race with the next test
+	// swapping global RTPDebug/tracer hooks
+	writerDone.Wait()
 }

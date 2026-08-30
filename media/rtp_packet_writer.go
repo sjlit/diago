@@ -149,21 +149,28 @@ func (p *RTPPacketWriter) DelayTimestamp(ofsset uint32) {
 // Write implements io.Writer and does payload RTP packetization
 // Media clock rate is determined
 // For more control or dynamic payload WriteSamples can be used
-// It is not thread safe and order of payload frames is required
+// Concurrent writes are serialized with internal lock, but payload frame order
+// is a caller responsibility
 func (p *RTPPacketWriter) Write(b []byte) (int, error) {
-	p.mu.RLock()
+	p.mu.Lock()
+	ticker := p.clockTicker
 	n, err := p.writeSamplesUnsafe(p.writer, b, p.sampleRateTimestamp, p.nextTimestamp == p.initTimestamp, p.codec.PayloadType)
-	p.mu.RUnlock()
-	p.lastSampleTime = <-p.clockTicker.C
+	p.lastSampleTime = time.Now()
+	p.mu.Unlock()
+
+	if ticker != nil {
+		// Pace the stream with sample duration outside of the lock
+		<-ticker.C
+	}
 	return n, err
 }
 
 // WriteSamples allows to skip default packet rate.
 // This is useful if you need to write different payload but keeping same SSRC
 func (p *RTPPacketWriter) WriteSamples(payload []byte, sampleRateTimestamp uint32, marker bool, payloadType uint8) (int, error) {
-	p.mu.RLock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	n, err := p.writeSamplesUnsafe(p.writer, payload, sampleRateTimestamp, marker, payloadType)
-	p.mu.RUnlock()
 	return n, err
 }
 

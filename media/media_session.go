@@ -42,9 +42,11 @@ var (
 	// When reading RTP use at least MTU size. Increase this
 	RTPBufSize = 1500
 
-	RTPDebug  = false
-	RTCPDebug = false
-	rtpTracer RTPTracer
+	// RTPDebug/RTCPDebug enable synchronous packet tracing on media paths.
+	// Atomic so tests and examples can flip them while media runs
+	RTPDebug     atomic.Bool
+	RTCPDebug    atomic.Bool
+	rtpTracerPtr atomic.Pointer[RTPTracer]
 
 	// RTPProfileSAVPDisable disables offering RTP/SAVP and keeps standard RTP/AVP for backward compatibilit needs
 	//
@@ -65,18 +67,30 @@ var (
 // Passing nil restores the default RTP debug logging.
 // It must be called before RTP traffic starts.
 func RTPDebugTracer(t RTPTracer) {
-	rtpTracer = t
+	if t == nil {
+		rtpTracerPtr.Store(nil)
+		return
+	}
+	rtpTracerPtr.Store(&t)
+}
+
+// rtpTracerCurrent returns the currently installed tracer
+func rtpTracerCurrent() RTPTracer {
+	if p := rtpTracerPtr.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 func logRTPRead(m *MediaSession, raddr net.Addr, p *rtp.Packet) {
-	if !RTPDebug {
+	if !RTPDebug.Load() {
 		return
 	}
 
 	laddr := m.Laddr.String()
 	raddrStr := raddr.String()
-	if rtpTracer != nil {
-		rtpTracer.RTPTraceRead(laddr, raddrStr, p)
+	if tracer := rtpTracerCurrent(); tracer != nil {
+		tracer.RTPTraceRead(laddr, raddrStr, p)
 		return
 	}
 
@@ -84,14 +98,14 @@ func logRTPRead(m *MediaSession, raddr net.Addr, p *rtp.Packet) {
 }
 
 func logRTPWrite(m *MediaSession, p *rtp.Packet) {
-	if !RTPDebug {
+	if !RTPDebug.Load() {
 		return
 	}
 
 	laddr := m.Laddr.String()
 	raddr := m.Raddr.String()
-	if rtpTracer != nil {
-		rtpTracer.RTPTraceWrite(laddr, raddr, p)
+	if tracer := rtpTracerCurrent(); tracer != nil {
+		tracer.RTPTraceWrite(laddr, raddr, p)
 		return
 	}
 
@@ -99,7 +113,7 @@ func logRTPWrite(m *MediaSession, p *rtp.Packet) {
 }
 
 func logRTCPRead(m *MediaSession, pkts []rtcp.Packet) {
-	if RTCPDebug {
+	if RTCPDebug.Load() {
 		laddr := m.rtcpConn.LocalAddr()
 		for _, p := range pkts {
 			DefaultLogger().Debug(fmt.Sprintf("RTCP read %s < %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
@@ -108,7 +122,7 @@ func logRTCPRead(m *MediaSession, pkts []rtcp.Packet) {
 }
 
 func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
-	if RTCPDebug {
+	if RTCPDebug.Load() {
 		laddr := m.rtcpConn.LocalAddr()
 		DefaultLogger().Debug(fmt.Sprintf("RTCP write %s > %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
 	}
@@ -306,7 +320,14 @@ func (s *MediaSession) Fork() *MediaSession {
 		sdp:            slices.Clone(s.sdp),
 		sessionID:      s.sessionID,
 		sessionVersion: s.sessionVersion,
-		DTLSConf:       s.DTLSConf,
+		// Preserve negotiated security state, otherwise re-INVITE would downgrade
+		// secured calls to plain RTP. SRTP contexts and DTLS connection are
+		// re-established by the offer/answer path itself.
+		SecureRTP:     s.SecureRTP,
+		SRTPAlg:       s.SRTPAlg,
+		remoteProto:   s.remoteProto,
+		srtpRemoteTag: s.srtpRemoteTag,
+		DTLSConf:      s.DTLSConf,
 	}
 	return &cp
 }
@@ -742,6 +763,13 @@ func (s *MediaSession) Finalize() error {
 	return nil
 }
 
+// codecsMatch compares codecs by their media properties, ignoring payload type.
+// Payload type is negotiated per peer and may differ from our local defaults
+// (e.g. browsers commonly offer opus at PT 111 instead of 96).
+func codecsMatch(a, b Codec) bool {
+	return strings.EqualFold(a.Name, b.Name) && a.SampleRate == b.SampleRate && a.NumChannels == b.NumChannels
+}
+
 func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 	if len(s.Codecs) == 0 {
 		s.Codecs = codecs
@@ -753,9 +781,11 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 	// Some systems may like to answer with local order of preference
 	if SDPCodecPreferLocalOrder > 0 && answerer {
 		filter := make([]Codec, 0, len(codecs))
-		for _, rc := range s.Codecs {
+		for _, lc := range s.Codecs {
 			for _, c := range codecs {
-				if c == rc {
+				// Match by media properties, not payload type. Remote payload type
+				// is adopted so that the answer mirrors the offer (RFC 3264)
+				if codecsMatch(lc, c) {
 					filter = append(filter, c)
 					break
 				}
@@ -768,8 +798,8 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 	filter := codecs[:0] // reuse buffer
 	for _, rc := range codecs {
 		for _, c := range s.Codecs {
-			if c == rc {
-				filter = append(filter, c)
+			if codecsMatch(rc, c) {
+				filter = append(filter, rc)
 				break
 			}
 		}
@@ -782,6 +812,23 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 // NOTE: Not thread safe, should be called after negotiation Only!
 func (s *MediaSession) CommonCodecs() []Codec {
 	return s.filterCodecs
+}
+
+// DTMFCodec returns negotiated telephone-event codec. DTMF payload type is
+// negotiated per peer (RFC 4733), so it may differ from the default constant.
+// Falls back to the default codec when DTMF was not negotiated.
+// NOTE: Not thread safe, should be called after negotiation Only!
+func (s *MediaSession) DTMFCodec() Codec {
+	codecs := s.filterCodecs
+	if len(codecs) == 0 {
+		codecs = s.Codecs
+	}
+	for _, c := range codecs {
+		if strings.EqualFold(c.Name, CodecTelephoneEvent8000.Name) {
+			return c
+		}
+	}
+	return CodecTelephoneEvent8000
 }
 
 // Listen creates listeners instead
@@ -963,8 +1010,10 @@ func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err erro
 
 	if m.remoteCtxSRTP != nil {
 		data, err = m.remoteCtxSRTP.DecryptRTCP(data, data, nil)
-		if err != nil && false {
-			// For some unknown cases Decryption could fail
+		if err != nil {
+			// Dropping the packet and surfacing the error beats feeding ciphertext
+			// into unmarshal, which would silently kill RTCP feedback forever
+			DefaultLogger().Error("Failed to decrypt SRTCP", "error", err)
 			return 0, errors.Join(errRTCPFailedToUnmarshal, err)
 		}
 	}
@@ -1200,19 +1249,19 @@ func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile str
 	formatsMap := []string{}
 	for i, f := range codecs {
 		// TODO should we just go generic
-		switch f.PayloadType {
-		case CodecAudioUlaw.PayloadType:
+		switch {
+		case f.PayloadType == CodecAudioUlaw.PayloadType && f.Name == CodecAudioUlaw.Name:
 			formatsMap = append(formatsMap, "a=rtpmap:0 PCMU/8000")
-		case CodecAudioAlaw.PayloadType:
+		case f.PayloadType == CodecAudioAlaw.PayloadType && f.Name == CodecAudioAlaw.Name:
 			formatsMap = append(formatsMap, "a=rtpmap:8 PCMA/8000")
-		case CodecAudioOpus.PayloadType:
-			formatsMap = append(formatsMap, "a=rtpmap:96 opus/48000/2")
+		case strings.EqualFold(f.Name, CodecAudioOpus.Name):
+			formatsMap = append(formatsMap, fmt.Sprintf("a=rtpmap:%d opus/%d/%d", f.PayloadType, f.SampleRate, f.NumChannels))
 			// Providing 0 when FEC cannot be used on the receiving side is RECOMMENDED.
 			// https://datatracker.ietf.org/doc/html/rfc7587
-			formatsMap = append(formatsMap, "a=fmtp:96 useinbandfec=0")
-		case CodecTelephoneEvent8000.PayloadType:
-			formatsMap = append(formatsMap, "a=rtpmap:101 telephone-event/8000")
-			formatsMap = append(formatsMap, "a=fmtp:101 0-16")
+			formatsMap = append(formatsMap, fmt.Sprintf("a=fmtp:%d useinbandfec=0", f.PayloadType))
+		case strings.EqualFold(f.Name, CodecTelephoneEvent8000.Name):
+			formatsMap = append(formatsMap, fmt.Sprintf("a=rtpmap:%d telephone-event/%d", f.PayloadType, f.SampleRate))
+			formatsMap = append(formatsMap, fmt.Sprintf("a=fmtp:%d 0-16", f.PayloadType))
 		default:
 			s := fmt.Sprintf("a=rtpmap:%d %s/%d/%d", f.PayloadType, f.Name, f.SampleRate, f.NumChannels)
 			formatsMap = append(formatsMap, s)

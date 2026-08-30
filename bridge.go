@@ -156,12 +156,25 @@ func (b *Bridge) ProxyMedia() error {
 //
 // Experimental
 func (b *Bridge) ProxyMediaControl() (func() error, error) {
+	// Same precondition as ProxyMedia, proxyMedia indexes dialogs [0] and [1]
+	if len(b.dialogs) < 2 {
+		return nil, fmt.Errorf("number of dialogs must equal to 2")
+	}
+
+	// Disable direct writes, so proxy owns write direction. Same as ProxyMedia does
+	for _, d := range b.dialogs {
+		if err := d.Media().mediaSession.StopRTP(2, 0); err != nil {
+			return nil, err
+		}
+	}
+
 	proxyErr := make(chan error, 1)
 	go func() {
 		proxyErr <- b.proxyMedia()
 	}()
 
 	stopF := func() error {
+		// Interrupt the proxy loop by expiring write deadlines
 		for _, d := range b.dialogs {
 			d.Media().mediaSession.StopRTP(2, 0)
 		}
@@ -174,7 +187,7 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 		return err
 	}
 
-	return stopF, b.proxyMedia()
+	return stopF, nil
 }
 
 // proxyMedia starts routine to proxy media between
@@ -653,8 +666,9 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 				case s.pipeWrite <- buf[:n]:
 					nw := <-s.pipeRead
 					if nw != n {
-						// there is no reason this to happen, so lets panic
-						panic("reading from pipe was not full")
+						// Consumer did not accept the full chunk. Log and keep streaming,
+						// this must not take down the media goroutine
+						b.log.Error("Reading from pipe was not full", "stream.id", s.id, "n", n, "written", nw)
 					}
 				case <-ctx.Done():
 					bridgeTrace("poll: stream context canceled", "stream.id", stream.id)
@@ -752,13 +766,12 @@ func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte,
 }
 
 func unmixStream(buf []byte, mixedBuf []byte) []byte {
-	n := len(mixedBuf)
-	if len(buf) < len(mixedBuf) {
-		// panic("stream buf is shorter than mixed buf")
-	}
+	// Process only bytes we actually received. Keep 16-bit sample alignment,
+	// otherwise stale bytes beyond the read would be unmixed and written to the wire
+	n := min(len(buf), len(mixedBuf))
+	n &^= 1
 
 	readBuf := buf[:n]
 	audio.PCMUnmix(readBuf, mixedBuf, readBuf)
-	// NOTE: This can be higher than actual read bytes
 	return readBuf
 }

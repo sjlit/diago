@@ -235,7 +235,14 @@ func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 		if params != nil && params.Body != nil {
 			body = params.Body
 		}
-		return d.respondSignal(sip.StatusOK, "OK", body, params)
+		if err := d.respondSignal(sip.StatusOK, "OK", body, params); err != nil {
+			return err
+		}
+
+		// Early media session was created by ProgressMedia and never finalized.
+		// Finalize runs deferred media setup like DTLS handshake, same as answerSession.
+		// MonitorBackground is already started by ProgressMedia and must not be started twice.
+		return sess.Finalize()
 	}
 
 	rtpSess, err := d.newAnswerRTPSession(params)
@@ -455,6 +462,10 @@ func (d *DialogServerSession) ReInvite(ctx context.Context, opts ...SignalOption
 	}
 
 	d.mu.Lock()
+	if d.mediaSession == nil {
+		d.mu.Unlock()
+		return errors.New("dialog session not answered")
+	}
 	sdpBody := d.mediaSession.LocalSDP()
 	contact := d.remoteContactUnsafe()
 	d.mu.Unlock()
@@ -707,7 +718,11 @@ func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) er
 	if err != nil {
 		return err
 	}
-	m := d.MediaSession().Fork()
+	ms := d.MediaSession()
+	if ms == nil {
+		return errors.New("dialog session not answered")
+	}
+	m := ms.Fork()
 	m.Mode = sdp.ModeSendonly
 	if err := d.reInviteMediaSession(ctx, m, params); err != nil {
 		return err
@@ -721,7 +736,11 @@ func (d *DialogServerSession) Unhold(ctx context.Context, opts ...SignalOption) 
 	if err != nil {
 		return err
 	}
-	m := d.MediaSession().Fork()
+	ms := d.MediaSession()
+	if ms == nil {
+		return errors.New("dialog session not answered")
+	}
+	m := ms.Fork()
 	m.Mode = sdp.ModeSendrecv
 	if err := d.reInviteMediaSession(ctx, m, params); err != nil {
 		return err

@@ -370,7 +370,8 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 
 	server.OnInfo(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
 		// Handle DTMF out of band
-		if req.ContentType().Value() != "application/dtmf-relay" {
+		ct := req.ContentType()
+		if ct == nil || ct.Value() != "application/dtmf-relay" {
 			return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
 		}
 
@@ -830,7 +831,8 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts RegisterO
 
 	// Unregister
 	defer func() {
-		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		err := t.Unregister(ctx)
 		if err != nil {
 			dg.log.Error("Failed to unregister", "error", err)
@@ -849,6 +851,11 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts RegisterO
 			resCode := rr.RegisterRes.StatusCode
 			switch {
 			case resCode == 401 || resCode == 407:
+				return err
+			case resCode == 408 || resCode == 491:
+				// Transient client failures, keep retrying
+			case resCode >= 400 && resCode < 500:
+				// Other 4xx (403 Forbidden, 404 Not Found, ...) are terminal, never retry them
 				return err
 			case resCode > 500 && resCode < 600:
 				return err

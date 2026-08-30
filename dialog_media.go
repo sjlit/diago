@@ -356,7 +356,7 @@ func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
 // WithAudioReaderDTMF creates DTMF interceptor
 func WithAudioReaderDTMF(r *DTMFReader) AudioReaderOption {
 	return func(d *DialogMedia) error {
-		r.dtmfReader = media.NewRTPDTMFReader(media.CodecTelephoneEvent8000, d.RTPPacketReader, d.getAudioReader())
+		r.dtmfReader = media.NewRTPDTMFReader(d.dtmfCodec(), d.RTPPacketReader, d.getAudioReader())
 		r.mediaSession = d.mediaSession
 
 		d.audioReader = r
@@ -445,7 +445,7 @@ func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
 // WithAudioWriterDTMF adds DTMF into audio pipeline
 func WithAudioWriterDTMF(r *DTMFWriter) AudioWriterOption {
 	return func(d *DialogMedia) error {
-		r.dtmfWriter = media.NewRTPDTMFWriter(media.CodecTelephoneEvent8000, d.RTPPacketWriter, d.getAudioWriter())
+		r.dtmfWriter = media.NewRTPDTMFWriter(d.dtmfCodec(), d.RTPPacketWriter, d.getAudioWriter())
 		r.mediaSession = d.mediaSession
 		d.audioWriter = r
 		return nil
@@ -591,17 +591,17 @@ func (d *DialogMedia) PlaybackRingtoneCreate() (AudioRingtone, error) {
 // If you want to make permanent in audio pipeline use SetAudioReader, SetAudioWriter
 //
 // NOTE: API WILL change
-func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (AudioStereoRecordingWav, error) {
+func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereoRecordingWav, error) {
 	mpropsW := MediaProps{}
 	aw := d.audioWriterProps(&mpropsW)
 	if aw == nil {
-		return AudioStereoRecordingWav{}, fmt.Errorf("no media setup")
+		return nil, fmt.Errorf("no media setup")
 	}
 
 	mpropsR := MediaProps{}
 	ar := d.audioReaderProps(&mpropsR)
 	if ar == nil {
-		return AudioStereoRecordingWav{}, fmt.Errorf("no media setup")
+		return nil, fmt.Errorf("no media setup")
 	}
 
 	return newDialogRecordingWav(wavFile, ar, mpropsR, aw, mpropsW)
@@ -718,6 +718,15 @@ type DTMFReader struct {
 	onDTMF       func(dtmf rune) error
 }
 
+// dtmfCodec resolves the negotiated telephone-event codec. DTMF payload type
+// is negotiated per peer (RFC 4733) and may differ from the default constant.
+func (m *DialogMedia) dtmfCodec() media.Codec {
+	if m.mediaSession != nil {
+		return m.mediaSession.DTMFCodec()
+	}
+	return media.CodecTelephoneEvent8000
+}
+
 // AudioReaderDTMF is DTMF over RTP. It reads audio and provides hook for dtmf while listening for audio
 // Use Listen or OnDTMF after this call
 func (m *DialogMedia) AudioReaderDTMF() (*DTMFReader, error) {
@@ -726,7 +735,7 @@ func (m *DialogMedia) AudioReaderDTMF() (*DTMFReader, error) {
 		return nil, err
 	}
 	return &DTMFReader{
-		dtmfReader:   media.NewRTPDTMFReader(media.CodecTelephoneEvent8000, m.RTPPacketReader, ar),
+		dtmfReader:   media.NewRTPDTMFReader(m.dtmfCodec(), m.RTPPacketReader, ar),
 		mediaSession: m.mediaSession,
 	}, nil
 }
@@ -789,7 +798,7 @@ func (m *DialogMedia) AudioWriterDTMF() (*DTMFWriter, error) {
 	}
 
 	return &DTMFWriter{
-		dtmfWriter:   media.NewRTPDTMFWriter(media.CodecTelephoneEvent8000, m.RTPPacketWriter, aw),
+		dtmfWriter:   media.NewRTPDTMFWriter(m.dtmfCodec(), m.RTPPacketWriter, aw),
 		mediaSession: m.mediaSession,
 	}, nil
 }

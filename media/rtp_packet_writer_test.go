@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,44 @@ func TestRTPWriter(t *testing.T) {
 		require.Equal(t, rtpWriter.nextTimestamp, pkt.Timestamp+160, "%d vs %d", rtpWriter.nextTimestamp, pkt.Timestamp)
 		require.Equal(t, i == 0, pkt.Marker)
 	}
+}
+
+// Regression: Write used to mutate writer state (nextTimestamp, sequencer,
+// PacketHeader) under a read lock, and lastSampleTime was written without any
+// lock. Concurrent writers produced torn sequence numbers and raced
+func TestRTPWriterConcurrent(t *testing.T) {
+	rtpConn := bytes.NewBuffer([]byte{})
+	sess := fakeMediaSessionWriter(0, 1234, rtpConn)
+	rtpSession := NewRTPSession(sess)
+	rtpWriter := NewRTPPacketWriterSession(rtpSession)
+	rtpWriter.clockTicker.Reset(time.Nanosecond) // Speed up pacing
+
+	const goroutines = 4
+	const writes = 50
+	seqBefore := rtpWriter.seqWriter.ReadExtendedSeq()
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			payload := make([]byte, 160)
+			for i := 0; i < writes; i++ {
+				if _, err := rtpWriter.Write(payload); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Every write must have consumed exactly one sequence number (allowing wrap)
+	seqAfter := rtpWriter.seqWriter.ReadExtendedSeq()
+	delta := seqAfter - seqBefore
+	require.True(t,
+		delta == goroutines*writes || delta == goroutines*writes+65536,
+		"sequence delta=%d, want %d", delta, goroutines*writes)
 }
 
 func BenchmarkRTPPacketWriter(b *testing.B) {

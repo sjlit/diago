@@ -14,9 +14,9 @@ func SetupLogger() {
 		lvl = slog.LevelInfo
 	}
 	slog.SetLogLoggerLevel(lvl)
-	media.RTPDebug = os.Getenv("RTP_DEBUG") == "true"
-	media.RTCPDebug = os.Getenv("RTCP_DEBUG") == "true"
+	media.RTPDebug.Store(os.Getenv("RTP_DEBUG") == "true")
+	media.RTCPDebug.Store(os.Getenv("RTCP_DEBUG") == "true")
 	sip.SIPDebug = os.Getenv("SIP_DEBUG") == "true"
 	sip.TransactionFSMDebug = os.Getenv("SIP_TRANSACTION_DEBUG") == "true"
-	media.DTLSDebug = os.Getenv("DTLS_DEBUG") == "true"
+	media.DTLSDebug.Store(os.Getenv("DTLS_DEBUG") == "true")
 }

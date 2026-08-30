@@ -217,25 +217,28 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 	sd := *sdptr
 	for {
 		line, err := nextLine(reader)
+		if err == io.EOF && len(line) == 0 {
+			return nil
+		}
+
+		if len(line) >= 2 {
+			ind := strings.Index(line, "=")
+			if ind < 1 {
+				return fmt.Errorf("Not a type=value line found. line=%q", line)
+			}
+			key := line[:ind]
+			value := line[ind+1:]
+
+			sd[key] = append(sd[key], value)
+		}
+
 		if err != nil {
 			if err == io.EOF {
+				// Last line was pending without newline terminator, it is processed above
 				return nil
 			}
 			return err
 		}
-
-		if len(line) < 2 {
-			continue
-		}
-
-		ind := strings.Index(line, "=")
-		if ind < 1 {
-			return fmt.Errorf("Not a type=value line found. line=%q", line)
-		}
-		key := line[:ind]
-		value := line[ind+1:]
-
-		sd[key] = append(sd[key], value)
 	}
 
 }
@@ -251,11 +254,11 @@ func nextLine(reader *bytes.Buffer) (line string, err error) {
 
 	lenline := len(line)
 
-	// Be tolerant for CRLF
-	if line[lenline-2] == '\r' {
+	// Be tolerant for CRLF. Line always contains at least the delimiter here,
+	// so never index below zero on blank lines
+	if lenline >= 2 && line[lenline-2] == '\r' {
 		return line[:lenline-2], nil
 	}
 
-	line = line[:lenline-1]
-	return line, nil
+	return line[:lenline-1], nil
 }

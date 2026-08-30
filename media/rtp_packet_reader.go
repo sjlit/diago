@@ -5,6 +5,7 @@ package media
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -155,8 +156,8 @@ func (r *RTPPacketReader) Read(b []byte) (int, error) {
 	payloadSize := len(pkt.Payload)
 
 	// Keeping this for double check
-	if rtpN-pkt.Header.MarshalSize()-int(pkt.PaddingSize) != payloadSize {
-		panic("payload calc do not match")
+	if calcPayloadSize := rtpN - pkt.Header.MarshalSize() - int(pkt.PaddingSize); calcPayloadSize != payloadSize {
+		return 0, fmt.Errorf("payload size calc does not match. calc=%d payload=%d header=%+v", calcPayloadSize, payloadSize, pkt.Header)
 	}
 	// payloadSize := len(pkt.Payload)
 	// In case of DTMF we can receive different payload types

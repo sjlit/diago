@@ -133,8 +133,9 @@ func TestMonitorPCMStereo(t *testing.T) {
 
 		errWrite := make(chan error)
 		go func() {
-			_, err = media.WriteAll(mon, audioAlawBuf, 160)
-			errWrite <- err
+			// Do not share outer err with the test goroutine, it is a data race
+			_, werr := media.WriteAll(mon, audioAlawBuf, 160)
+			errWrite <- werr
 		}()
 
 		_, err = media.ReadAll(mon, 160)
@@ -170,8 +171,9 @@ func TestMonitorPCMStereo(t *testing.T) {
 
 		errWrite := make(chan error)
 		go func() {
-			_, err = media.WriteAll(mon, audioAlawBufBig, 160)
-			errWrite <- err
+			// Do not share outer err with the test goroutine, it is a data race
+			_, werr := media.WriteAll(mon, audioAlawBufBig, 160)
+			errWrite <- werr
 		}()
 
 		_, err = media.ReadAll(mon, 160)
