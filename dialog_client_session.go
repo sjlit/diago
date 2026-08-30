@@ -35,6 +35,10 @@ type DialogClientSession struct {
 	closed atomic.Uint32
 }
 
+// Close frees local resources (media stack and dialog cleanup hooks).
+// It is idempotent and does NOT send any SIP message: closing without Hangup
+// leaves the remote leg up. Signaling teardown is the caller's responsibility
+// on client dialogs (docs/contracts.md §6, §7).
 func (d *DialogClientSession) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
@@ -51,6 +55,13 @@ func (d *DialogClientSession) Id() string {
 // Hangup terminates dialog with BYE.
 // Options allow customizing headers of the BYE request (ex. Reason header),
 // Contact and to mutate the final request.
+//
+// Behavior by dialog state (docs/contracts.md §7):
+//   - no response received yet: error ErrDialogNotAnswered (cancel the Invite
+//     context instead, which sends CANCEL)
+//   - provisional response received (early dialog): BYE on the early dialog
+//   - confirmed: BYE, waits for 200
+//   - already ended: returns nil silently
 func (d *DialogClientSession) Hangup(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -63,7 +74,7 @@ func (d *DialogClientSession) Hangup(ctx context.Context, opts ...SignalOption) 
 // Mandatory dialog headers (From/To/Call-ID/CSeq) are filled by sipgo.
 func (d *DialogClientSession) byeSignal(ctx context.Context, params *SignalParams) error {
 	if d.InviteResponse == nil {
-		return fmt.Errorf("bye: can not send as no invite response present")
+		return byeNotPossible()
 	}
 	inviteRequest := d.InviteRequest
 	recipient := inviteRequest.Recipient
@@ -83,6 +94,12 @@ func (d *DialogClientSession) byeSignal(ctx context.Context, params *SignalParam
 		return err
 	}
 	return d.DialogClientSession.WriteBye(ctx, bye)
+}
+
+// byeNotPossible is returned when no BYE can be sent because the dialog was
+// never established (no invite response received yet).
+func byeNotPossible() error {
+	return fmt.Errorf("bye: %w", ErrDialogNotAnswered)
 }
 
 func (d *DialogClientSession) FromUser() string {
@@ -564,7 +581,7 @@ func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption
 	d.mu.Lock()
 	if d.mediaSession == nil {
 		d.mu.Unlock()
-		return errors.New("dialog session not answered")
+		return ErrDialogNotAnswered
 	}
 	sdpBody := d.mediaSession.LocalSDP()
 	contact := d.remoteContactUnsafe()
@@ -789,7 +806,7 @@ func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) er
 	}
 	ms := d.MediaSession()
 	if ms == nil {
-		return errors.New("dialog session not answered")
+		return ErrDialogNotAnswered
 	}
 	m := ms.Fork()
 	m.Mode = sdp.ModeSendonly
@@ -807,7 +824,7 @@ func (d *DialogClientSession) Unhold(ctx context.Context, opts ...SignalOption) 
 	}
 	ms := d.MediaSession()
 	if ms == nil {
-		return errors.New("dialog session not answered")
+		return ErrDialogNotAnswered
 	}
 	m := ms.Fork()
 	m.Mode = sdp.ModeSendrecv

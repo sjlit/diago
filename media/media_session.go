@@ -128,16 +128,23 @@ func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
 	}
 }
 
-// MediaSession represents active media session with RTP/RTCP
+// MediaSession represents a single media (audio) session with RTP/RTCP over
+// one Laddr <-> Raddr pair.
+//
+// Lifecycle contract (see docs/contracts.md §2):
+//   - Config phase: fields may be set freely before Init().
+//   - Active phase: after a completed offer/answer exchange the session is
+//     FROZEN. Only IO (ReadRTP/WriteRTP/ReadRTCP/WriteRTCP/StopRTP/StartRTP)
+//     and read-only queries (CommonCodecs, DTMFCodec) are allowed. Any change
+//     (codecs, direction, addresses) requires Fork() and installing the fork
+//     through diago's DialogMedia.
+//
 // TODO: multiple media descriptions.
 // Consider https://datatracker.ietf.org/doc/rfc3388/ for grouping multiple media
 //
-// Design:
-// - It identfies single session Laddr <-> Raddr
-// - With multi descriptions, or reinvites it should be forked and create new media Session
-//
-// NOTE: Not thread safe, read only after SDP negotiation or have locking in place
-//       Object should be immutable, that is post session changes like codecs, remote addr would require Forking object with Fork call.
+// NOTE: Not thread safe. IO must be funneled through a single reader and a
+// single writer per direction (diago's RTPPacketReader/RTPPacketWriter do
+// this); direct concurrent WriteRTP on one session is not supported.
 
 type MediaSession struct {
 	// SDP stuff
@@ -306,8 +313,12 @@ func (s *MediaSession) StartRTP(rw int8) error {
 	return s.rtpConn.SetDeadline(time.Time{})
 }
 
-// Fork is special call to be used in case when there is session update
-// It preserves pointer to same conneciton but rest is removed
+// Fork creates a draft copy for a session update (re-INVITE, hold, ...).
+// The draft shares the parent's RTP/RTCP connections; everything negotiated
+// (Raddr, rtcpRaddr, negotiated mode, filterCodecs, SRTP/DTLS state, NAT-learned
+// addresses) is reset and must be re-established via RemoteSDP on the draft.
+// The draft becomes active only when installed through diago's DialogMedia
+// (docs/contracts.md §3); mutating the active session in place is forbidden.
 func (s *MediaSession) Fork() *MediaSession {
 	cp := MediaSession{
 		Laddr:          s.Laddr, // TODO clone it although it is read only
@@ -346,6 +357,7 @@ func (s *MediaSession) Close() error {
 }
 
 // SetRemoteAddr is helper to set Raddr and rtcp address.
+// The RTCP address is derived as RTP port + 1 (rtcp-mux is not supported).
 // It is not thread safe
 func (s *MediaSession) SetRemoteAddr(raddr *net.UDPAddr) {
 	s.Raddr = *raddr
@@ -356,8 +368,12 @@ func (s *MediaSession) SetRemoteAddr(raddr *net.UDPAddr) {
 	}
 }
 
-// LocalSDP generates SDP based on local settings and remote SDP
-// It should never be called in parallel to RemoteSDP, as it is expected serial process
+// LocalSDP generates SDP based on local settings and remote SDP.
+// It is part of the offer/answer flow, not a pure getter: the first call
+// allocates the o= session id, every call increments its version, and on an
+// SRTP offer it creates the local crypto context. SDES setup failures are
+// logged and the SDP continues in plaintext. It must never be called in
+// parallel to RemoteSDP; see docs/contracts.md §2.
 func (s *MediaSession) LocalSDP() []byte {
 	if len(s.sdp) > 0 {
 		// If media session is static then just return sdp.

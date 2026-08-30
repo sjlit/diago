@@ -38,6 +38,10 @@ func (d *DialogServerSession) Id() string {
 	return d.ID
 }
 
+// Close frees local resources (media stack and dialog cleanup hooks).
+// It is idempotent and does NOT send any SIP message. Server dialogs are
+// closed by the framework when the serve handler returns
+// (docs/contracts.md §6).
 func (d *DialogServerSession) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
@@ -440,8 +444,9 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 }
 
 // Hangup terminates dialog. When dialog is confirmed BYE is sent,
-// otherwise the INVITE is declined with 480.
-// Options allow customizing headers (ex. Reason), Contact and body of the outgoing message.
+// otherwise the INVITE is declined with 480 (and nil is returned — declining
+// succeeded). Options allow customizing headers (ex. Reason), Contact and body
+// of the outgoing message. See docs/contracts.md §7 for the full matrix.
 func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -464,7 +469,7 @@ func (d *DialogServerSession) ReInvite(ctx context.Context, opts ...SignalOption
 	d.mu.Lock()
 	if d.mediaSession == nil {
 		d.mu.Unlock()
-		return errors.New("dialog session not answered")
+		return ErrDialogNotAnswered
 	}
 	sdpBody := d.mediaSession.LocalSDP()
 	contact := d.remoteContactUnsafe()
@@ -720,7 +725,7 @@ func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) er
 	}
 	ms := d.MediaSession()
 	if ms == nil {
-		return errors.New("dialog session not answered")
+		return ErrDialogNotAnswered
 	}
 	m := ms.Fork()
 	m.Mode = sdp.ModeSendonly
@@ -738,7 +743,7 @@ func (d *DialogServerSession) Unhold(ctx context.Context, opts ...SignalOption) 
 	}
 	ms := d.MediaSession()
 	if ms == nil {
-		return errors.New("dialog session not answered")
+		return ErrDialogNotAnswered
 	}
 	m := ms.Fork()
 	m.Mode = sdp.ModeSendrecv

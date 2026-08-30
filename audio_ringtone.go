@@ -15,14 +15,20 @@ import (
 
 // AudioRingtone is playback for ringtone
 type AudioRingtone struct {
-	writer       *audio.PCMEncoderWriter
-	ringtone     []byte
-	sampleSize   int
-	mediaSession *media.MediaSession
+	writer     *audio.PCMEncoderWriter
+	ringtone   []byte
+	sampleSize int
+	// dm resolves the CURRENT media session at use time so that start/stop
+	// survives media updates (re-INVITE) - docs/contracts.md §4
+	dm *DialogMedia
 }
 
 func (a *AudioRingtone) PlayBackground() (func() error, error) {
-	if err := a.mediaSession.StartRTP(1); err != nil {
+	ms := a.dm.currentMediaSession()
+	if ms == nil {
+		return nil, ErrDialogNotAnswered
+	}
+	if err := ms.StartRTP(1); err != nil {
 		return nil, err
 	}
 
@@ -39,13 +45,13 @@ func (a *AudioRingtone) PlayBackground() (func() error, error) {
 	return func() error {
 		cancel()
 
-		if err := a.mediaSession.StopRTP(2, 0); err != nil {
+		if err := ms.StopRTP(2, 0); err != nil {
 			return err
 		}
 		wg.Wait()
 
 		// enable RTP again
-		if err := a.mediaSession.StartRTP(2); err != nil {
+		if err := ms.StartRTP(2); err != nil {
 			return err
 		}
 

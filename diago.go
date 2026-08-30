@@ -480,6 +480,13 @@ func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id s
 
 // Serve starts 'Server' handle for SIP.
 // Should be called for UAS but can be skipped for UAC behavior
+//
+// Handler contract (docs/contracts.md §6): when the ServeDialogFunc returns,
+// the framework tears the call down — it hangs up the dialog (BYE once
+// confirmed, otherwise a 480 decline) with a 10s timeout, then closes the
+// dialog and its media. A handler that wants the call alive must block until
+// the call ends (or hang up itself before returning); goroutines spawned in
+// the handler must not rely on the dialog afterwards.
 func (dg *Diago) Serve(ctx context.Context, f ServeDialogFunc) error {
 	return dg.serve(ctx, f, func() {})
 }

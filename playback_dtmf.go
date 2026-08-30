@@ -65,9 +65,11 @@ type AudioPlaybackDTMF struct {
 	replayKeys    map[rune]struct{}
 	onDTMF        func(dtmf rune)
 
-	dtmfCh       chan rune
-	dtmfReader   *DTMFReader
-	mediaSession *media.MediaSession
+	dtmfCh     chan rune
+	dtmfReader *DTMFReader
+	// dm resolves the CURRENT media session at use time so the read loop
+	// survives media updates (re-INVITE) - docs/contracts.md §4
+	dm *DialogMedia
 
 	stopCh    chan struct{}
 	closeOnce sync.Once
@@ -105,7 +107,7 @@ func (d *DialogMedia) PlaybackDTMFCreate(opts ...PlaybackDTMFOption) (*AudioPlay
 		AudioPlaybackControl: pb,
 		dtmfCh:               make(chan rune, dtmfChSize),
 		dtmfReader:           dtmfReader,
-		mediaSession:         d.mediaSession,
+		dm:                   d,
 		stopCh:               make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -142,18 +144,25 @@ func (p *AudioPlaybackDTMF) PlayURL(urlStr string) (int64, error) {
 
 // Close stops DTMF reading. It should be called when DTMF playback is not
 // needed anymore, to allow other audio reading on the dialog.
+//
+// dm may be nil when the struct is constructed manually (test stubs); the
+// deadline control is simply skipped in that case.
 func (p *AudioPlaybackDTMF) Close() error {
 	var err error
 	p.closeOnce.Do(func() {
 		close(p.stopCh)
-		if p.mediaSession != nil {
-			// Unblock pending read
-			err = p.mediaSession.StopRTP(1, time.Millisecond)
+		if p.dm != nil {
+			if ms := p.dm.currentMediaSession(); ms != nil {
+				// Unblock pending read
+				err = ms.StopRTP(1, time.Millisecond)
+			}
 		}
 		p.wg.Wait()
-		if p.mediaSession != nil {
-			// Restore reading without deadline
-			err = errors.Join(err, p.mediaSession.StartRTP(1))
+		if p.dm != nil {
+			if ms := p.dm.currentMediaSession(); ms != nil {
+				// Restore reading without deadline
+				err = errors.Join(err, ms.StartRTP(1))
+			}
 		}
 	})
 	return err
@@ -172,7 +181,6 @@ func (p *AudioPlaybackDTMF) readLoop() {
 	defer p.wg.Done()
 
 	buf := make([]byte, media.RTPBufSize)
-	ms := p.mediaSession
 	for {
 		select {
 		case <-p.stopCh:
@@ -180,12 +188,17 @@ func (p *AudioPlaybackDTMF) readLoop() {
 		default:
 		}
 
-		if ms != nil {
-			// Use short read deadline, so loop can check stop channel.
-			// Deadline does not add DTMF detection latency, since read
-			// returns immediately on packet arrival.
-			if err := ms.StopRTP(1, dtmfReadPollInterval); err != nil {
-				slog.Debug("Failed to set DTMF read deadline", "error", err)
+		// Resolve the current session each iteration: media updates (re-INVITE)
+		// swap sessions, but RTP/RTCP share the same conn deadlines. dm may be
+		// nil when constructed manually (test stubs).
+		if p.dm != nil {
+			if ms := p.dm.currentMediaSession(); ms != nil {
+				// Use short read deadline, so loop can check stop channel.
+				// Deadline does not add DTMF detection latency, since read
+				// returns immediately on packet arrival.
+				if err := ms.StopRTP(1, dtmfReadPollInterval); err != nil {
+					slog.Debug("Failed to set DTMF read deadline", "error", err)
+				}
 			}
 		}
 

@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/audio"
 	"github.com/sjlit/diago/media"
-	"github.com/emiago/sipgo/sip"
 )
 
 type Bridger interface {
@@ -77,11 +77,15 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 		// This may look ugly but it is safe way of reading
 		origM := b.Originator.Media()
 		origProps := MediaProps{}
-		_ = origM.audioWriterProps(&origProps)
+		if _, err := origM.audioWriterProps(&origProps); err != nil {
+			return fmt.Errorf("bridge originator dialog has no media: %w", err)
+		}
 
 		m := d.Media()
 		mprops := MediaProps{}
-		_ = m.audioWriterProps(&mprops)
+		if _, err := m.audioWriterProps(&mprops); err != nil {
+			return fmt.Errorf("bridge dialog %q has no media: %w", d.Id(), err)
+		}
 
 		err := func() error {
 			if origProps.Codec != mprops.Codec {
@@ -108,9 +112,8 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	}
 	// Check are both answered
 	for _, d := range b.dialogs {
-		// TODO remove this double locking. Read once
-		if d.Media().RTPPacketReader == nil || d.Media().RTPPacketWriter == nil {
-			return fmt.Errorf("dialog session not answered %q", d.Id())
+		if err := d.Media().checkMediaUsable(); err != nil {
+			return fmt.Errorf("dialog session not answered %q: %w", d.Id(), err)
 		}
 	}
 
@@ -146,7 +149,9 @@ func (b *Bridge) ProxyMedia() error {
 	}
 
 	for _, d := range b.dialogs {
-		d.Media().mediaSession.StopRTP(2, 0)
+		if err := d.Media().StopRTP(2, 0); err != nil {
+			return err
+		}
 	}
 	return b.proxyMedia()
 }
@@ -163,7 +168,7 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 
 	// Disable direct writes, so proxy owns write direction. Same as ProxyMedia does
 	for _, d := range b.dialogs {
-		if err := d.Media().mediaSession.StopRTP(2, 0); err != nil {
+		if err := d.Media().StopRTP(2, 0); err != nil {
 			return nil, err
 		}
 	}
@@ -176,13 +181,17 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 	stopF := func() error {
 		// Interrupt the proxy loop by expiring write deadlines
 		for _, d := range b.dialogs {
-			d.Media().mediaSession.StopRTP(2, 0)
+			if err := d.Media().StopRTP(2, 0); err != nil {
+				return err
+			}
 		}
 
 		// Wait goroutine termination
 		err := <-proxyErr
 		for _, d := range b.dialogs {
-			d.Media().mediaSession.StartRTP(2)
+			if err := d.Media().StartRTP(2, 0); err != nil {
+				return err
+			}
 		}
 		return err
 	}
@@ -218,25 +227,30 @@ func (b *Bridge) proxyMedia() error {
 		return err
 	}
 	errCh := make(chan error, 2)
-	func() {
+	startProxy := func(mFrom, mTo *DialogMedia) error {
 		p1, p2 := MediaProps{}, MediaProps{}
-		r := m1.audioReaderProps(&p1)
-		w := m2.audioWriterProps(&p2)
+		r, err := mFrom.audioReaderProps(&p1)
+		if err != nil {
+			return err
+		}
+		w, err := mTo.audioWriterProps(&p2)
+		if err != nil {
+			return err
+		}
 
 		log := log.With("from", p1.Raddr+" > "+p1.Laddr, "to", p2.Laddr+" > "+p2.Raddr)
 		log.Debug("Starting proxy media routine")
 		go proxyMediaBackground(log, r, w, errCh)
-	}()
+		return nil
+	}
 
+	if err := startProxy(m1, m2); err != nil {
+		return err
+	}
 	// Second
-	func() {
-		p1, p2 := MediaProps{}, MediaProps{}
-		r := m2.audioReaderProps(&p1)
-		w := m1.audioWriterProps(&p2)
-		log := log.With("from", p1.Raddr+" > "+p1.Laddr, "to", p2.Laddr+" > "+p2.Raddr)
-		log.Debug("Starting proxy media routine")
-		go proxyMediaBackground(log, r, w, errCh)
-	}()
+	if err := startProxy(m2, m1); err != nil {
+		return err
+	}
 
 	// Wait for all to finish
 	for i := 0; i < 2; i++ {
@@ -570,10 +584,12 @@ func (b *BridgeMix) mixLoop(rwStreams []*bridgePCMStream, poll bool) error {
 }
 
 type bridgePCMStream struct {
-	id           uint32
-	r            io.Reader
-	w            io.Writer
-	mediaSession *media.MediaSession
+	id uint32
+	r  io.Reader
+	w  io.Writer
+	// dm resolves the CURRENT media session at use time so mix-loop deadline
+	// control survives media updates (re-INVITE) - docs/contracts.md §4
+	dm *DialogMedia
 	// read buf
 	buf []byte
 	n   int
@@ -633,13 +649,13 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 	}
 
 	*stream = bridgePCMStream{
-		r:            &pcmReader,
-		w:            &pcmWriter,
-		mediaSession: m.mediaSession,
-		id:           m.RTPPacketWriter.SSRC,
-		buf:          make([]byte, media.RTPBufSize),
-		pipeRead:     make(chan int),
-		pipeWrite:    make(chan []byte),
+		r:         &pcmReader,
+		w:         &pcmWriter,
+		dm:        m,
+		id:        m.RTPPacketWriter.SSRC,
+		buf:       make([]byte, media.RTPBufSize),
+		pipeRead:  make(chan int),
+		pipeWrite: make(chan []byte),
 	}
 
 	if poll {
@@ -693,7 +709,11 @@ func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte,
 		// If are not polling data then we need todo direct read
 		err := func() error {
 			for i, r := range rwStreams {
-				r.mediaSession.StopRTP(1, 1*time.Millisecond)
+				ms := r.dm.currentMediaSession()
+				if ms == nil {
+					continue
+				}
+				ms.StopRTP(1, 1*time.Millisecond)
 
 				// Mostly PCM sample size should be same or less our sampling
 				// but we should keep same sampling or deal this per writer?
