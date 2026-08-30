@@ -70,7 +70,7 @@ func PlaybackDTMF(inDialog *diago.DialogServerSession) error {
 		playfile, _ := testdata.OpenFile("demo-echotest.wav")
 		defer playfile.Close()
 
-		if _, err := pb.Play(playfile, "audio/wav"); err != nil {
+		if _, err := pb.PlayContext(inDialog.Context(), playfile, "audio/wav"); err != nil {
 			slog.Error("Playing finished with error", "error", err)
 		}
 	}()

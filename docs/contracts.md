@@ -15,6 +15,7 @@ Table of contents:
 6. [Dialog lifecycle](#6-dialog-lifecycle)
 7. [Close vs Hangup](#7-close-vs-hangup)
 8. [Error contract](#8-error-contract)
+9. [Cancellation migration table](#9-cancellation-migration-table)
 
 ---
 
@@ -49,7 +50,7 @@ Config ──Init()──> Listening ──first LocalSDP/RemoteSDP──> Activ
 | **Config** (before `Init`) | Set fields (`Codecs`, `Mode`, `Laddr`, security config, ...). |
 | **Listening** (after `Init`, before negotiation) | Field mutation still allowed, but listeners are bound: changing `Laddr` requires `Init` again. |
 | **Negotiating** (during `LocalSDP`/`RemoteSDP`) | Single-threaded by contract (see §5). Do not touch the session from other goroutines. |
-| **Active** (after a completed offer/answer exchange) | **Frozen.** Only IO (`ReadRTP`, `WriteRTP`, `ReadRTCP`, `WriteRTCP`, `StopRTP`, `StartRTP`) and read-only queries (`CommonCodecs`, `DTMFCodec`). Any change (codecs, direction, addresses) requires `Fork()` + install via `DialogMedia`. |
+| **Active** (after a completed offer/answer exchange) | **Frozen.** Only IO (`ReadRTP`, `WriteRTP`, `ReadRTCP`, `WriteRTCP`) and read-only queries (`CommonCodecs`, `DTMFCodec`). Any change (codecs, direction, addresses) requires `Fork()` + install via `DialogMedia`. `StopRTP`/`StartRTP` are deprecated legacy: the conn deadline is a stack-internal detail, use the pause gates instead (§5). |
 
 Two non-obvious consequences of the phase model:
 
@@ -104,12 +105,11 @@ later use.** Sessions get replaced; captured pointers go stale and then target a
 superseded session (dead direction control, wrong DTMF codec).
 
 Historical offenders, now fixed by resolving the current session at use time
-via `DialogMedia`:
+via `DialogMedia`, or by routing through the stable-handle gates:
 
-- `DTMFReader`, `DTMFWriter` (deadline control; the DTMF codec is bound at
-  reader creation time)
-- `AudioPlaybackDTMF` (close/read-loop deadline control)
-- `AudioRingtone` (start/stop RTP)
+- `DTMFReader`, `DTMFWriter` (deadline/interrupt control via the read gate)
+- `AudioPlaybackDTMF` (close via ctx-driven gate interrupt)
+- `AudioRingtone` (stop via the write gate)
 - `bridgePCMStream` (mix-loop deadline control)
 - `ListenBackground`/`ListenContext`/`ListenUntil`/`StopRTP`/`StartRTP` on
   `DialogMedia`
@@ -143,6 +143,33 @@ the `RTPPacketReader`/`RTPPacketWriter` fields, `audioReader`/`audioWriter`,
 - Internal long-running loops (`Listen*`, DTMF read loop, bridge mix loop)
   resolve the current session through `DialogMedia` at use time, so they survive
   media updates.
+
+### Cancellation and pause (the gates)
+
+Cancellation and pausing go through the stable handles, never through conn
+deadlines. The conn deadline is a transient interrupt signal owned by the
+handle; a *pause* is refcounted state resolved at use time.
+
+| Primitive | Semantics |
+|---|---|
+| `DialogMedia.PauseAudioRead()` / `RTPPacketReader.PauseRead()` | Refcounted pause: reads return `media.ErrReadPaused` until every release is called. Concurrent pausers can not resume each other. |
+| `DialogMedia.PauseAudioWrite()` / `RTPPacketWriter.PauseWrite()` | Refcounted write pause: writes return `media.ErrWritePaused`. In-flight write finishes first (bounded by one packet interval). |
+| `RTPPacketReader.ArmReadInterrupt(ctx)` | Interrupts the in-flight read once when ctx is done; restore is owned by the returned disarm. |
+| `RTPPacketReader.ReadContext(ctx, buf)` | Arm + read + restore: returns `ctx.Err()` on cancellation, reader stays usable. |
+| `media.CopyContext` / `CopyWithBufContext` | Copy loops checking ctx between reads/writes. |
+
+Rules:
+
+1. Never expire conn deadlines from component code (`StopRTP`/`StartRTP` are
+   deprecated for exactly this reason) — a durable deadline is global state on
+   the shared conn and reintroduces the fight this mechanism replaces.
+2. Pause-aware wrapped readers (ex. `RTPJitterBuffer`) receive the pause as a
+   signal channel; their internal pumps are never interrupted — a conn poke
+   would be terminal for them. Pause semantics stay consumer-facing: while a
+   jitter buffer is installed, the pump keeps buffering (bounded by the jitter
+   window) and playout timing gaps surface as loss.
+3. Consumers treat `ErrReadPaused`/`ErrWritePaused` as "paused, retry or exit";
+   treat `ctx.Err()` as cancellation.
 
 ## 6. Dialog lifecycle
 
@@ -221,6 +248,8 @@ Sentinels (usable with `errors.Is`):
 |---|---|
 | `diago.ErrDialogNotAnswered` | The operation requires an answered dialog with negotiated media (no active media session, or no invite response yet). |
 | `diago.ErrDialogClosed` | The dialog media was already closed locally. |
+| `media.ErrReadPaused` | The reader is paused (`PauseAudioRead`) or the read was interrupted; retry or exit. |
+| `media.ErrWritePaused` | The writer is paused (`PauseAudioWrite`); retry or exit. |
 | `diago.ErrClientEarlyMedia` | `Invite` stopped on a 183 with SDP (early media negotiated; continue with `WaitAnswer`). |
 | `diago.ErrPlaybackStopped` / `ErrPlaybackReplayed` / `ErrSourceNotReplayable` | Playback control results (also match `io.EOF` for backward compatibility — prefer the sentinels). |
 | `diago.ErrDigestAuthNoChallenge` / `ErrDigestAuthBadCreds` | Server-side digest auth failures. |
@@ -239,3 +268,21 @@ closed locally (all return wrapped sentinels, never panic):
 
 Everything else that fails mid-call returns the underlying transport/SIP error;
 the sentinels above are reserved for the lifecycle states in the table.
+
+## 9. Cancellation migration table
+
+The deadline-based pause/stop APIs are superseded by the gates (§5). Old APIs
+remain functional for compatibility but must not be mixed with the gates.
+
+| Legacy (deadline based) | Replacement |
+|---|---|
+| `DialogMedia.StopRTP(rw, dur)` / `StartRTP(rw)` | `PauseAudioRead()` / `PauseAudioWrite()` + release |
+| `media.MediaSession.StopRTP` / `StartRTP` | Same — via the dialog handles only |
+| `DialogMedia.ListenUntil(dur)` | `ListenContext(ctx)` with a context deadline |
+| `DialogMedia.ListenContext` (deadline-poke impl) | Same name; now gate-based and returns `ctx.Err()` |
+| `DTMFReader.Listen(onDTMF, dur)` | `DTMFReader.ListenContext(ctx, onDTMF)` |
+| `AudioPlaybackDTMF` close via conn deadlines | `Close()` — now interrupts through the reader gate |
+| `Bridge.ProxyMediaControl` stop via write deadlines | Same name — stop now goes through the write gate |
+| `BridgeMix` stop via conn deadlines | Same name — mixStop/mixStopWait use the read gate |
+| `media.Copy` / `CopyWithBuf` in cancellable flows | `media.CopyContext` / `CopyWithBufContext` |
+| `AudioPlayback.Play/PlayFile/PlayURL` | `PlayContext` / `PlayFileContext` / `PlayURLContext` (also on control and DTMF variants) |

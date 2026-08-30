@@ -5,6 +5,7 @@ package diago
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -71,7 +72,20 @@ func (p *AudioPlayback) Codec() media.Codec {
 
 // Play is generic approach to play supported audio contents
 // Empty mimeType will stream reader as buffer. Make sure that bitdepth and numchannels is set correctly
+//
+// Deprecated: Use PlayContext for cancellable playback.
 func (p *AudioPlayback) Play(reader io.Reader, mimeType string) (int64, error) {
+	return p.play(context.Background(), reader, mimeType)
+}
+
+// PlayContext plays supported audio contents and stops streaming with
+// ctx.Err() when the context is canceled. Cancellation latency is bounded by
+// one packet interval (the pacing wait inside the writer).
+func (p *AudioPlayback) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
+	return p.play(ctx, reader, mimeType)
+}
+
+func (p *AudioPlayback) play(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	var written int64
 	var err error
 
@@ -82,11 +96,11 @@ func (p *AudioPlayback) Play(reader io.Reader, mimeType string) (int64, error) {
 
 	switch mimeType {
 	case "":
-		written, err = p.stream(reader, p.writer)
+		written, err = p.stream(ctx, reader, p.writer)
 	case "audio/wav", "audio/x-wav", "audio/wav-x", "audio/vnd.wave":
-		written, err = p.streamWav(reader, p.writer)
+		written, err = p.streamWav(ctx, reader, p.writer)
 	case "audio/pcm":
-		written, err = p.streamPCM(reader, p.writer)
+		written, err = p.streamPCM(ctx, reader, p.writer)
 	default:
 		return 0, fmt.Errorf("unsuported content type %q", mimeType)
 	}
@@ -104,7 +118,15 @@ func (p *AudioPlayback) Play(reader io.Reader, mimeType string) (int64, error) {
 
 // PlayFile will play file and close file when finished playing
 // If you need to play same file multiple times, that use generic Play function
+//
+// Deprecated: Use PlayFileContext.
 func (p *AudioPlayback) PlayFile(filename string) (int64, error) {
+	return p.PlayFileContext(context.Background(), filename)
+}
+
+// PlayFileContext plays a wav file and closes it when finished. Cancellation
+// stops streaming and returns ctx.Err().
+func (p *AudioPlayback) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return 0, err
@@ -117,20 +139,20 @@ func (p *AudioPlayback) PlayFile(filename string) (int64, error) {
 
 	// Using bufio to improve disk reading
 	fileReader := bufio.NewReaderSize(file, 64*1024)
-	return p.Play(fileReader, "audio/wav")
+	return p.PlayContext(ctx, fileReader, "audio/wav")
 }
 
-func (p *AudioPlayback) stream(body io.Reader, playWriter io.Writer) (int64, error) {
+func (p *AudioPlayback) stream(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
 	payloadSize := p.calcPlayoutSize()
 	buf := playBufPool.Get()
 	defer playBufPool.Put(buf)
 	payloadBuf := buf.([]byte)[:payloadSize] // 20 ms
 
-	written, err := media.CopyWithBuf(body, playWriter, payloadBuf)
+	written, err := media.CopyWithBufContext(ctx, body, playWriter, payloadBuf)
 	return written, err
 }
 
-func (p *AudioPlayback) streamPCM(body io.Reader, playWriter io.Writer) (int64, error) {
+func (p *AudioPlayback) streamPCM(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
 	codec := p.codec
 	payloadSize := p.calcPlayoutSize()
 	buf := playBufPool.Get()
@@ -142,11 +164,11 @@ func (p *AudioPlayback) streamPCM(body io.Reader, playWriter io.Writer) (int64, 
 		return 0, fmt.Errorf("failed to create PCM encoder: %w", err)
 	}
 
-	written, err := media.CopyWithBuf(body, enc, payloadBuf)
+	written, err := media.CopyWithBufContext(ctx, body, enc, payloadBuf)
 	return written, err
 }
 
-func (p *AudioPlayback) streamWav(body io.Reader, playWriter io.Writer) (int64, error) {
+func (p *AudioPlayback) streamWav(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
 	codec := p.codec
 	wavReader := audio.NewWavReader(body)
 	if err := wavReader.ReadHeaders(); err != nil {
@@ -176,7 +198,7 @@ func (p *AudioPlayback) streamWav(body io.Reader, playWriter io.Writer) (int64, 
 		return 0, fmt.Errorf("failed to create PCM encoder: %w", err)
 	}
 
-	written, err := media.CopyWithBuf(wavReader, enc, payloadBuf)
+	written, err := media.CopyWithBufContext(ctx, wavReader, enc, payloadBuf)
 	// written, err := wavCopy(dec, enc, payloadBuf)
 	return written, err
 }

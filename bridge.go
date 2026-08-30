@@ -136,7 +136,9 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 // In some cases you want to control and be signaled when bridge terminates
 //
 // NOTE: Should be only called if you want to start manually proxying.
-// It is required to set WaitDialogsNum higher than 2
+// It is required to set WaitDialogsNum higher than 2.
+// Parallel user writers on the bridged dialogs are not supported: the proxy
+// writes through the same handle.
 //
 // Experimental
 func (b *Bridge) ProxyMedia() error {
@@ -148,16 +150,14 @@ func (b *Bridge) ProxyMedia() error {
 		return fmt.Errorf("you are already running proxy media. Increase WaitDialogsNum")
 	}
 
-	for _, d := range b.dialogs {
-		if err := d.Media().StopRTP(2, 0); err != nil {
-			return err
-		}
-	}
 	return b.proxyMedia()
 }
 
 // ProxyMediaControl starts proxy in background and allows to stop proxy at any time.
 // Stop should be called once and it is not needed to be called if call is terminating
+//
+// Stop interrupts the proxy through the write gate of the bridged dialogs and
+// restores the writers afterwards.
 //
 // Experimental
 func (b *Bridge) ProxyMediaControl() (func() error, error) {
@@ -166,34 +166,32 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 		return nil, fmt.Errorf("number of dialogs must equal to 2")
 	}
 
-	// Disable direct writes, so proxy owns write direction. Same as ProxyMedia does
-	for _, d := range b.dialogs {
-		if err := d.Media().StopRTP(2, 0); err != nil {
-			return nil, err
-		}
-	}
-
 	proxyErr := make(chan error, 1)
 	go func() {
 		proxyErr <- b.proxyMedia()
 	}()
 
 	stopF := func() error {
-		// Interrupt the proxy loop by expiring write deadlines
+		// Interrupt the proxy through the write gate: the in-flight write
+		// completes and the next write surfaces media.ErrWritePaused, which
+		// the proxy treats as a clean stop.
+		rels := make([]func(), 0, len(b.dialogs))
+		var pauseErrs error
 		for _, d := range b.dialogs {
-			if err := d.Media().StopRTP(2, 0); err != nil {
-				return err
+			release, err := d.Media().PauseAudioWrite()
+			if err != nil {
+				pauseErrs = errors.Join(pauseErrs, err)
+				continue
 			}
+			rels = append(rels, release)
 		}
 
 		// Wait goroutine termination
 		err := <-proxyErr
-		for _, d := range b.dialogs {
-			if err := d.Media().StartRTP(2, 0); err != nil {
-				return err
-			}
+		for _, release := range rels {
+			release()
 		}
-		return err
+		return errors.Join(pauseErrs, err)
 	}
 
 	return stopF, nil
@@ -265,6 +263,10 @@ func proxyMediaBackground(log *slog.Logger, reader io.Reader, writer io.Writer, 
 
 	written, err := copyWithBuf(reader, writer, buf.([]byte))
 	log.Debug("Proxy media routine finished", "bytes", written)
+	if errors.Is(err, media.ErrWritePaused) {
+		// Stopped through the write gate
+		err = nil
+	}
 	if err, ok := err.(net.Error); ok && err.Timeout() {
 		log.Debug("Proxy media stopped with timeout. RTP Deadline", "error", err)
 		err = nil
@@ -307,6 +309,9 @@ type BridgeMix struct {
 
 	mixWG    sync.WaitGroup
 	mixState int
+	// pauseReleases holds reader gate releases taken by mixStop, applied by
+	// mixStopWait after the mix goroutines rejoin. Guarded by mu.
+	pauseReleases []func()
 
 	// WaitDialogsNum is just helper flag when to start proxy
 	WaitDialogsNum int
@@ -445,12 +450,12 @@ func (b *BridgeMix) mixStopWait() error {
 		b.mixWG.Wait()
 		b.mu.Lock()
 	}
-	// Enable RTP again
+	// Release read pauses (mixStop paused the dialogs to stop the mix)
 	var allErros error
-	for _, d := range b.dialogs {
-		err := d.Media().StartRTP(1, 0) // Start reading
-		errors.Join(allErros, err)
+	for _, release := range b.pauseReleases {
+		release()
 	}
+	b.pauseReleases = nil
 	return allErros
 }
 
@@ -462,8 +467,14 @@ func (b *BridgeMix) mixStop() (bool, error) {
 	b.mixState = 2 // Set it stoping in progress
 	var allErros error
 	for _, d := range b.dialogs {
-		err := d.Media().StopRTP(1, 0) // Stop reading
-		errors.Join(allErros, err)
+		// Pause reading: interrupts the mix loop reads through the reader
+		// gate; releases are held until mixStopWait rejoins the mix.
+		release, err := d.Media().PauseAudioRead()
+		if err != nil {
+			allErros = errors.Join(allErros, err)
+			continue
+		}
+		b.pauseReleases = append(b.pauseReleases, release)
 	}
 	return true, allErros
 }
@@ -720,6 +731,14 @@ func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte,
 				n, err := r.r.Read(r.buf)
 				rwStreams[i].n = n
 				if err != nil {
+					if errors.Is(err, media.ErrReadPaused) {
+						state := b.stateRead()
+						if state != 1 {
+							// We are stopped
+							return err
+						}
+						continue
+					}
 					if errors.Is(err, os.ErrDeadlineExceeded) {
 						state := b.stateRead()
 						if state != 1 {

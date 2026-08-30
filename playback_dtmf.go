@@ -4,6 +4,7 @@
 package diago
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,9 +17,6 @@ import (
 )
 
 var (
-	// dtmfReadPollInterval is read deadline used in DTMF read loop. It only
-	// affects loop exit latency, DTMF packets are detected immediately.
-	dtmfReadPollInterval = 500 * time.Millisecond
 	// dtmfChSize is DTMF channel buffer size
 	dtmfChSize = 16
 )
@@ -67,9 +65,14 @@ type AudioPlaybackDTMF struct {
 
 	dtmfCh     chan rune
 	dtmfReader *DTMFReader
-	// dm resolves the CURRENT media session at use time so the read loop
+	// dm resolves the stable read handle at use time so the read loop
 	// survives media updates (re-INVITE) - docs/contracts.md §4
 	dm *DialogMedia
+
+	// readCtx is canceled by Close to interrupt the read loop through the
+	// reader gate (no conn deadlines involved).
+	readCtx    context.Context
+	readCancel context.CancelFunc
 
 	stopCh    chan struct{}
 	closeOnce sync.Once
@@ -103,11 +106,14 @@ func (d *DialogMedia) PlaybackDTMFCreate(opts ...PlaybackDTMFOption) (*AudioPlay
 		return nil, err
 	}
 
+	readCtx, readCancel := context.WithCancel(context.Background())
 	p := &AudioPlaybackDTMF{
 		AudioPlaybackControl: pb,
 		dtmfCh:               make(chan rune, dtmfChSize),
 		dtmfReader:           dtmfReader,
 		dm:                   d,
+		readCtx:              readCtx,
+		readCancel:           readCancel,
 		stopCh:               make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -124,48 +130,67 @@ func (p *AudioPlaybackDTMF) DTMF() <-chan rune {
 	return p.dtmfCh
 }
 
-// Play plays reader content with DTMF control. See AudioPlaybackControl.Play
+// Play plays reader content with DTMF control.
+//
+// Deprecated: Use PlayContext.
 func (p *AudioPlaybackDTMF) Play(reader io.Reader, mimeType string) (int64, error) {
 	p.startReadLoop()
 	return p.AudioPlaybackControl.Play(reader, mimeType)
 }
 
-// PlayFile plays wav file with DTMF control. See AudioPlaybackControl.PlayFile
+// PlayContext plays reader content with DTMF control, stopping with ctx.Err()
+// when the context is canceled. DTMF reading continues until Close.
+func (p *AudioPlaybackDTMF) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
+	p.startReadLoop()
+	return p.AudioPlaybackControl.PlayContext(ctx, reader, mimeType)
+}
+
+// PlayFile plays wav file with DTMF control.
+//
+// Deprecated: Use PlayFileContext.
 func (p *AudioPlaybackDTMF) PlayFile(filename string) (int64, error) {
 	p.startReadLoop()
 	return p.AudioPlaybackControl.PlayFile(filename)
 }
 
-// PlayURL plays wav from url with DTMF control. See AudioPlaybackControl.PlayURL
+// PlayFileContext plays wav file with DTMF control, stopping with ctx.Err()
+// when the context is canceled.
+func (p *AudioPlaybackDTMF) PlayFileContext(ctx context.Context, filename string) (int64, error) {
+	p.startReadLoop()
+	return p.AudioPlaybackControl.PlayFileContext(ctx, filename)
+}
+
+// PlayURL plays wav from url with DTMF control.
+//
+// Deprecated: Use PlayURLContext.
 func (p *AudioPlaybackDTMF) PlayURL(urlStr string) (int64, error) {
 	p.startReadLoop()
 	return p.AudioPlaybackControl.PlayURL(urlStr)
 }
 
+// PlayURLContext plays wav from url with DTMF control, stopping with
+// ctx.Err() when the context is canceled.
+func (p *AudioPlaybackDTMF) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
+	p.startReadLoop()
+	return p.AudioPlaybackControl.PlayURLContext(ctx, urlStr)
+}
+
 // Close stops DTMF reading. It should be called when DTMF playback is not
 // needed anymore, to allow other audio reading on the dialog.
 //
+// Cancellation goes through the reader gate (no conn deadlines): the
+// in-flight read is interrupted and the reader is restored afterwards.
 // dm may be nil when the struct is constructed manually (test stubs); the
-// deadline control is simply skipped in that case.
+// read loop simply has no media to arm in that case.
 func (p *AudioPlaybackDTMF) Close() error {
-	var err error
 	p.closeOnce.Do(func() {
 		close(p.stopCh)
-		if p.dm != nil {
-			if ms := p.dm.currentMediaSession(); ms != nil {
-				// Unblock pending read
-				err = ms.StopRTP(1, time.Millisecond)
-			}
+		if p.readCancel != nil {
+			p.readCancel()
 		}
 		p.wg.Wait()
-		if p.dm != nil {
-			if ms := p.dm.currentMediaSession(); ms != nil {
-				// Restore reading without deadline
-				err = errors.Join(err, ms.StartRTP(1))
-			}
-		}
 	})
-	return err
+	return nil
 }
 
 // startReadLoop starts DTMF reading in background. It is idempotent.
@@ -181,6 +206,16 @@ func (p *AudioPlaybackDTMF) readLoop() {
 	defer p.wg.Done()
 
 	buf := make([]byte, media.RTPBufSize)
+
+	// Arm a ctx-driven interrupt on the stable read handle: Close cancels
+	// the context, which unblocks the in-flight read - no conn deadlines.
+	if p.dm != nil {
+		if pr := p.dm.currentReadHandle(); pr != nil {
+			disarm := pr.ArmReadInterrupt(p.readCtx)
+			defer disarm()
+		}
+	}
+
 	for {
 		select {
 		case <-p.stopCh:
@@ -188,23 +223,18 @@ func (p *AudioPlaybackDTMF) readLoop() {
 		default:
 		}
 
-		// Resolve the current session each iteration: media updates (re-INVITE)
-		// swap sessions, but RTP/RTCP share the same conn deadlines. dm may be
-		// nil when constructed manually (test stubs).
-		if p.dm != nil {
-			if ms := p.dm.currentMediaSession(); ms != nil {
-				// Use short read deadline, so loop can check stop channel.
-				// Deadline does not add DTMF detection latency, since read
-				// returns immediately on packet arrival.
-				if err := ms.StopRTP(1, dtmfReadPollInterval); err != nil {
-					slog.Debug("Failed to set DTMF read deadline", "error", err)
-				}
-			}
-		}
-
 		_, err := p.dtmfReader.Read(buf)
 		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
+			switch {
+			case p.readCtx != nil && p.readCtx.Err() != nil:
+				// Close initiated the stop
+				return
+			case errors.Is(err, media.ErrReadPaused):
+				// External pause: wait it out, the loop resumes after release
+				time.Sleep(5 * time.Millisecond)
+				continue
+			case errors.Is(err, os.ErrDeadlineExceeded):
+				// Legacy deadline users
 				continue
 			}
 			// Dialog closed (net closed => io.EOF) or reading stopped

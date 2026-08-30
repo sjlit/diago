@@ -404,6 +404,7 @@ func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
 func WithAudioReaderDTMF(r *DTMFReader) AudioReaderOption {
 	return func(d *DialogMedia) error {
 		r.dm = d
+		r.packetReader = d.RTPPacketReader
 		r.dtmfReader = media.NewRTPDTMFReader(d.dtmfCodec(), d.RTPPacketReader, d.getAudioReader())
 		d.audioReader = r
 		return nil
@@ -595,6 +596,8 @@ func (d *DialogMedia) Media() *DialogMedia {
 }
 
 // Echo does audio echo for you
+//
+// Deprecated: Use EchoContext.
 func (d *DialogMedia) Echo() error {
 	audioR, err := d.AudioReader()
 	if err != nil {
@@ -606,6 +609,30 @@ func (d *DialogMedia) Echo() error {
 	}
 
 	_, err = media.Copy(audioR, audioW)
+	return err
+}
+
+// EchoContext does audio echo until the context is canceled. Cancellation
+// interrupts the in-flight read through the reader gate and returns ctx.Err().
+func (d *DialogMedia) EchoContext(ctx context.Context) error {
+	audioR, err := d.AudioReader()
+	if err != nil {
+		return err
+	}
+	audioW, err := d.AudioWriter()
+	if err != nil {
+		return err
+	}
+	disarm, err := d.armReadInterrupt(ctx)
+	if err != nil {
+		return err
+	}
+	defer disarm()
+
+	_, err = media.CopyContext(ctx, audioR, audioW)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return err
 }
 
@@ -693,6 +720,61 @@ func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereo
 	return newDialogRecordingWav(wavFile, ar, mpropsR, aw, mpropsW)
 }
 
+// PauseAudioRead pauses the dialog audio reader: reads through the audio
+// pipeline return media.ErrReadPaused until the returned release is called.
+// Pause is refcounted, so concurrent pausers can not resume each other; the
+// returned release must be called exactly once.
+func (d *DialogMedia) PauseAudioRead() (func(), error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return nil, ErrDialogClosed
+	}
+	if d.RTPPacketReader == nil {
+		return nil, ErrDialogNotAnswered
+	}
+	return d.RTPPacketReader.PauseRead(), nil
+}
+
+// PauseAudioWrite pauses the dialog audio writer: writes through the audio
+// pipeline return media.ErrWritePaused until the returned release is called.
+// Refcounted like PauseAudioRead. An in-flight write completes first, so
+// pause latency is bounded by one packet interval.
+func (d *DialogMedia) PauseAudioWrite() (func(), error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return nil, ErrDialogClosed
+	}
+	if d.RTPPacketWriter == nil {
+		return nil, ErrDialogNotAnswered
+	}
+	return d.RTPPacketWriter.PauseWrite(), nil
+}
+
+// armReadInterrupt arms a context-driven interrupt on the dialog's stable
+// audio read handle. The returned disarm joins the watcher and restores the
+// reader when the interrupt was delivered.
+func (d *DialogMedia) armReadInterrupt(ctx context.Context) (func(), error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return nil, ErrDialogClosed
+	}
+	if d.RTPPacketReader == nil {
+		return nil, ErrDialogNotAnswered
+	}
+	return d.RTPPacketReader.ArmReadInterrupt(ctx), nil
+}
+
+// currentReadHandle returns the stable audio read handle for ctx-driven
+// interrupts, or nil. Safe from any goroutine.
+func (d *DialogMedia) currentReadHandle() *media.RTPPacketReader {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.RTPPacketReader
+}
+
 // Listen keeps reading stream until it gets closed or deadlined
 // Use ListenBackground or ListenContext for better control
 func (d *DialogMedia) Listen() (err error) {
@@ -726,6 +808,10 @@ func (d *DialogMedia) ListenBackground() (stop func() error, err error) {
 		for {
 			_, err := audioReader.Read(buf)
 			if err != nil {
+				if errors.Is(err, media.ErrReadPaused) {
+					// Stopped through the reader gate
+					return
+				}
 				if err, ok := err.(net.Error); ok && err.Timeout() {
 					return
 				}
@@ -736,24 +822,25 @@ func (d *DialogMedia) ListenBackground() (stop func() error, err error) {
 	}()
 
 	return func() error {
-		// Resolve once: stop and start must hit the same session, even if a
-		// re-INVITE replaces it concurrently.
-		ms := d.currentMediaSession()
-		if ms == nil {
-			return ErrDialogNotAnswered
-		}
-		if err := ms.StopRTP(1, 0); err != nil {
+		// Pause the reader: interrupts the in-flight read and, being
+		// refcounted, does not touch any other component's state. Release
+		// restores normal reads.
+		release, err := d.PauseAudioRead()
+		if err != nil {
 			return err
 		}
 		wg.Wait() // This makes sure we have exited reading
-		if err := ms.StartRTP(1); err != nil {
-			return err
+		release()
+		if errors.Is(readErr, media.ErrReadPaused) {
+			return nil
 		}
 		return readErr
 	}, nil
 }
 
-// ListenContext listens until context is canceled.
+// ListenContext listens until context is canceled. Cancellation interrupts
+// the in-flight read through the reader gate and returns ctx.Err(); the
+// dialog media stays usable afterwards.
 func (d *DialogMedia) ListenContext(pctx context.Context) error {
 	buf := make([]byte, media.RTPBufSize)
 	audioReader, err := d.AudioReader()
@@ -761,20 +848,18 @@ func (d *DialogMedia) ListenContext(pctx context.Context) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(pctx)
-	defer cancel()
+	disarm, err := d.armReadInterrupt(pctx)
+	if err != nil {
+		return err
+	}
+	defer disarm()
 
-	go func() {
-		<-ctx.Done()
-		if pctx.Err() != nil {
-			if ms := d.currentMediaSession(); ms != nil {
-				ms.StopRTP(1, 0)
-			}
-		}
-	}()
 	for {
 		_, err := audioReader.Read(buf)
 		if err != nil {
+			if pctx.Err() != nil {
+				return pctx.Err()
+			}
 			if err, ok := err.(net.Error); ok && err.Timeout() {
 				return nil
 			}
@@ -783,6 +868,9 @@ func (d *DialogMedia) ListenContext(pctx context.Context) error {
 	}
 }
 
+// ListenUntil listens until dur elapses.
+//
+// Deprecated: Use ListenContext with a context deadline.
 func (d *DialogMedia) ListenUntil(dur time.Duration) error {
 	buf := make([]byte, media.RTPBufSize)
 
@@ -803,6 +891,12 @@ func (d *DialogMedia) ListenUntil(dur time.Duration) error {
 	}
 }
 
+// StopRTP pauses reading and/or writing by expiring the shared conn
+// deadline. It is a durable, global state: any other component's StartRTP
+// clears it for everyone.
+//
+// Deprecated: Use PauseAudioRead / PauseAudioWrite, which are refcounted and
+// scoped to this dialog's stable handles.
 func (d *DialogMedia) StopRTP(rw int8, dur time.Duration) error {
 	ms := d.currentMediaSession()
 	if ms == nil {
@@ -811,6 +905,11 @@ func (d *DialogMedia) StopRTP(rw int8, dur time.Duration) error {
 	return ms.StopRTP(rw, dur)
 }
 
+// StartRTP clears the conn deadline (both directions).
+// The dur parameter is ignored and kept only for signature compatibility.
+//
+// Deprecated: Use the release function returned by PauseAudioRead /
+// PauseAudioWrite.
 func (d *DialogMedia) StartRTP(rw int8, dur time.Duration) error {
 	ms := d.currentMediaSession()
 	if ms == nil {
@@ -822,9 +921,12 @@ func (d *DialogMedia) StartRTP(rw int8, dur time.Duration) error {
 type DTMFReader struct {
 	// dm resolves the CURRENT media session at use time so that deadline
 	// control survives media updates (re-INVITE) - docs/contracts.md §4
-	dm         *DialogMedia
-	dtmfReader *media.RTPDtmfReader
-	onDTMF     func(dtmf rune) error
+	dm *DialogMedia
+	// packetReader is the stable audio read handle used for ctx-driven
+	// interrupts; the pointer never changes across media updates
+	packetReader *media.RTPPacketReader
+	dtmfReader   *media.RTPDtmfReader
+	onDTMF       func(dtmf rune) error
 }
 
 // dtmfCodec resolves the negotiated telephone-event codec. DTMF payload type
@@ -854,17 +956,45 @@ func (m *DialogMedia) AudioReaderDTMF() (*DTMFReader, error) {
 		return nil, ErrDialogNotAnswered
 	}
 	return &DTMFReader{
-		dm:         m,
-		dtmfReader: media.NewRTPDTMFReader(m.dtmfCodec(), m.RTPPacketReader, m.getAudioReader()),
+		dm:           m,
+		packetReader: m.RTPPacketReader,
+		dtmfReader:   media.NewRTPDTMFReader(m.dtmfCodec(), m.RTPPacketReader, m.getAudioReader()),
 	}, nil
 }
 
+// Listen listens for DTMF events until dur elapses.
+//
+// Deprecated: Use ListenContext with a context deadline.
 func (d *DTMFReader) Listen(onDTMF func(dtmf rune) error, dur time.Duration) error {
 	d.onDTMF = onDTMF
 	buf := make([]byte, media.RTPBufSize)
 	for {
 		if _, err := d.readDeadline(buf, dur); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+// ListenContext listens for DTMF events until the context is done. Cancellation
+// interrupts the in-flight read through the reader gate; DTMF events already
+// detected are delivered through onDTMF before the read that carries them
+// returns. Returns nil on clean cancellation.
+//
+// Unlike the deprecated Listen(dur), the dialog reader is not touched with
+// deadlines: pauses and other components do not terminate the listen.
+func (d *DTMFReader) ListenContext(ctx context.Context, onDTMF func(dtmf rune) error) error {
+	d.onDTMF = onDTMF
+	buf := make([]byte, media.RTPBufSize)
+	if d.packetReader != nil {
+		disarm := d.packetReader.ArmReadInterrupt(ctx)
+		defer disarm()
+	}
+	for {
+		if _, err := d.Read(buf); err != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
 			return err

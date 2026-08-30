@@ -23,19 +23,38 @@ var (
 	DefaultPlaybackURLRangeSize int = 65536
 )
 
+// PlayURL plays wav content from url.
+//
+// Deprecated: Use PlayURLContext.
 func (p *AudioPlayback) PlayURL(urlStr string) (int64, error) {
+	return p.PlayURLContext(context.Background(), urlStr)
+}
+
+// PlayURLContext plays wav content from url. The context bounds the request
+// and the streaming; unlike the deprecated PlayURL there is no implicit
+// 10s deadline when the caller provides one.
+func (p *AudioPlayback) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	var written int64
-	err := p.playURL(urlStr, &written)
+	err := p.playURL(ctx, urlStr, &written)
 	if errors.Is(err, io.EOF) {
 		return written, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return written, ctxErr
 	}
 	return written, err
 }
 
-func (p *AudioPlayback) playURL(urlStr string, written *int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int64) error {
+	// Legacy behavior: without a caller deadline keep a 10s cap for the
+	// initial request (chunked range requests stream under the same ctx).
+	requestCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		requestCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(requestCtx, "GET", urlStr, nil)
 	if err != nil {
 		return err
 	}
@@ -144,7 +163,7 @@ func (p *AudioPlayback) playURL(urlStr string, written *int64) error {
 			httpErr <- err
 		}()
 
-		n, err := p.streamWav(bufferReader, p.writer)
+		n, err := p.streamWav(ctx, bufferReader, p.writer)
 		*written += n
 		p.totalWritten += n
 
@@ -164,7 +183,7 @@ func (p *AudioPlayback) playURL(urlStr string, written *int64) error {
 	defer res.Body.Close()
 
 	wavBuf := bytes.NewReader(samples)
-	n, err := p.streamWav(wavBuf, p.writer)
+	n, err := p.streamWav(ctx, wavBuf, p.writer)
 	*written += n
 	p.totalWritten += n
 

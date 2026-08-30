@@ -91,6 +91,10 @@ type RTPJitterBuffer struct {
 	closeOnce sync.Once
 	// startOnce ensures that only one upstream reader goroutine is launched.
 	startOnce sync.Once
+	// pauseC delivers the read pause signal to ReadRTP. nil pointer means not
+	// paused. Set through setReadPause (readPauser); the pump goroutine is
+	// never interrupted - pause only surfaces at the ReadRTP select.
+	pauseC atomic.Pointer[<-chan struct{}]
 
 	// slots contains all reusable packet metadata and packet-sized byte regions.
 	slots []rtpJitterSlot
@@ -242,10 +246,20 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 			playoutC = j.playoutTimer.C
 		}
 
+		var pauseC <-chan struct{}
+		if p := j.pauseC.Load(); p != nil {
+			pauseC = *p
+		}
+
 		select {
 		case <-j.done:
 			j.stopTimers()
 			return 0, io.ErrClosedPipe
+
+		case <-pauseC:
+			// Transient pause/interrupt: playout state is kept, the next
+			// ReadRTP resumes the schedule where it stopped.
+			return 0, ErrReadPaused
 
 		case input, ok := <-j.input:
 			if !ok {
@@ -445,6 +459,13 @@ func (j *RTPJitterBuffer) recycleSlot(slotIndex int) {
 	case j.freeSlots <- slotIndex:
 	case <-j.done:
 	}
+}
+
+// setReadPause implements readPauser. Passing a closed channel surfaces
+// ErrReadPaused from ReadRTP; nil restores normal operation. The upstream
+// pump is never interrupted by a pause.
+func (j *RTPJitterBuffer) setReadPause(paused <-chan struct{}) {
+	j.pauseC.Store(&paused)
 }
 
 // Close stops jitter-buffer delivery. It does not close the injected reader.

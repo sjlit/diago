@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtcp"
@@ -42,6 +43,16 @@ type RTPPacketReader struct {
 	log *slog.Logger
 
 	reader RTPReader
+
+	// pokeTarget is the conn owner used to interrupt in-flight reads (deadline
+	// poke). Nil for wrapper readers, which are interrupted through the
+	// readPauser signal instead. Guarded by mu.
+	pokeTarget readInterrupter
+	// pauseCount is the refcount of active PauseRead holders. Guarded by mu
+	// for updates, loaded atomically on the read hot path.
+	pauseCount atomic.Int32
+	// pauseSignal is non-nil while paused; closed channel. Guarded by mu.
+	pauseSignal chan struct{}
 
 	// PacketHeader is stored after calling Read
 	// Safe to read only in same goroutine as Read
@@ -81,6 +92,14 @@ func NewRTPPacketReader(reader RTPReader, codec Codec) *RTPPacketReader {
 		// rtpBuffer:     make([]byte, RTPBufSize),
 		log: DefaultLogger().With("caller", "media"),
 	}
+	// Track the conn owner for read interrupts; wrapper readers resolve it
+	// via UpdateReader or interrupt through the readPauser signal.
+	switch s := reader.(type) {
+	case *RTPSession:
+		w.pokeTarget = s.Sess
+	case *MediaSession:
+		w.pokeTarget = s
+	}
 
 	return &w
 }
@@ -91,6 +110,9 @@ func NewRTPPacketReader(reader RTPReader, codec Codec) *RTPPacketReader {
 //
 // NOTE: Consider that if you are passsing smaller buffer than RTP header+payload, io.ErrShortBuffer is returned
 func (r *RTPPacketReader) Read(b []byte) (int, error) {
+	if r.paused() {
+		return 0, ErrReadPaused
+	}
 	if r.unread > 0 {
 		n := r.readPayload(b, r.unreadPayload[:r.unread])
 		return n, nil
@@ -122,6 +144,10 @@ func (r *RTPPacketReader) Read(b []byte) (int, error) {
 	// DO NOT EXPOSE Payload from this point
 	rtpN, err := reader.ReadRTP(buf, pkt)
 	if err != nil {
+		// A pause interrupts the in-flight read; surface it before any retry.
+		if r.paused() {
+			return 0, ErrReadPaused
+		}
 		// In case we error while new reader update happen, then retry again
 		// This can be deadline, timeout, or connection closed
 		r.mu.RLock()
@@ -239,6 +265,23 @@ func (r *RTPPacketReader) UpdateReader(reader RTPReader) {
 		m.rtpConn.SetReadDeadline(time.Now())
 	}
 	r.reader = reader
+	// Maintain the interrupt poke target: session-owned readers are
+	// interrupted via deadline poke, wrapper readers via the readPauser
+	// signal delivered in applyPause/clearPause.
+	switch s := reader.(type) {
+	case *RTPSession:
+		r.pokeTarget = s.Sess
+	case *MediaSession:
+		r.pokeTarget = s
+	default:
+		r.pokeTarget = nil
+	}
+	// Deliver an active pause to a newly installed pause-aware reader.
+	if r.pauseSignal != nil {
+		if p, ok := reader.(readPauser); ok {
+			p.setReadPause(r.pauseSignal)
+		}
+	}
 	// TODO we need to make sure that current Audio Reading is really stopped before updating
 	r.mu.Unlock()
 }

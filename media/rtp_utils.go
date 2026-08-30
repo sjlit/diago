@@ -4,6 +4,7 @@
 package media
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -108,6 +109,42 @@ func CopyWithBuf(reader io.Reader, writer io.Writer, payloadBuf []byte) (int64, 
 		}
 		nn, err := writer.Write(payloadBuf[:n])
 		if err != nil {
+			return totalWritten, err
+		}
+		totalWritten += int64(nn)
+		if n < nn {
+			return totalWritten, io.ErrShortWrite
+		}
+	}
+}
+
+// CopyContext is CopyWithBuf that stops with ctx.Err() when ctx is done.
+// The check runs between reads/writes; a read blocked on the network is
+// expected to be interrupted through the reader's own gate (ReadContext or
+// ArmReadInterrupt), keeping cancellation latency within one packet interval.
+func CopyContext(ctx context.Context, reader io.Reader, writer io.Writer) (int64, error) {
+	return CopyWithBufContext(ctx, reader, writer, make([]byte, RTPBufSize))
+}
+
+// CopyWithBufContext is CopyWithBuf with context checks between iterations.
+func CopyWithBufContext(ctx context.Context, reader io.Reader, writer io.Writer, payloadBuf []byte) (int64, error) {
+	var totalWritten int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return totalWritten, err
+		}
+		n, err := reader.Read(payloadBuf)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return totalWritten, ctxErr
+			}
+			return totalWritten, err
+		}
+		nn, err := writer.Write(payloadBuf[:n])
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return totalWritten, ctxErr
+			}
 			return totalWritten, err
 		}
 		totalWritten += int64(nn)

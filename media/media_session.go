@@ -290,24 +290,41 @@ func (s *MediaSession) InitWithSDP(localSDP []byte) error {
 	return nil
 }
 
+// StopRTP pauses reading and/or writing by expiring the shared conn deadline.
+// This is a durable, global state on the conn: any later StartRTP clears it
+// for everyone, so concurrent components overwrite each other.
+//
+// Deprecated: The conn deadline is an implementation detail of the media
+// stack. Use diago's DialogMedia.PauseAudioRead / PauseAudioWrite, which are
+// refcounted and scoped to the stable handles. The rw mask values 1 (read)
+// and 2 (write) can be combined.
 func (s *MediaSession) StopRTP(rw int8, dur time.Duration) error {
 	t := time.Now().Add(dur)
-	if rw&1 > 0 {
-		//Read stop
+	if rw&1 != 0 && rw&2 != 0 {
+		return s.rtpConn.SetDeadline(t)
+	}
+	if rw&1 != 0 {
 		return s.rtpConn.SetReadDeadline(t)
 	}
-	if rw&2 > 0 {
-		//Write stop
+	if rw&2 != 0 {
 		return s.rtpConn.SetWriteDeadline(t)
 	}
 	return s.rtpConn.SetDeadline(t)
 }
 
+// StartRTP clears the conn deadline (both directions when the mask covers
+// them), restoring blocking reads and writes.
+//
+// Deprecated: Use the release function returned by diago's
+// DialogMedia.PauseAudioRead / PauseAudioWrite.
 func (s *MediaSession) StartRTP(rw int8) error {
-	if rw&1 > 0 {
+	if rw&1 != 0 && rw&2 != 0 {
+		return s.rtpConn.SetDeadline(time.Time{})
+	}
+	if rw&1 != 0 {
 		return s.rtpConn.SetReadDeadline(time.Time{})
 	}
-	if rw&2 > 0 {
+	if rw&2 != 0 {
 		return s.rtpConn.SetWriteDeadline(time.Time{})
 	}
 	return s.rtpConn.SetDeadline(time.Time{})

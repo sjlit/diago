@@ -5,6 +5,7 @@ package diago
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -121,14 +122,25 @@ func (p *AudioPlaybackControl) State() PlaybackState {
 // called from other goroutine) playback restarts if reader implements
 // io.Seeker, otherwise error ErrSourceNotReplayable is returned.
 // Use PlayFile or PlayURL for non-seekable sources.
+//
+// Deprecated: Use PlayContext.
 func (p *AudioPlaybackControl) Play(reader io.Reader, mimeType string) (int64, error) {
+	return p.PlayContext(context.Background(), reader, mimeType)
+}
+
+// PlayContext plays reader content with replay support, stopping with ctx.Err()
+// when the context is canceled. See Play for the replay semantics.
+func (p *AudioPlaybackControl) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
 
 	var written int64
 	for {
-		n, err := p.AudioPlayback.Play(reader, mimeType)
+		n, err := p.AudioPlayback.PlayContext(ctx, reader, mimeType)
 		written += n
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return written, ctxErr
+		}
 		if !errors.Is(err, ErrPlaybackReplayed) {
 			return written, err
 		}
@@ -144,12 +156,23 @@ func (p *AudioPlaybackControl) Play(reader io.Reader, mimeType string) (int64, e
 
 // PlayFile plays wav file with replay support. On replay request file is
 // reopened and playback restarts from the beginning.
+//
+// Deprecated: Use PlayFileContext.
 func (p *AudioPlaybackControl) PlayFile(filename string) (int64, error) {
+	return p.PlayFileContext(context.Background(), filename)
+}
+
+// PlayFileContext plays wav file with replay support, stopping with ctx.Err()
+// when the context is canceled.
+func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
 
 	var written int64
 	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return written, ctxErr
+		}
 		file, err := os.Open(filename)
 		if err != nil {
 			return written, err
@@ -161,9 +184,12 @@ func (p *AudioPlaybackControl) PlayFile(filename string) (int64, error) {
 
 		// Using bufio to improve disk reading
 		fileReader := bufio.NewReaderSize(file, 64*1024)
-		n, err := p.AudioPlayback.Play(fileReader, "audio/wav")
+		n, err := p.AudioPlayback.PlayContext(ctx, fileReader, "audio/wav")
 		written += n
 		file.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return written, ctxErr
+		}
 		if !errors.Is(err, ErrPlaybackReplayed) {
 			return written, err
 		}
@@ -172,13 +198,24 @@ func (p *AudioPlaybackControl) PlayFile(filename string) (int64, error) {
 
 // PlayURL plays wav content from url with replay support. On replay request
 // url is refetched and playback restarts from the beginning.
+//
+// Deprecated: Use PlayURLContext.
 func (p *AudioPlaybackControl) PlayURL(urlStr string) (int64, error) {
+	return p.PlayURLContext(context.Background(), urlStr)
+}
+
+// PlayURLContext plays wav content from url with replay support, stopping
+// with ctx.Err() when the context is canceled.
+func (p *AudioPlaybackControl) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
 
 	var written int64
 	for {
-		err := p.playURL(urlStr, &written)
+		err := p.playURL(ctx, urlStr, &written)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return written, ctxErr
+		}
 		switch {
 		case errors.Is(err, ErrPlaybackReplayed):
 			continue

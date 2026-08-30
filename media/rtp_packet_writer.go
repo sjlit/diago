@@ -6,6 +6,7 @@ package media
 import (
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtcp"
@@ -43,6 +44,9 @@ type RTPPacketWriter struct {
 	SSRC uint32
 
 	codec Codec
+	// writePaused is the PauseWrite refcount. Updates happen via the released
+	// closure; checked atomically on the write hot path.
+	writePaused atomic.Int32
 	// Internals
 	// clock rate is decided based on media
 	sampleRateTimestamp uint32
@@ -152,6 +156,9 @@ func (p *RTPPacketWriter) DelayTimestamp(ofsset uint32) {
 // Concurrent writes are serialized with internal lock, but payload frame order
 // is a caller responsibility
 func (p *RTPPacketWriter) Write(b []byte) (int, error) {
+	if p.writePausedNow() {
+		return 0, ErrWritePaused
+	}
 	p.mu.Lock()
 	ticker := p.clockTicker
 	n, err := p.writeSamplesUnsafe(p.writer, b, p.sampleRateTimestamp, p.nextTimestamp == p.initTimestamp, p.codec.PayloadType)
@@ -168,6 +175,9 @@ func (p *RTPPacketWriter) Write(b []byte) (int, error) {
 // WriteSamples allows to skip default packet rate.
 // This is useful if you need to write different payload but keeping same SSRC
 func (p *RTPPacketWriter) WriteSamples(payload []byte, sampleRateTimestamp uint32, marker bool, payloadType uint8) (int, error) {
+	if p.writePausedNow() {
+		return 0, ErrWritePaused
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n, err := p.writeSamplesUnsafe(p.writer, payload, sampleRateTimestamp, marker, payloadType)

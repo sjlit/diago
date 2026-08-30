@@ -54,8 +54,10 @@ func ReadDTMF(inDialog *diago.DialogServerSession) error {
 	if err != nil {
 		return err
 	}
-	return reader.Listen(func(dtmf rune) error {
+	listenCtx, cancel := context.WithTimeout(inDialog.Context(), 10*time.Second)
+	defer cancel()
+	return reader.ListenContext(listenCtx, func(dtmf rune) error {
 		slog.Info("Received DTMF", "dtmf", string(dtmf))
 		return nil
-	}, 10*time.Second)
+	})
 }

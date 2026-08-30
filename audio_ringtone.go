@@ -5,6 +5,7 @@ package diago
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -18,17 +19,13 @@ type AudioRingtone struct {
 	writer     *audio.PCMEncoderWriter
 	ringtone   []byte
 	sampleSize int
-	// dm resolves the CURRENT media session at use time so that start/stop
-	// survives media updates (re-INVITE) - docs/contracts.md §4
+	// dm resolves the stable write handle at use time; stop goes through the
+	// write gate (docs/contracts.md §4)
 	dm *DialogMedia
 }
 
 func (a *AudioRingtone) PlayBackground() (func() error, error) {
-	ms := a.dm.currentMediaSession()
-	if ms == nil {
-		return nil, ErrDialogNotAnswered
-	}
-	if err := ms.StartRTP(1); err != nil {
+	if err := a.dm.checkMediaUsable(); err != nil {
 		return nil, err
 	}
 
@@ -45,20 +42,22 @@ func (a *AudioRingtone) PlayBackground() (func() error, error) {
 	return func() error {
 		cancel()
 
-		if err := ms.StopRTP(2, 0); err != nil {
+		// Stop the play loop through the write gate: the in-flight write
+		// finishes (bounded by one packet interval) and the next write
+		// surfaces media.ErrWritePaused.
+		release, err := a.dm.PauseAudioWrite()
+		if err != nil {
 			return err
 		}
 		wg.Wait()
+		release()
 
-		// enable RTP again
-		if err := ms.StartRTP(2); err != nil {
-			return err
+		if errors.Is(playErr, media.ErrWritePaused) {
+			return nil
 		}
-
 		if e, ok := playErr.(net.Error); ok && e.Timeout() {
 			return nil
 		}
-
 		return playErr
 	}, nil
 }
