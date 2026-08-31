@@ -598,18 +598,11 @@ func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption
 		return err
 	}
 
-	res, err := d.reInviteDo(ctx, req)
-	if err != nil {
-		return err
-	}
-
-	cont := res.Contact()
-	if cont == nil {
-		return fmt.Errorf("no contact header present")
-	}
-
-	ack := sip.NewRequest(sip.ACK, cont.Address)
-	return d.WriteRequest(ack)
+	// reInviteDo already sends the ACK via WriteAck. Do not append a second
+	// ACK here — an earlier revision did and shipped two same-CSeq,
+	// different-branch ACKs per re-INVITE.
+	_, err = d.reInviteDo(ctx, req)
+	return err
 }
 
 func (d *DialogClientSession) reInviteDo(ctx context.Context, req *sip.Request) (*sip.Response, error) {
@@ -646,8 +639,17 @@ func (d *DialogClientSession) reInviteDo(ctx context.Context, req *sip.Request) 
 			}
 		}
 
-		// Now do ACK on new Contact
-		if err := d.ack(ctx, res.Contact().Address, nil, nil); err != nil {
+		// ACK the 2xx at its Contact (RFC 3261 §13.2.1). A 2xx without Contact
+		// is malformed but does occur in the wild — dereferencing it here used
+		// to panic. Fall back to the dialog's remote target.
+		ackContact := res.Contact()
+		if ackContact == nil {
+			ackContact = d.RemoteContact()
+		}
+		if ackContact == nil {
+			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ACK")
+		}
+		if err := d.ack(ctx, ackContact.Address, nil, nil); err != nil {
 			return res, err
 		}
 

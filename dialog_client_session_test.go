@@ -338,6 +338,89 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	dialog.Hangup(ctx)
 }
 
+// TestIntegrationDialogClientReinviteSingleAck 守护 re-INVITE 双 ACK 回归:
+// ReInvite 曾在 reInviteDo 的 WriteAck(完整路径:发包+置 Confirmed+挂重传钩子)
+// 之外又补一发裸 WriteRequest,导致线上出现两条同 CSeq、不同 Via branch 的
+// ACK(独立事务,非重传)。修复后 re-INVITE 必须恰好只 ACK 一次。
+func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 服务端在中间件层数收到的 ACK(OnAck 同样经过 serverMiddleware)。
+	var mu sync.Mutex
+	var ackCount int
+
+	{
+		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
+		defer ua.Close()
+
+		dg := NewDiago(ua, WithTransport(
+			Transport{
+				Transport: "udp",
+				BindHost:  "127.0.0.1",
+				BindPort:  15110,
+			},
+		), WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+			return func(req *sip.Request, tx sip.ServerTransaction) {
+				if req.Method == sip.ACK {
+					mu.Lock()
+					ackCount++
+					mu.Unlock()
+				}
+				next(req, tx)
+			}
+		}))
+		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+			if err := d.Answer(); err != nil {
+				t.Log("answer failed", err)
+				return
+			}
+			<-d.Context().Done()
+		})
+		require.NoError(t, err)
+	}
+
+	ua, _ := sipgo.NewUA()
+	defer ua.Close()
+
+	dg := newDialer(ua)
+	err := dg.ServeBackground(context.TODO(), func(d *DialogServerSession) {})
+	require.NoError(t, err)
+
+	dialog, err := dg.Invite(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15110})
+	require.NoError(t, err)
+
+	// dg.Invite 会为初始 INVITE 自动 ACK;等这条先落账,把基线隔开,
+	// 之后新增的 ACK 只可能来自 re-INVITE。
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return ackCount >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	baseline := ackCount
+	mu.Unlock()
+
+	require.NoError(t, dialog.ReInvite(ctx))
+
+	// re-INVITE 的 ACK 必须到达;回归发生时两条 ACK 在同一条同步代码路径上
+	// 背靠背发出(实测间隔微秒级),50ms 余量足以捕捉第二条。
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return ackCount > baseline
+	}, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := ackCount - baseline
+	mu.Unlock()
+	assert.Equal(t, 1, got, "re-INVITE must be acknowledged by exactly one ACK")
+
+	require.NoError(t, dialog.Hangup(ctx))
+}
+
 func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
