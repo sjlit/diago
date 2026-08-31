@@ -1115,10 +1115,34 @@ func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {
 	return cli
 }
 
+// MatchDialog resolves an in-dialog SIP request to the dialog tracked by
+// this engine. It mirrors internal routing order: server (UAS) role via
+// DialogIDFromRequestUAS first, then client (UAC) via DialogIDFromRequestUAC.
+// ok is false for out-of-dialog, missing headers, or unknown dialogs. When ok,
+// the returned DialogSession is the live *DialogServerSession or
+// *DialogClientSession (type-assert if role matters).
+func (dg *Diago) MatchDialog(req *sip.Request) (DialogSession, bool) {
+	if dg == nil || req == nil {
+		return nil, false
+	}
+	sd, cd, err := dg.cache.MatchDialog(req)
+	if err != nil {
+		return nil, false
+	}
+	if sd != nil {
+		return sd, true
+	}
+	if cd != nil {
+		return cd, true
+	}
+	return nil, false
+}
+
 // DialogCacheServer gives access to the internal dialog cache of server dialogs.
 //
 // Deprecated: Internal cache accessor; not part of the public API surface and
-// will be unexported.
+// will be unexported. Use MatchDialog for request-to-dialog membership checks
+// (the conntrack/allowlist use case); cache access will be removed.
 func (dg *Diago) DialogCacheServer() DialogCache[*DialogServerSession] {
 	return dg.cache.server
 }
@@ -1126,7 +1150,8 @@ func (dg *Diago) DialogCacheServer() DialogCache[*DialogServerSession] {
 // DialogCacheClient gives access to the internal dialog cache of client dialogs.
 //
 // Deprecated: Internal cache accessor; not part of the public API surface and
-// will be unexported.
+// will be unexported. Use MatchDialog for request-to-dialog membership checks;
+// cache access will be removed.
 func (dg *Diago) DialogCacheClient() DialogCache[*DialogClientSession] {
 	return dg.cache.client
 }
