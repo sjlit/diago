@@ -2,7 +2,6 @@ package diago
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 
@@ -31,16 +30,16 @@ func (r *AudioStereoRecordingWav) Close() error {
 }
 
 func newDialogRecordingWav(wawFile *os.File, ar io.Reader, arProps MediaProps, aw io.Writer, awProps MediaProps) (*AudioStereoRecordingWav, error) {
-	if arProps.Codec != awProps.Codec {
-		return nil, fmt.Errorf("codecs of reader and writer need to match for stereo")
-	}
-	codec := awProps.Codec
-	// Create wav file to store recording
-	// Now create WavWriter to have Wav Container written
+	// Each direction decodes with its own codec; the two spools only need to
+	// share the interleaved timeline timing (rate/duration), enforced by
+	// MonitorPCMStereo.Init.
 	wavWriter := audio.NewWavWriter(wawFile)
+	if awProps.Codec.SampleRate != 0 {
+		wavWriter.SampleRate = int(awProps.Codec.SampleRate)
+	}
 
 	mon := &audio.MonitorPCMStereo{}
-	if err := mon.Init(wavWriter, codec, ar, aw); err != nil {
+	if err := mon.Init(wavWriter, arProps.Codec, awProps.Codec, ar, aw); err != nil {
 		wavWriter.Close()
 		return nil, err
 	}

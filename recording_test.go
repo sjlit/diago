@@ -2,6 +2,7 @@ package diago
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"testing"
 
@@ -10,6 +11,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestNewDialogRecordingWavCodecPolicy pins the relaxed codec gate: each
+// direction decodes independently, so PCMA (reader) + PCMU (writer) - same
+// 8k/20ms timing, different names - must build. Only a timing mismatch
+// (sample rate / frame duration) may reject, because the two spools share one
+// interleaved WAV timeline.
+func TestNewDialogRecordingWavCodecPolicy(t *testing.T) {
+	t.Run("DifferentCodecSameTimingAccepted", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "rec-*.wav")
+		require.NoError(t, err)
+		defer f.Close()
+
+		rec, err := newDialogRecordingWav(f, bytes.NewBuffer(nil), MediaProps{Codec: media.CodecAudioAlaw},
+			io.Discard, MediaProps{Codec: media.CodecAudioUlaw})
+		require.NoError(t, err)
+		require.NoError(t, rec.Close())
+	})
+
+	t.Run("TimingMismatchRejected", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "rec-*.wav")
+		require.NoError(t, err)
+		defer f.Close()
+
+		_, err = newDialogRecordingWav(f, bytes.NewBuffer(nil), MediaProps{Codec: media.CodecAudioAlaw},
+			io.Discard, MediaProps{Codec: media.CodecAudioOpus})
+		require.Error(t, err)
+	})
+}
 
 func TestIntegrationRecordingStereoWav(t *testing.T) {
 	fakePCMFrame := bytes.Repeat([]byte("0123456789"), 32)

@@ -423,3 +423,46 @@ Notes:
 - `Shutdown` does not deregister SIP handlers from sipgo — that registry is
   immutable for the server's lifetime. Once the listeners are closed, no new
   requests arrive and the handlers become unreachable.
+
+## 12. Recording taps
+
+`DialogMedia.StartStereoRecording` installs a stereo WAV recording tap by
+wrapping the dialog's current audio reader and writer. Two contracts govern
+where and when it can be attached.
+
+**Install before the dialog joins a Bridge.** `BridgeMix.addDialogStream`
+resolves each leg's reader/writer exactly once, at `AddDialogSession`, and
+mixes bridged traffic through those captured handles. A tap installed after
+the join sits behind the captured handle and never sees bridged audio, so the
+recording is silent. The supported window is between `Answer()` and adding the
+leg to a bridge — an application event hook that fires in that window is the
+intended attachment point.
+
+**Self-install is atomic.** Unlike the deprecated `SetAudioReader` /
+`SetAudioWriter` pair (two separate lock acquisitions, and the writer setter
+deprecated with no stereo replacement), `StartStereoRecording` wraps both
+heads and rewires them under a single `DialogMedia.mu` hold, so there is no
+half-wired window and no deprecated setter is touched. Each direction decodes
+with its own codec; the two PCM spools share one interleaved timeline, so the
+codecs must agree on sample rate and frame duration (a codec-name difference
+is fine — PCMA in, PCMU out records).
+
+**Fail-open by default.** A stereo tap sits inline in the media path, so a
+PCM write failure (disk full) would otherwise propagate into the bridge mix
+loop and interrupt the call. `StartStereoRecording` therefore swallows the
+first recording write error, stops taking writes, and keeps media flowing; the
+degradation surfaces via `StereoRecording.Err()` and again from `Close()`.
+`WithRecordingFailOpen(false)` restores propagation. `WithRecordingSpoolDir`
+moves the per-direction raw spool off `os.TempDir()` onto the recording
+partition (spool files are created `0600`).
+
+**Uninstall is best-effort.** `Close` removes the tap from the chain only
+while it is still the outermost head. If a Bridge wrapped the chain on top
+after `Start` (for example the `RTPRealTimeReader` the bridge may install),
+`Close` cannot remove the tap from the middle of that chain without corrupting
+the outer handle, so it leaves a *stopped, hence transparent* tap in place:
+media keeps flowing, no further bytes are recorded. This is intentional; do
+not assume the reader/writer chain is byte-for-byte restored after `Close`.
+
+The caller retains ownership of the WAV writer: neither `StartStereoRecording`
+nor `Close` closes it. Close the underlying fd after `Close` returns.

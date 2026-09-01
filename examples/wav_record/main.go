@@ -55,26 +55,39 @@ func Record(inDialog *diago.DialogServerSession) error {
 	// Create wav file to store recording
 	filename := "/tmp/diago_record_" + inDialog.InviteRequest.CallID().Value() + ".wav"
 	slog.Info("Creating new recording", "filename", filename)
-	wawFile, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0755)
+	wavFile, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {
 		return err
 	}
-	defer wawFile.Close()
+	defer wavFile.Close()
 
-	// Create recording audio pipeline
-	rec, err := inDialog.AudioStereoRecordingCreate(wawFile)
+	// Install a stereo recording tap into the audio pipeline. It must be
+	// started before the dialog joins a Bridge (see docs/contracts.md §12).
+	// The tap is fail-open by default: a full disk degrades the recording
+	// (surfacing via rec.Err) but never interrupts the call.
+	rec, err := inDialog.StartStereoRecording(wavFile)
 	if err != nil {
 		return err
 	}
-	// Must be closed for correct flushing
+	// Must be closed for correct flushing. The caller keeps ownership of the
+	// wav file: Close finalizes the WAV but never closes the fd.
 	defer func() {
 		if err := rec.Close(); err != nil {
 			slog.Error("Failed to close recording", "error", err)
 		}
 	}()
 
-	// Do echo with audio reader and writer from recording object
-	_, err = media.Copy(rec.AudioReader(), rec.AudioWriter())
+	// Pump audio through the tap: read the inbound direction and write the
+	// outbound one via the dialog handles, which now route through the tap.
+	audioR, err := inDialog.AudioReader()
+	if err != nil {
+		return err
+	}
+	audioW, err := inDialog.AudioWriter()
+	if err != nil {
+		return err
+	}
+	_, err = media.Copy(audioR, audioW)
 	if errors.Is(err, io.EOF) {
 		// Call finished
 		return nil

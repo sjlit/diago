@@ -712,10 +712,15 @@ func (d *DialogMedia) PlaybackRingtoneCreate() (AudioRingtone, error) {
 // AudioStereoRecordingCreate creates Stereo Recording audio Pipeline and stores as Wav file format
 // For audio to be recorded use AudioReader and AudioWriter from Recording
 //
-// Tips:
-// If you want to make permanent in audio pipeline use SetAudioReader, SetAudioWriter
+// It does NOT install itself into the pipeline: the caller pulls the returned
+// AudioReader/AudioWriter (a manual echo/copy loop) or wires them in with
+// SetAudioReader/SetAudioWriter.
 //
-// NOTE: API WILL change
+// Deprecated: Use DialogMedia.StartStereoRecording instead. It self-installs
+// the tap into the current audio chain atomically (no deprecated setter, no
+// half-wired window), is fail-open by default so a full disk cannot interrupt
+// bridged media, and supports Pause/Resume and configurable spool. See
+// docs/contracts.md §12 for the install-before-Bridge timing contract.
 func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereoRecordingWav, error) {
 	mpropsW := MediaProps{}
 	aw, err := d.audioWriterProps(&mpropsW)
