@@ -47,7 +47,7 @@ func TestDiagoMediaConfigForTransport(t *testing.T) {
 // reach the created media session end to end.
 func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW})
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
 		return sip.NewResponseFromRequest(req, 200, "OK", body)
 	}, WithMediaConfig(MediaConfig{
 		Codecs:       []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
@@ -66,4 +66,46 @@ func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 	port := ms.Laddr.Port
 	assert.GreaterOrEqual(t, port, 18000, "media must bind inside the configured port range")
 	assert.Less(t, port, 18020)
+}
+
+// TestDiagoMediaConfigSDPSessionNamePropagation locks that MediaConfig.SDPSessionName
+// flows into the MediaSession and shows up in the local SDP "s=" line. Default
+// is preserved when the field is empty.
+func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
+	t.Run("Custom", func(t *testing.T) {
+		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+			body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+			return sip.NewResponseFromRequest(req, 200, "OK", body)
+		}, WithMediaConfig(MediaConfig{
+			Codecs:         []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+			SDPSessionName: "AcmePBX",
+		}))
+
+		d, err := dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+		require.NoError(t, err)
+		defer d.Close()
+
+		ms := d.DialogMedia.mediaSession
+		require.NotNil(t, ms)
+		assert.Equal(t, "AcmePBX", ms.SDPSessionName)
+		assert.Contains(t, string(ms.LocalSDP()), "s=AcmePBX")
+	})
+
+	t.Run("DefaultWhenEmpty", func(t *testing.T) {
+		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+			body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+			return sip.NewResponseFromRequest(req, 200, "OK", body)
+		}, WithMediaConfig(MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+		}))
+
+		d, err := dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+		require.NoError(t, err)
+		defer d.Close()
+
+		ms := d.DialogMedia.mediaSession
+		require.NotNil(t, ms)
+		assert.Empty(t, ms.SDPSessionName, "empty config means library default")
+		assert.Contains(t, string(ms.LocalSDP()), "s=Sip Go Media")
+	})
 }

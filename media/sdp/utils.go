@@ -26,7 +26,11 @@ func NTPTimestamp(now time.Time) uint64 {
 
 // GenerateForAudio is minimal AUDIO SDP setup
 // mode -> consts like ModeRecvOnly, ModeSendrecv
-func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode string, fmts Formats) []byte {
+// sessionName populates the SDP "s=" line. Empty defaults to "Sip Go Media".
+func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode string, fmts Formats, sessionName string) []byte {
+	if sessionName == "" {
+		sessionName = "Sip Go Media"
+	}
 	ntpTime := GetCurrentNTPTimestamp()
 
 	formatsMap := []string{}
@@ -52,7 +56,7 @@ func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode st
 	s := []string{
 		"v=0",
 		fmt.Sprintf("o=- %d %d IN IP4 %s", ntpTime, ntpTime, originIP),
-		"s=Sip Go Media",
+		"s=" + sessionName,
 		// "b=AS:84",
 		fmt.Sprintf("c=IN IP4 %s", connectionIP),
 		"t=0 0",

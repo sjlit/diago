@@ -171,6 +171,9 @@ type MediaConfig struct {
 	// local preference instead of the offerer order (RFC 3264 default).
 	// Zero inherits media.SDPCodecPreferLocalOrder.
 	SDPCodecPreferLocalOrder int
+	// SDPSessionName overrides the SDP "s=" session-name line. Empty keeps
+	// the library default "Sip Go Media".
+	SDPSessionName string
 }
 
 func WithMediaConfig(conf MediaConfig) DiagoOption {

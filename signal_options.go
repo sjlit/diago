@@ -60,6 +60,9 @@ type SignalMediaParams struct {
 	MediaBindIP     net.IP
 	MediaExternalIP net.IP
 	MediaDTLSConf   *media.DTLSConfig
+	// SDPSessionName overrides the SDP "s=" line for this call only. Empty
+	// means "no per-call change"; check is the caller's responsibility.
+	SDPSessionName string
 
 	// MediaSession allows passing a fully custom/pre-created media session.
 	// When set the library skips its own media session creation and uses this one.
@@ -129,6 +132,9 @@ func signalMediaConfig(base MediaConfig, p *SignalParams) MediaConfig {
 	}
 	if p.Media.MediaDTLSConf != nil {
 		conf.DTLSConf = *p.Media.MediaDTLSConf
+	}
+	if p.Media.SDPSessionName != "" {
+		conf.SDPSessionName = p.Media.SDPSessionName
 	}
 	return conf
 }
@@ -282,6 +288,19 @@ func WithMediaDTLS(conf media.DTLSConfig) SignalOption {
 	return func(p *SignalParams) error {
 		c := conf
 		p.Media.MediaDTLSConf = &c
+		return nil
+	}
+}
+
+// WithMediaSDPSessionName overrides the SDP "s=" session-name line for this
+// call only. Overlays MediaConfig.SDPSessionName; the empty string is rejected
+// (it carries no information and is indistinguishable from "not set").
+func WithMediaSDPSessionName(name string) SignalOption {
+	return func(p *SignalParams) error {
+		if name == "" {
+			return fmt.Errorf("WithMediaSDPSessionName: name is empty")
+		}
+		p.Media.SDPSessionName = name
 		return nil
 	}
 }

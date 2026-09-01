@@ -58,6 +58,43 @@ func TestSignalMediaConfigOverlay(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
+	t.Run("OverrideBaseConfig", func(t *testing.T) {
+		base := MediaConfig{
+			Codecs:         []media.Codec{media.CodecAudioUlaw},
+			SDPSessionName: "BaseName",
+		}
+		p, err := newSignalParams([]SignalOption{
+			WithMediaSDPSessionName("OverrideName"),
+		})
+		require.NoError(t, err)
+
+		got := signalMediaConfig(base, p)
+		assert.Equal(t, "OverrideName", got.SDPSessionName)
+		// Base config must not be mutated
+		assert.Equal(t, "BaseName", base.SDPSessionName)
+	})
+
+	t.Run("UnsetLeavesBaseIntact", func(t *testing.T) {
+		base := MediaConfig{
+			Codecs:         []media.Codec{media.CodecAudioUlaw},
+			SDPSessionName: "BaseName",
+		}
+		p, err := newSignalParams(nil)
+		require.NoError(t, err)
+
+		got := signalMediaConfig(base, p)
+		assert.Equal(t, "BaseName", got.SDPSessionName)
+	})
+
+	t.Run("EmptyStringRejected", func(t *testing.T) {
+		// Empty string carries no information — indistinguishable from "not set".
+		// Match WithMediaBindIP(nil) / WithContact(nil) convention and reject.
+		_, err := newSignalParams([]SignalOption{WithMediaSDPSessionName("")})
+		assert.Error(t, err)
+	})
+}
+
 // TestIntegrationSignalOptions covers custom Contact, custom headers, media IP
 // overrides, response mutator and BYE headers on a full loopback call.
 func TestIntegrationSignalOptions(t *testing.T) {

@@ -224,6 +224,46 @@ a=sendrecv`
 	}
 }
 
+func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
+	t.Run("DefaultSessionName", func(t *testing.T) {
+		m := MediaSession{
+			Codecs: []Codec{CodecAudioAlaw, CodecAudioUlaw},
+			Laddr:  net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
+			Mode:   "sendrecv",
+		}
+		require.NoError(t, m.Init())
+		t.Cleanup(func() { m.Close() })
+		require.Contains(t, string(m.LocalSDP()), "s=Sip Go Media")
+	})
+
+	t.Run("CustomSessionName", func(t *testing.T) {
+		m := MediaSession{
+			Codecs:         []Codec{CodecAudioAlaw, CodecAudioUlaw},
+			Laddr:          net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
+			Mode:           "sendrecv",
+			SDPSessionName: "My Custom UA",
+		}
+		require.NoError(t, m.Init())
+		t.Cleanup(func() { m.Close() })
+		sdpBytes := m.LocalSDP()
+		require.Contains(t, string(sdpBytes), "s=My Custom UA")
+		require.NotContains(t, string(sdpBytes), "s=Sip Go Media")
+	})
+
+	t.Run("CustomSessionNameCarriedThroughFork", func(t *testing.T) {
+		m := MediaSession{
+			Codecs:         []Codec{CodecAudioAlaw, CodecAudioUlaw},
+			Laddr:          net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
+			Mode:           "sendrecv",
+			SDPSessionName: "Forked UA",
+		}
+		require.NoError(t, m.Init())
+		t.Cleanup(func() { m.Close() })
+		forked := m.Fork()
+		require.Contains(t, string(forked.LocalSDP()), "s=Forked UA")
+	})
+}
+
 func TestMediaNegotiaton(t *testing.T) {
 	t.Run("UnsupportedRTPProfile", func(t *testing.T) {
 		sd := `v=0

@@ -176,6 +176,9 @@ type MediaSession struct {
 	RTPPortStart             int
 	RTPPortEnd               int
 	SDPCodecPreferLocalOrder int
+	// SDPSessionName overrides the SDP "s=" line. Empty keeps the default
+	// "Sip Go Media". Set only in the Config phase; carried through Fork.
+	SDPSessionName string
 
 	// Mode is sdp mode. Check consts sdp.ModeRecvOnly etc...
 	Mode string
@@ -390,6 +393,7 @@ func (s *MediaSession) Fork() *MediaSession {
 		RTPPortStart:             s.RTPPortStart,
 		RTPPortEnd:               s.RTPPortEnd,
 		SDPCodecPreferLocalOrder: s.SDPCodecPreferLocalOrder,
+		SDPSessionName:           s.SDPSessionName,
 	}
 	return &cp
 }
@@ -545,7 +549,12 @@ func (s *MediaSession) LocalSDP() []byte {
 		mode = s.Mode
 	}
 
-	return generateSDPForAudio(s.sessionID, s.sessionVersion, rtpProfile, ip, connIP, rtpPort, mode, codecs, localSDES, dtlsSet)
+	sessionName := s.SDPSessionName
+	if sessionName == "" {
+		sessionName = "Sip Go Media"
+	}
+
+	return generateSDPForAudio(s.sessionID, s.sessionVersion, rtpProfile, ip, connIP, rtpPort, mode, codecs, localSDES, dtlsSet, sessionName)
 }
 
 // RemoteSDP applies remote SDP.
@@ -1355,7 +1364,7 @@ type dtlsSetup struct {
 	fingerprints []sdpFingerprints
 }
 
-func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup) []byte {
+func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string) []byte {
 	// ntpTime := GetCurrentNTPTimestamp()
 
 	fmts := make([]string, len(codecs))
@@ -1387,7 +1396,7 @@ func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile str
 	s := []string{
 		"v=0",
 		fmt.Sprintf("o=- %d %d IN %s %s", sessionID, sessionVersion, sdpIP(originIP), originIP),
-		"s=Sip Go Media",
+		fmt.Sprintf("s=%s", sessionName),
 		// "b=AS:84",
 		fmt.Sprintf("c=IN %s %s", sdpIP(connectionIP), connectionIP),
 		"t=0 0",
