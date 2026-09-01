@@ -4,11 +4,9 @@
 package audio
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"math"
 	"sync"
+	"time"
 
 	"github.com/sjlit/diago/media"
 )
@@ -18,7 +16,9 @@ var (
 	beeps     sync.Map
 )
 
-// BeepLoadPCM loads pregenerated beep in PCM format
+// BeepLoadPCM loads pregenerated beep in PCM format.
+// The returned slice is the shared cache backing array: callers must treat it
+// as read-only and copy before any in-place transformation.
 func BeepLoadPCM(codec media.Codec) ([]byte, error) {
 	uuid := fmt.Sprintf("%s-%d", codec.Name, codec.SampleRate)
 	ringval, exists := beeps.Load(uuid)
@@ -30,28 +30,15 @@ func BeepLoadPCM(codec media.Codec) ([]byte, error) {
 	return pcmBytes, nil
 }
 
+// beepPCMGenerate renders the short 700Hz confirmation beep (0.5s).
 func beepPCMGenerate(sampleRate int) []byte {
-	var (
-		durationSec = 0.5   // 1 second beep
-		volume      = 0.2   // volume
-		freq        = 700.0 // beep frequency in Hz
-	)
-
-	numSamples := int(float64(sampleRate) * durationSec)
-	buf := &bytes.Buffer{}
-
-	for i := 0; i < numSamples; i++ {
-		t := float64(i) / float64(sampleRate)
-		// Generate sine wave for beep
-		sample := volume * math.Sin(2*math.Pi*freq*t)
-		intSample := int16(sample * math.MaxInt16)
-		binary.Write(buf, binary.LittleEndian, intSample)
-	}
-
-	return buf.Bytes()
+	tone := Tone{Segments: []ToneSegment{{Freqs: []float64{700}, On: 500 * time.Millisecond, Volume: 0.2}}}
+	return RenderTonePCM(tone, sampleRate)
 }
 
-// RingtoneLoadPCM loads pregenerated ringtone in PCM format
+// RingtoneLoadPCM loads pregenerated ringtone in PCM format.
+// The returned slice is the shared cache backing array: callers must treat it
+// as read-only and copy before any in-place transformation.
 func RingtoneLoadPCM(codec media.Codec) ([]byte, error) {
 	uuid := fmt.Sprintf("%s-%d", codec.Name, codec.SampleRate)
 	ringval, exists := ringtones.Load(uuid)
@@ -63,27 +50,8 @@ func RingtoneLoadPCM(codec media.Codec) ([]byte, error) {
 	return pcmBytes, nil
 }
 
+// ringtonePCMGenerate renders the 350+440Hz ringing tone (2s).
 func ringtonePCMGenerate(sampleRate int) []byte {
-	var (
-		durationSec = 2
-		volume      = 0.3
-		freq1       = 350.0
-		freq2       = 440.0
-	)
-
-	numSamples := sampleRate * durationSec
-	buf := &bytes.Buffer{}
-
-	for i := 0; i < numSamples; i++ {
-		t := float64(i) / float64(sampleRate)
-		// Combine the two sine waves and normalize
-		sample := volume * (math.Sin(2*math.Pi*freq1*t) + math.Sin(2*math.Pi*freq2*t)) / 2.0
-		// Convert to 16-bit signed PCM
-		intSample := int16(sample * math.MaxInt16)
-		binary.Write(buf, binary.LittleEndian, intSample)
-	}
-
-	pcmBytes := buf.Bytes()
-
-	return pcmBytes
+	tone := Tone{Segments: []ToneSegment{{Freqs: []float64{350, 440}, On: 2 * time.Second, Volume: 0.3}}}
+	return RenderTonePCM(tone, sampleRate)
 }

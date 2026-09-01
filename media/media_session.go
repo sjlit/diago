@@ -903,6 +903,23 @@ func (s *MediaSession) DTMFCodec() Codec {
 	return CodecTelephoneEvent8000
 }
 
+// DTMFCodecNegotiated resolves the telephone-event codec from the effective
+// codec list (negotiated filterCodecs when present, otherwise the local list).
+// ok=false means the peer does not support RFC 4733 — callers should fall back
+// to inband tones or SIP INFO. Unlike DTMFCodec it never invents PT 101.
+func (s *MediaSession) DTMFCodecNegotiated() (Codec, bool) {
+	codecs := s.filterCodecs
+	if len(codecs) == 0 {
+		codecs = s.Codecs
+	}
+	for _, c := range codecs {
+		if strings.EqualFold(c.Name, CodecTelephoneEvent8000.Name) {
+			return c, true
+		}
+	}
+	return Codec{}, false
+}
+
 // Listen creates listeners instead
 func (s *MediaSession) createListeners(laddr *net.UDPAddr) error {
 	// Per-session port range from MediaConfig; fall back to package globals

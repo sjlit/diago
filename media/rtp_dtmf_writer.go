@@ -4,7 +4,6 @@
 package media
 
 import (
-	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -42,22 +41,32 @@ func (w *RTPDtmfWriter) Write(b []byte) (int, error) {
 	return n, nil
 }
 
+// WriteDTMF encodes and sends one RFC 4733 event with defaults
+// (volume 10, 80ms hold). It blocks for the whole event (~7 * codec.SampleDur).
 func (w *RTPDtmfWriter) WriteDTMF(dtmf rune) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.writeDTMF(dtmf)
+	return w.WriteDTMFWithOptions(dtmf, DTMFEncodeOptions{})
 }
 
-func (w *RTPDtmfWriter) writeDTMF(dtmf rune) error {
-	// DTMF events are send directly to packet writer as they are different Codec
-	packetWriter := w.packetWriter
+// WriteDTMFWithOptions sends one event with tuned encoding (volume, event hold).
+// The event packets ride on the packet writer's SSRC with their own timestamp
+// (no audio clock advance), paced one codec.SampleDur per packet. It works at
+// any telephone-event clock rate (8k/16k/32k/48k per RFC 4733).
+func (w *RTPDtmfWriter) WriteDTMFWithOptions(dtmf rune, opts DTMFEncodeOptions) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-	if w.codec.SampleRate != 8000 {
-		return fmt.Errorf("Only 8000Hz is supported")
+	evs, err := RTPDTMFEncode(w.codec, dtmf, opts)
+	if err != nil {
+		return err
 	}
 
-	evs := RTPDTMFEncode8000(dtmf)
-	ticker := time.NewTicker(w.codec.SampleDur)
+	pacing := w.codec.SampleDur
+	if pacing <= 0 {
+		// A hand-built codec may lack SampleDur; RFC 4733 events are
+		// conventionally sent one per audio packet interval (20ms).
+		pacing = 20 * time.Millisecond
+	}
+	ticker := time.NewTicker(pacing)
 	defer ticker.Stop()
 	for i, e := range evs {
 		data := DTMFEncode(e)
@@ -71,8 +80,7 @@ func (w *RTPDtmfWriter) writeDTMF(dtmf rune) error {
 		<-ticker.C
 		// We are simulating RTP clock rate
 		// timestamp should not be increased for dtmf
-		_, err := packetWriter.WriteSamples(data, 0, marker, w.codec.PayloadType)
-		if err != nil {
+		if _, err := w.packetWriter.WriteSamples(data, 0, marker, w.codec.PayloadType); err != nil {
 			return err
 		}
 	}

@@ -6,6 +6,7 @@ package media
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
 )
 
 // DTMF event mapping (RFC 4733)
@@ -51,35 +52,88 @@ func DTMFToRune(dtmf uint8) rune {
 	return dtmfEventMappingRev[dtmf]
 }
 
-// RTPDTMFEncode8000 creates series of DTMF redudant events which should be encoded as payload
-// It is currently only 8000 sample rate considered for telophone event
-func RTPDTMFEncode8000(char rune) []DTMFEvent {
-	event := dtmfEventMapping[char]
+// IsDTMFEvent reports whether char has an RFC 4733 event code
+// ('0'-'9', 'A'-'D', '*', '#').
+func IsDTMFEvent(char rune) bool {
+	_, ok := dtmfEventMapping[char]
+	return ok
+}
+
+// DefaultDTMFVolume is the signal volume applied when DTMFEncodeOptions
+// marks no explicit choice.
+const DefaultDTMFVolume uint8 = 10
+
+// DTMFEncodeOptions tunes the event packet series generated for one digit.
+type DTMFEncodeOptions struct {
+	// Volume is the RFC 4733 signal volume (0-63 relative dBov, 0 being the
+	// loudest). It is only honored when VolumeSet is true — the zero value of
+	// the struct must keep the legacy default (DefaultDTMFVolume), and volume
+	// 0 is itself a legal wire value, so it cannot double as "unset".
+	Volume uint8
+	// VolumeSet marks Volume as explicitly provided.
+	VolumeSet bool
+	// EventDuration is the event hold duration reported in the Duration
+	// fields. Zero means the default, 80ms.
+	EventDuration time.Duration
+}
+
+// RTPDTMFEncode creates the series of redundant event packets for one digit,
+// scaled to the codec clock rate (160 ticks @8k, 960 @48k per 20ms).
+// Layout: 4 active packets with growing Duration, then 3 EndOfEvent packets
+// repeating the final duration.
+func RTPDTMFEncode(codec Codec, char rune, opts DTMFEncodeOptions) ([]DTMFEvent, error) {
+	event, ok := dtmfEventMapping[char]
+	if !ok {
+		return nil, fmt.Errorf("rtp dtmf: invalid event %q", char)
+	}
+	vol := DefaultDTMFVolume
+	if opts.VolumeSet {
+		vol = opts.Volume
+	}
+	if vol > 63 {
+		vol = 63
+	}
+	stepTicks := uint16(codec.SampleRate / 50) // 20ms of clock ticks
+	if opts.EventDuration > 0 {
+		ticks := uint32(opts.EventDuration.Seconds() * float64(codec.SampleRate) / 4)
+		if ticks == 0 || ticks > 65535/4 {
+			return nil, fmt.Errorf("rtp dtmf: event duration %v out of range for %d Hz clock", opts.EventDuration, codec.SampleRate)
+		}
+		stepTicks = uint16(ticks)
+	}
 
 	events := make([]DTMFEvent, 7)
-
 	for i := 0; i < 4; i++ {
-		d := DTMFEvent{
+		events[i] = DTMFEvent{
 			Event:      event,
 			EndOfEvent: false,
-			Volume:     10,
-			Duration:   160 * (uint16(i) + 1),
+			Volume:     vol,
+			Duration:   stepTicks * uint16(i+1),
 		}
-		events[i] = d
 	}
-
-	// End events with redudancy
+	// End events with redundancy: duration must not grow past the event hold
 	for i := 4; i < 7; i++ {
-		d := DTMFEvent{
+		events[i] = DTMFEvent{
 			Event:      event,
 			EndOfEvent: true,
-			Volume:     10,
-			Duration:   160 * 5, // Must not be increased for end event
+			Volume:     vol,
+			Duration:   stepTicks * 4,
 		}
-		events[i] = d
 	}
+	return events, nil
+}
 
-	return events
+// RTPDTMFEncode8000 creates series of DTMF redudant events which should be encoded as payload
+// It is currently only 8000 sample rate considered for telophone event
+//
+// Deprecated: Use RTPDTMFEncode with the negotiated codec.
+func RTPDTMFEncode8000(char rune) []DTMFEvent {
+	evs, err := RTPDTMFEncode(CodecTelephoneEvent8000, char, DTMFEncodeOptions{})
+	if err != nil {
+		// legacy behavior: unknown characters encoded as event 0
+		evs, _ = RTPDTMFEncode(CodecTelephoneEvent8000, '0', DTMFEncodeOptions{})
+	}
+	return evs
 }
 
 // DTMFEvent represents a DTMF event

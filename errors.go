@@ -19,4 +19,8 @@ var (
 	// was closed locally with Close (or the dialog ended and the framework
 	// closed it).
 	ErrDialogClosed = errors.New("dialog media closed")
+
+	// ErrDTMFUnsupported is returned by SendDTMF when the peer did not
+	// negotiate telephone-event and the selected method has no fallback.
+	ErrDTMFUnsupported = errors.New("dtmf: telephone-event not negotiated")
 )
