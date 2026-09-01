@@ -899,6 +899,11 @@ func (s *MediaSession) CommonCodecs() []Codec {
 // negotiated per peer (RFC 4733), so it may differ from the default constant.
 // Falls back to the default codec when DTMF was not negotiated.
 // NOTE: Not thread safe, should be called after negotiation Only!
+//
+// Deprecated: The silent PT 101 fallback cannot distinguish "negotiated"
+// from "peer has no telephone-event" — events sent on an unnegotiated
+// payload type are dropped by most peers. Use DTMFCodecNegotiated, which
+// reports ok=false so callers can fall back to inband tones or SIP INFO.
 func (s *MediaSession) DTMFCodec() Codec {
 	codecs := s.filterCodecs
 	if len(codecs) == 0 {

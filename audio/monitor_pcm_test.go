@@ -268,6 +268,58 @@ func TestMonitorPCMStereoErr(t *testing.T) {
 	assert.NoError(t, mon.MonitorPCMWriter.Err(), "writer side stays healthy")
 }
 
+// TestMonitorPCMStereoFlushJoinsDirections pins that a reader-side flush
+// failure never skips the writer's flush: the finalize path must drain both
+// spools before the interleave pass, so a degraded reader cannot silently
+// drop the writer's buffered tail. The broken spool is a read-only file, so
+// every flush to it fails - real IO.
+func TestMonitorPCMStereoFlushJoinsDirections(t *testing.T) {
+	codec := media.CodecAudioAlaw
+	alawFrame := make([]byte, 160)
+	_, err := EncodeAlawTo(alawFrame, bytes.Repeat([]byte("0123456789"), codec.Samples16()/10))
+	require.NoError(t, err)
+
+	badSpool, err := os.OpenFile(filepath.Join(t.TempDir(), "ro.raw"), os.O_RDONLY|os.O_CREATE, 0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = badSpool.Close() })
+
+	// Fail-open on the reader keeps the read loop clean while the broken
+	// sink eats the auto-flush; without it the first write error would tear
+	// down Read and skip the rest of the setup.
+	mon := &MonitorPCMStereo{SpoolDir: t.TempDir(), PCMFileRead: badSpool}
+	mon.MonitorPCMReader.FailOpen = true
+	readerFrames := (RecordingFlushSize / 320) + 5
+	require.NoError(t, mon.Init(bytes.NewBuffer([]byte{}), codec, codec,
+		bytes.NewBuffer(bytes.Repeat(alawFrame, readerFrames)), bytes.NewBuffer(nil)))
+
+	// Drain enough reader frames to force a bufio auto-flush on the broken
+	// read-only file; the failure is swallowed by FailOpen but recorded in
+	// brokenErr, so the next Flush on the reader must surface EBADF.
+	for range readerFrames {
+		_, err := mon.Read(make([]byte, 160))
+		require.NoError(t, err, "fail-open reader must keep media flowing")
+	}
+
+	// A few writer frames stay inside the bufio buffer (below
+	// RecordingFlushSize), so the writer spool on disk is still empty.
+	for range 3 {
+		_, err := mon.Write(alawFrame)
+		require.NoError(t, err)
+	}
+	st, err := mon.PCMFileWrite.Stat()
+	require.NoError(t, err)
+	require.Zero(t, st.Size(), "writer data must still be buffered when Flush is called")
+
+	err = mon.Flush()
+	require.Error(t, err, "degraded reader side must surface from Flush")
+	require.ErrorIs(t, err, syscall.EBADF)
+
+	st, err = mon.PCMFileWrite.Stat()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, st.Size(), int64(3*len(alawFrame)),
+		"writer flush must still run despite the reader error")
+}
+
 // TestMonitorPCMStereoPauseResume pins the stop-collection / keep-passthrough
 // contract of Pause/Resume: while paused, frames flowing through the monitor
 // must still reach the underlying audio sink (the call is never interrupted),

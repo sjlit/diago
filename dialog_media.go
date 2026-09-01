@@ -952,8 +952,13 @@ type DTMFReader struct {
 // NOTE: must be called with d.mu held or during the single-threaded setup phase.
 func (m *DialogMedia) dtmfCodec() media.Codec {
 	if m.mediaSession != nil {
-		return m.mediaSession.DTMFCodec()
+		if codec, ok := m.mediaSession.DTMFCodecNegotiated(); ok {
+			return codec
+		}
 	}
+	// Legacy pipeline DTMF paths keep the silent PT 101 fallback: DTMFReader/
+	// DTMFWriter predate the negotiated check and must keep working when a
+	// sloppy peer sends events without negotiating telephone-event.
 	return media.CodecTelephoneEvent8000
 }
 

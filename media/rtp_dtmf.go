@@ -79,6 +79,8 @@ type DTMFEncodeOptions struct {
 
 // RTPDTMFEncode creates the series of redundant event packets for one digit,
 // scaled to the codec clock rate (160 ticks @8k, 960 @48k per 20ms).
+// A zero/negative codec clock falls back to the canonical 8 kHz
+// telephone-event rate (mirroring the pacing guard in WriteDTMFWithOptions).
 // Layout: 4 active packets with growing Duration, then 3 EndOfEvent packets
 // repeating the final duration.
 func RTPDTMFEncode(codec Codec, char rune, opts DTMFEncodeOptions) ([]DTMFEvent, error) {
@@ -93,11 +95,15 @@ func RTPDTMFEncode(codec Codec, char rune, opts DTMFEncodeOptions) ([]DTMFEvent,
 	if vol > 63 {
 		vol = 63
 	}
-	stepTicks := uint16(codec.SampleRate / 50) // 20ms of clock ticks
+	clock := codec.SampleRate
+	if clock <= 0 {
+		clock = CodecTelephoneEvent8000.SampleRate
+	}
+	stepTicks := uint16(clock / 50) // 20ms of clock ticks
 	if opts.EventDuration > 0 {
-		ticks := uint32(opts.EventDuration.Seconds() * float64(codec.SampleRate) / 4)
+		ticks := uint32(opts.EventDuration.Seconds() * float64(clock) / 4)
 		if ticks == 0 || ticks > 65535/4 {
-			return nil, fmt.Errorf("rtp dtmf: event duration %v out of range for %d Hz clock", opts.EventDuration, codec.SampleRate)
+			return nil, fmt.Errorf("rtp dtmf: event duration %v out of range for %d Hz clock", opts.EventDuration, clock)
 		}
 		stepTicks = uint16(ticks)
 	}

@@ -362,13 +362,11 @@ func (m *MonitorPCMStereo) Close() error {
 }
 
 func (m *MonitorPCMStereo) Flush() error {
-	if err := m.MonitorPCMReader.Flush(); err != nil {
-		return err
-	}
-	if err := m.MonitorPCMWriter.Flush(); err != nil {
-		return err
-	}
-	return nil
+	// Both directions are always attempted: a reader-side failure (the common
+	// degraded-sink case) must not skip the writer's flush, or its buffered
+	// tail never reaches the spool before the interleave pass. Close joins
+	// this with the interleave and cleanup stages.
+	return errors.Join(m.MonitorPCMReader.Flush(), m.MonitorPCMWriter.Flush())
 }
 
 func (m *MonitorPCMStereo) interleave() error {

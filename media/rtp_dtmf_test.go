@@ -100,3 +100,29 @@ func TestRTPDTMFEncode8000Legacy(t *testing.T) {
 		t.Fatalf("legacy layout changed: %+v", evs)
 	}
 }
+
+func TestRTPDTMFEncodeZeroRateFallback(t *testing.T) {
+	// A hand-built codec without a sample rate must fall back to the
+	// canonical 8 kHz telephone-event clock, not put zero durations on the
+	// wire. Mirrors the pacing guard in WriteDTMFWithOptions for SampleDur.
+	cod := Codec{PayloadType: 101, SampleDur: 20 * time.Millisecond, NumChannels: 1, Name: "telephone-event"}
+	evs, err := RTPDTMFEncode(cod, '5', DTMFEncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDur := []uint16{160, 320, 480, 640, 640, 640, 640}
+	for i, e := range evs {
+		if e.Duration != wantDur[i] {
+			t.Fatalf("event %d duration %d want %d (8k fallback)", i, e.Duration, wantDur[i])
+		}
+	}
+
+	// The fallback clock also scales explicit event durations.
+	evs, err = RTPDTMFEncode(cod, '5', DTMFEncodeOptions{EventDuration: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evs[0].Duration != 200 || evs[3].Duration != 800 || evs[4].Duration != 800 {
+		t.Fatalf("100ms @8k fallback wrong: %d %d %d", evs[0].Duration, evs[3].Duration, evs[4].Duration)
+	}
+}
