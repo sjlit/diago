@@ -803,7 +803,7 @@ func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerT
 }
 
 func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTransaction) error {
-	return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
+	return readSIPInfoDTMF(&d.DialogMedia, req, tx)
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.

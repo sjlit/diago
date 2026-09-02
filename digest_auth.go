@@ -61,39 +61,15 @@ var (
 
 // AuthorizeRequest authorizes request. Returns SIP response that can be passed with error
 func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (res *sip.Response, err error) {
+	if auth.Realm == "" {
+		auth.Realm = "sipgo"
+	}
+
 	h := req.GetHeader("Authorization")
 	// https://www.rfc-editor.org/rfc/rfc2617#page-6
 
 	if h == nil {
-		nonce, err := generateNonce()
-		if err != nil {
-			return sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil), err
-		}
-
-		e := &digestChallengeEntry{
-			Challenge: digest.Challenge{
-				Realm: auth.Realm,
-				Nonce: nonce,
-				// Opaque:    "sipgo",
-				Algorithm: "MD5",
-			},
-		}
-
-		chal := &e.Challenge
-
-		res := sip.NewResponseFromRequest(req, 401, "Unathorized", nil)
-		res.AppendHeader(sip.NewHeader("WWW-Authenticate", chal.String()))
-
-		s.mu.Lock()
-		s.cache[nonce] = e
-		s.mu.Unlock()
-		e.expireTimer = time.AfterFunc(auth.expire(), func() {
-			s.mu.Lock()
-			delete(s.cache, nonce)
-			s.mu.Unlock()
-		})
-
-		return res, nil
+		return s.challenge(req, auth), nil
 	}
 
 	cred, err := digest.ParseCredentials(h.Value())
@@ -105,7 +81,10 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 	e, exists := s.cache[cred.Nonce]
 	s.mu.Unlock()
 	if !exists {
-		return sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil), ErrDigestAuthNoChallenge
+		// Unknown or expired nonce: re-challenge so the client can retry.
+		// We cannot distinguish expired from forged nonces (no nonce state),
+		// so stale=true is not sent - clients treat a fresh challenge the same.
+		return s.challenge(req, auth), ErrDigestAuthNoChallenge
 	}
 	chal := &e.Challenge
 
@@ -126,14 +105,47 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 		return sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil), ErrDigestAuthBadCreds
 	}
 
+	// Nonce is single-use: delete after successful auth to prevent replay
+	s.mu.Lock()
+	delete(s.cache, cred.Nonce)
+	s.mu.Unlock()
+	e.expireTimer.Stop()
+
 	return sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil), nil
 }
 
-func (s *DigestAuthServer) AuthorizeDialog(d *DialogServerSession, auth DigestAuth) error {
-	if auth.Realm == "" {
-		auth.Realm = "sipgo"
+// challenge issues a new nonce and builds a 401 carrying the WWW-Authenticate header
+func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Response {
+	nonce, err := generateNonce()
+	if err != nil {
+		return sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil)
 	}
 
+	e := &digestChallengeEntry{
+		Challenge: digest.Challenge{
+			Realm: auth.Realm,
+			Nonce: nonce,
+			// Opaque:    "sipgo",
+			Algorithm: "MD5",
+		},
+	}
+
+	res := sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil)
+	res.AppendHeader(sip.NewHeader("WWW-Authenticate", e.Challenge.String()))
+
+	s.mu.Lock()
+	s.cache[nonce] = e
+	s.mu.Unlock()
+	e.expireTimer = time.AfterFunc(auth.expire(), func() {
+		s.mu.Lock()
+		delete(s.cache, nonce)
+		s.mu.Unlock()
+	})
+
+	return res
+}
+
+func (s *DigestAuthServer) AuthorizeDialog(d *DialogServerSession, auth DigestAuth) error {
 	// https://www.rfc-editor.org/rfc/rfc2617#page-6
 	req := d.InviteRequest
 	res, err := s.AuthorizeRequest(req, auth)

@@ -53,6 +53,11 @@ type Diago struct {
 
 type DiagoOption func(dg *Diago)
 
+// WithAuth is deprecated and currently unused: it holds client-side digest
+// credentials (sipgo.DigestAuth), but diago does not perform automatic
+// client-side authentication at the UA level. Use WithAuthCredentials per
+// dialog/register instead. For authenticating INCOMING calls use
+// DigestAuthServer and DialogServerSession.Authorize in your serve handler.
 func WithAuth(auth sipgo.DigestAuth) DiagoOption {
 	return func(dg *Diago) {
 		dg.auth = auth
@@ -294,7 +299,9 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 			return fmt.Errorf("handling new INVITE failed: %w", err)
 		}
 
-		// TODO authentication
+		// Server-side digest auth is opt-in: call DialogServerSession.Authorize
+		// (DigestAuthServer.AuthorizeDialog) as the first action of your serve
+		// handler to challenge/validate the INVITE (RFC 2617).
 		dWrap := &DialogServerSession{
 			DialogServerSession: dialog,
 			DialogMedia:         DialogMedia{},

@@ -52,6 +52,8 @@ SIP: [RFC 3261](https://datatracker.ietf.org/doc/html/rfc3261)|[RFC3581](https:/
 > More refer to lib [github.com/emiago/sipgo](https://github.com/emiago/sipgo)
 Full dialog control (client/server), Registering, Authentication ...
 
+Digest authentication (server-side INVITE challenge/validate): [RFC 2617](https://datatracker.ietf.org/doc/html/rfc2617)
+
 SDP: [RFC8866](https://datatracker.ietf.org/doc/html/rfc8866). 
 > Parsing + Auto Generating for media session/audio
 

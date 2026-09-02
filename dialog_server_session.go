@@ -60,6 +60,26 @@ func (d *DialogServerSession) ToUser() string {
 	return d.InviteRequest.To().Address.User
 }
 
+// Authorize challenges and validates the incoming INVITE with SIP digest
+// authentication (RFC 2617).
+//
+// Call it as the first thing in your serve handler:
+//
+//	dg.Serve(ctx, func(d *diago.DialogServerSession) error {
+//		if err := d.Authorize(digestAuthServer, diago.DigestAuth{Username: "u", Password: "p"}); err != nil {
+//			return err // 401 is sent; returning terminates the dialog
+//		}
+//		...
+//	})
+//
+// On the first call the INVITE transaction is answered 401 Unauthorized with a
+// WWW-Authenticate challenge and a non-nil error is returned; the caller must
+// re-INVITE with an Authorization header. Successful validation sends no
+// response - dialog processing (Trying, Ringing, Answer) continues normally.
+func (d *DialogServerSession) Authorize(s *DigestAuthServer, auth DigestAuth) error {
+	return s.AuthorizeDialog(d, auth)
+}
+
 func (d *DialogServerSession) Transport() string {
 	return d.InviteRequest.Transport()
 }
@@ -731,20 +751,7 @@ func (d *DialogServerSession) handleReInvite(req *sip.Request, tx sip.ServerTran
 }
 
 func (d *DialogServerSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTransaction) error {
-	return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
-	// if err := d.ReadRequest(req, tx); err != nil {
-	// 	tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
-	// 	return
-	// }
-
-	// Parse this
-	//Signal=1
-	// Duration=160
-	// reader := bytes.NewReader(req.Body())
-
-	// for {
-
-	// }
+	return readSIPInfoDTMF(&d.DialogMedia, req, tx)
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.

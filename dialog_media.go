@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -92,6 +93,11 @@ type DialogMedia struct {
 	// interleave different digits' event packets on the same payload type.
 	// It is taken outside d.mu (the event write blocks ~7*SampleDur).
 	dtmfSendMu sync.Mutex
+
+	// dtmfReaders are DTMFReader instances listening for DTMF on this dialog.
+	// SIP INFO dtmf-relay digits are delivered to them via deliverDTMF so
+	// out-of-band and RTP DTMF reach the same callbacks (see dtmf_info.go).
+	dtmfReaders map[*DTMFReader]struct{}
 
 	onReferNotify func(statusCode int)
 
@@ -985,11 +991,49 @@ func (m *DialogMedia) AudioReaderDTMF() (*DTMFReader, error) {
 	if m.audioReader == nil && m.RTPPacketReader == nil {
 		return nil, ErrDialogNotAnswered
 	}
-	return &DTMFReader{
+	r := &DTMFReader{
 		dm:           m,
 		packetReader: m.RTPPacketReader,
 		dtmfReader:   media.NewRTPDTMFReader(m.dtmfCodec(), m.RTPPacketReader, m.getAudioReader()),
-	}, nil
+	}
+	// Out-of-band (SIP INFO) DTMF is delivered through the same onDTMF callback
+	m.registerDTMFReader(r)
+	return r, nil
+}
+
+// registerDTMFReader tracks r so out-of-band (SIP INFO) DTMF can be delivered
+// to its callback. Callers must hold d.mu.
+func (m *DialogMedia) registerDTMFReader(r *DTMFReader) {
+	if m.dtmfReaders == nil {
+		m.dtmfReaders = make(map[*DTMFReader]struct{})
+	}
+	m.dtmfReaders[r] = struct{}{}
+}
+
+// deliverDTMF dispatches an out-of-band DTMF digit to all registered DTMF
+// reader callbacks. It is safe to call from SIP transaction goroutines.
+// Without registered readers the digit is dropped (logged).
+func (m *DialogMedia) deliverDTMF(dtmf rune, dur time.Duration) {
+	m.mu.Lock()
+	readers := make([]*DTMFReader, 0, len(m.dtmfReaders))
+	for r := range m.dtmfReaders {
+		readers = append(readers, r)
+	}
+	m.mu.Unlock()
+
+	if len(readers) == 0 {
+		slog.Debug("Received SIP INFO DTMF but no DTMF reader registered", "dtmf", string(dtmf))
+		return
+	}
+	for _, r := range readers {
+		if r.onDTMF == nil {
+			continue
+		}
+		if err := r.onDTMF(dtmf); err != nil {
+			slog.Error("DTMF callback failed on SIP INFO DTMF", "error", err)
+		}
+	}
+	_ = dur // duration is informational for out-of-band digits
 }
 
 // Listen listens for DTMF events until dur elapses.
