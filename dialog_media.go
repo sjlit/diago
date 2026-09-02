@@ -86,6 +86,13 @@ type DialogMedia struct {
 	// We do not use sipgo as this needs mutex but also keeping original invite
 	remoteContactTarget *sip.ContactHeader
 
+	// dtmfSendMu serializes SendDTMF callers: per-digit writers are separate
+	// RTPDtmfWriter instances whose internal locks do not serialize against
+	// each other, so without this gate two concurrent SendDTMF calls would
+	// interleave different digits' event packets on the same payload type.
+	// It is taken outside d.mu (the event write blocks ~7*SampleDur).
+	dtmfSendMu sync.Mutex
+
 	onReferNotify func(statusCode int)
 
 	onClose       func() error
@@ -1093,8 +1100,17 @@ func (m *DialogMedia) AudioWriterDTMF() (*DTMFWriter, error) {
 	}, nil
 }
 
+// WriteDTMF sends one RFC 4733 event. A concurrent PauseAudioWrite gate is
+// waited out; use WriteDTMFContext when that wait must be cancellable.
 func (w *DTMFWriter) WriteDTMF(dtmf rune) error {
 	return w.dtmfWriter.WriteDTMF(dtmf)
+}
+
+// WriteDTMFContext is WriteDTMF with a context: ctx cancels a wait spent
+// behind the PauseAudioWrite gate (returning ctx.Err()); an event whose first
+// packet was accepted completes regardless.
+func (w *DTMFWriter) WriteDTMFContext(ctx context.Context, dtmf rune) error {
+	return w.dtmfWriter.WriteDTMFContext(ctx, dtmf)
 }
 
 // AudioReader exposes DTMF audio writer. You should use this for parallel audio processing

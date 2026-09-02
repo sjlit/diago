@@ -553,8 +553,26 @@ func (s *MediaSession) LocalSDP() []byte {
 	if sessionName == "" {
 		sessionName = "Sip Go Media"
 	}
+	if err := ValidateSDPSessionName(sessionName); err != nil {
+		// LocalSDP has no error return and a caller may still need a well
+		// formed offer; degrade to the default name instead of emitting the
+		// injected payload.
+		DefaultLogger().Error("Invalid SDP session name, using default", "error", err)
+		sessionName = "Sip Go Media"
+	}
 
 	return generateSDPForAudio(s.sessionID, s.sessionVersion, rtpProfile, ip, connIP, rtpPort, mode, codecs, localSDES, dtlsSet, sessionName)
+}
+
+// ValidateSDPSessionName rejects session names that could break out of the
+// "s=" line: SDP line breaks are CR or LF, so a name carrying them would
+// inject additional SDP attributes. Empty keeps the library default and is
+// valid here; option-level empty checks are callers' responsibility.
+func ValidateSDPSessionName(name string) error {
+	if strings.ContainsAny(name, "\r\n") {
+		return fmt.Errorf("sdp: session name must not contain line breaks, got %q", name)
+	}
+	return nil
 }
 
 // RemoteSDP applies remote SDP.

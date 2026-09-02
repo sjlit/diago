@@ -155,3 +155,57 @@ func TestSendDTMFEmpty(t *testing.T) {
 		t.Fatal("empty digits must be a no-op")
 	}
 }
+
+func TestSendDTMFContextCancelWhileGatePaused(t *testing.T) {
+	// The RTP event write waits on a paused audio-write gate; SendDTMF's ctx
+	// must cut that wait short instead of hanging until the gate releases.
+	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	release, err := m.PauseAudioWrite()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	if err := m.SendDTMF(ctx, "5"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline error from paused wait, got %v", err)
+	}
+	if n := len(dtmfEvents(sink)); n != 0 {
+		t.Fatalf("no event packet may reach the wire while paused, got %d", n)
+	}
+}
+
+func TestSendDTMFConcurrentSerialized(t *testing.T) {
+	// Two concurrent SendDTMF calls must not interleave digits: the dialog
+	// send gate serializes whole strings, so the wire shows one contiguous
+	// digit run followed by the other.
+	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	errCh := make(chan error, 2)
+	go func() { errCh <- m.SendDTMF(context.Background(), "1", WithDTMFInterval(time.Millisecond)) }()
+	go func() { errCh <- m.SendDTMF(context.Background(), "2", WithDTMFInterval(time.Millisecond)) }()
+	for range 2 {
+		if err := <-errCh; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	evs := dtmfEvents(sink)
+	if len(evs) != 14 {
+		t.Fatalf("expected 14 dtmf packets, got %d", len(evs))
+	}
+	// First 7 packets must be one digit, next 7 the other — no interleaving.
+	first, second := evs[0].Event, evs[7].Event
+	if first == second {
+		t.Fatalf("expected two distinct digits, got %d twice", first)
+	}
+	for i, e := range evs {
+		want := first
+		if i >= 7 {
+			want = second
+		}
+		if e.Event != want {
+			t.Fatalf("interleaved digits at packet %d: want %d got %d", i, want, e.Event)
+		}
+	}
+}

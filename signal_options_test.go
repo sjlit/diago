@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/media/sdp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,6 +91,14 @@ func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
 		// Empty string carries no information — indistinguishable from "not set".
 		// Match WithMediaBindIP(nil) / WithContact(nil) convention and reject.
 		_, err := newSignalParams([]SignalOption{WithMediaSDPSessionName("")})
+		assert.Error(t, err)
+	})
+
+	t.Run("LineBreakRejected", func(t *testing.T) {
+		// CR/LF would inject extra SDP lines after "s=" — reject at option time.
+		_, err := newSignalParams([]SignalOption{WithMediaSDPSessionName("x\nm=audio 0")})
+		assert.Error(t, err)
+		_, err = newSignalParams([]SignalOption{WithMediaSDPSessionName("x\r\nv=0")})
 		assert.Error(t, err)
 	})
 }

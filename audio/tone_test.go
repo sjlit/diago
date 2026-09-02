@@ -130,6 +130,38 @@ func TestToneReaderEmptySegmentsEOF(t *testing.T) {
 	}
 }
 
+func TestToneReaderLoopGuard(t *testing.T) {
+	t.Run("EmptySegmentsLoop", func(t *testing.T) {
+		// Loop over zero segments used to panic on index out of range.
+		r := NewToneReader(Tone{}, 8000, 1)
+		r.Loop()
+		if _, err := r.Read(make([]byte, 320)); err != io.EOF {
+			t.Fatalf("looped empty tone must EOF, got %v", err)
+		}
+	})
+
+	t.Run("AllZeroCadenceLoop", func(t *testing.T) {
+		// Loop over segments with no On/Off samples used to spin forever.
+		tone := Tone{Segments: []ToneSegment{{Freqs: []float64{440}}, {On: 0, Off: 0, Freqs: []float64{700}}}}
+		r := NewToneReader(tone, 8000, 1)
+		r.Loop()
+		if _, err := r.Read(make([]byte, 320)); err != io.EOF {
+			t.Fatalf("looped all-zero cadence must EOF, got %v", err)
+		}
+	})
+
+	t.Run("RealToneStillLoops", func(t *testing.T) {
+		tone := Tone{Segments: []ToneSegment{{Freqs: []float64{440}, On: 50 * time.Millisecond}}}
+		r := NewToneReader(tone, 8000, 1)
+		r.Loop()
+		buf := make([]byte, 8000*2*2) // 2 periods = 200ms
+		n, err := r.Read(buf)
+		if err != nil || n != len(buf) {
+			t.Fatalf("looped real tone must fill buffer: n=%d err=%v", n, err)
+		}
+	})
+}
+
 func pcmRMS(s []int16, from, to int) float64 {
 	var acc float64
 	for _, v := range s[from:to] {

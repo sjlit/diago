@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/media"
 )
 
 // SignalParams carries per-call signaling customizations applied by SignalOption.
@@ -294,11 +294,15 @@ func WithMediaDTLS(conf media.DTLSConfig) SignalOption {
 
 // WithMediaSDPSessionName overrides the SDP "s=" session-name line for this
 // call only. Overlays MediaConfig.SDPSessionName; the empty string is rejected
-// (it carries no information and is indistinguishable from "not set").
+// (it carries no information and is indistinguishable from "not set"), as are
+// line breaks — an "s=" value must stay on one SDP line.
 func WithMediaSDPSessionName(name string) SignalOption {
 	return func(p *SignalParams) error {
 		if name == "" {
 			return fmt.Errorf("WithMediaSDPSessionName: name is empty")
+		}
+		if err := media.ValidateSDPSessionName(name); err != nil {
+			return fmt.Errorf("WithMediaSDPSessionName: %w", err)
 		}
 		p.Media.SDPSessionName = name
 		return nil

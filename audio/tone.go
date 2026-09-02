@@ -70,6 +70,11 @@ type ToneReader struct {
 	sampleRate  int
 	numChannels int
 	loop        bool
+	// loopLen is the total sample count of one full pass over all segments
+	// (On+Off per segment), computed at the first wrap point. Zero means
+	// nothing to repeat: looping must not spin.
+	loopLen      int
+	loopComputed bool
 
 	segIdx int
 	segPos int // samples consumed within the current segment
@@ -89,7 +94,20 @@ func NewToneReader(tone Tone, sampleRate, numChannels int) *ToneReader {
 
 // Loop makes the reader repeat its segment sequence forever; Read then never
 // returns io.EOF. Stop by discarding the reader (the consumer controls pacing).
+// A tone without any audible or silent content (no segment, or every segment
+// with zero On and Off) is not loopable: the flag is ignored and Read still
+// returns io.EOF, so consumers cannot spin forever.
 func (r *ToneReader) Loop() { r.loop = true }
+
+// computeLoopLen sums the sample count of one pass over all segments. It is
+// evaluated lazily at the first wrap point, once the sample rate is known.
+func (r *ToneReader) computeLoopLen() int {
+	n := 0
+	for _, seg := range r.tone.Segments {
+		n += int(float64(r.sampleRate)*seg.On.Seconds()) + int(float64(r.sampleRate)*seg.Off.Seconds())
+	}
+	return n
+}
 
 // Read fills p with PCM16 LE interleaved samples. When the (non looping)
 // sequence is exhausted it returns io.EOF, or the bytes read so far if a
@@ -117,11 +135,20 @@ func (r *ToneReader) Read(p []byte) (int, error) {
 }
 
 // nextSample returns the next mono sample value, advancing the position.
-// ok=false when the (non looping) sequence is exhausted.
+// ok=false when the (non looping) sequence is exhausted. A looping reader
+// whose segments carry no samples at all (empty or all-zero cadence) also
+// reports exhaustion instead of spinning.
 func (r *ToneReader) nextSample() (int16, bool) {
 	for {
 		if r.segIdx >= len(r.tone.Segments) {
 			if !r.loop {
+				return 0, false
+			}
+			if !r.loopComputed {
+				r.loopLen = r.computeLoopLen()
+				r.loopComputed = true
+			}
+			if r.loopLen == 0 {
 				return 0, false
 			}
 			r.segIdx = 0

@@ -9,10 +9,10 @@ import (
 	"net"
 	"testing"
 
-	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/sipgo/fakes"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"github.com/sjlit/diago/media/sdp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -261,6 +261,30 @@ func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
 		t.Cleanup(func() { m.Close() })
 		forked := m.Fork()
 		require.Contains(t, string(forked.LocalSDP()), "s=Forked UA")
+	})
+
+	t.Run("LineBreakFallsBackToDefault", func(t *testing.T) {
+		// A session name with CR/LF would inject extra SDP lines. LocalSDP has
+		// no error return, so it logs and falls back to the default name
+		// instead of emitting the injected payload.
+		m := MediaSession{
+			Codecs:         []Codec{CodecAudioAlaw, CodecAudioUlaw},
+			Laddr:          net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
+			Mode:           "sendrecv",
+			SDPSessionName: "x\nm=audio 0 RTP/AVP 0",
+		}
+		require.NoError(t, m.Init())
+		t.Cleanup(func() { m.Close() })
+		sdpBytes := string(m.LocalSDP())
+		require.Contains(t, sdpBytes, "s=Sip Go Media")
+		require.NotContains(t, sdpBytes, "s=x\n")
+	})
+
+	t.Run("ValidateSDPSessionName", func(t *testing.T) {
+		require.NoError(t, ValidateSDPSessionName("AcmePBX"))
+		require.NoError(t, ValidateSDPSessionName(""))
+		require.Error(t, ValidateSDPSessionName("x\ny"))
+		require.Error(t, ValidateSDPSessionName("x\ry"))
 	})
 }
 

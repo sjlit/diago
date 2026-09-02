@@ -94,8 +94,10 @@ func WithDTMFVolume(v uint8) DTMFSendOption {
 
 // SendDTMF sends a digit string ('0'-'9', 'A'-'D' case-insensitive, '*', '#')
 // on the answered dialog. It blocks for roughly (event duration + interval)
-// per digit. The context is honored between digits only — an in-flight event
-// completes first, so cancellation latency is bounded by one event.
+// per digit (no trailing interval after the last one). The context is honored
+// between digits and while waiting on a paused audio-write gate; an in-flight
+// event completes first, so with the gate open cancellation latency is
+// bounded by one event.
 //
 // The media pipeline is resolved at use time per docs/contracts.md §4:
 // auto mode picks RFC 4733 on the negotiated telephone-event payload type,
@@ -140,6 +142,13 @@ func (m *DialogMedia) SendDTMF(ctx context.Context, digits string, opts ...DTMFS
 		}
 	}
 
+	// One SendDTMF at a time per dialog: concurrent callers would otherwise
+	// interleave event packets (RTP) or splice tone segments (inband). The
+	// gate covers the whole digit string, not per digit, so a string stays
+	// contiguous.
+	m.dtmfSendMu.Lock()
+	defer m.dtmfSendMu.Unlock()
+
 	if method == DTMFMethodInband {
 		segs := make([]audio.ToneSegment, 0, 2*len(digits))
 		for _, d := range digits {
@@ -154,12 +163,18 @@ func (m *DialogMedia) SendDTMF(ctx context.Context, digits string, opts ...DTMFS
 		return m.PlayTone(ctx, audio.Tone{Segments: segs})
 	}
 
-	for _, d := range digits {
+	digitsRunes := []rune(digits)
+	for i, d := range digitsRunes {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := m.sendDTMFRTP(unicode.ToUpper(d), cfg); err != nil {
+		if err := m.sendDTMFRTP(ctx, unicode.ToUpper(d), cfg); err != nil {
 			return err
+		}
+		// Silence between digits only — after the last digit there is no
+		// inter-digit gap to simulate, so do not extend the call latency.
+		if i == len(digitsRunes)-1 {
+			break
 		}
 		if err := waitDTMFContext(ctx, cfg.interval); err != nil {
 			return err
@@ -191,12 +206,12 @@ func (m *DialogMedia) dtmfNegotiated() (bool, error) {
 // internals via UpdateRTPSession rather than replacing the pointer — so
 // capturing it and writing after unlock is safe; it serializes on its own
 // internal lock against any concurrent write path.
-func (m *DialogMedia) sendDTMFRTP(digit rune, cfg dtmfSendConfig) error {
+func (m *DialogMedia) sendDTMFRTP(ctx context.Context, digit rune, cfg dtmfSendConfig) error {
 	w, err := m.dtmfWriterForDigit()
 	if err != nil {
 		return err
 	}
-	return w.WriteDTMFWithOptions(digit, media.DTMFEncodeOptions{
+	return w.WriteDTMFWithOptionsContext(ctx, digit, media.DTMFEncodeOptions{
 		Volume:        cfg.volume,
 		VolumeSet:     cfg.volumeSet,
 		EventDuration: cfg.eventDur,
