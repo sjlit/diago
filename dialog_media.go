@@ -104,6 +104,16 @@ type DialogMedia struct {
 	onClose       func() error
 	onMediaUpdate func(*DialogMedia)
 
+	// moh is the single active hold-music loop (nil when none); mohTone is
+	// the dialog-level default source from MediaConfig.MusicOnHold. See moh.go.
+	moh     *MusicOnHold
+	mohTone audio.Tone
+
+	// remoteHeld reports whether the negotiated direction prevents us from
+	// sending — the remote put us on hold. Set in sdpUpdateUnsafe, the
+	// funnelpoint of all inbound SDP; queried via IsRemoteHeld.
+	remoteHeld bool
+
 	closed bool
 }
 
@@ -149,6 +159,14 @@ func (d *DialogMedia) Close() error {
 	d.onClose = nil
 	m := d.mediaSession
 	rtpSess := d.rtpSession
+
+	// Cancel the hold-music loop, never wait for it: the loop takes d.mu per
+	// frame, so waiting under the lock would deadlock (moh.go lock order).
+	// The loop exits on its next frame with ErrDialogClosed/context.Canceled
+	// and clears d.moh itself.
+	if d.moh != nil {
+		d.moh.cancel()
+	}
 
 	d.mu.Unlock()
 
@@ -213,6 +231,10 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	// but ProgressMedia/Answer can race with a concurrent BYE closing media.
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	// Set before the early return: precreated sessions (fake IO in tests,
+	// WithMediaSession) must still pick up the dialog-level hold music.
+	d.mohTone = conf.MusicOnHold
 
 	if d.mediaSession != nil {
 		// To allow testing or customizing current underhood session, this may be
@@ -316,13 +338,22 @@ func (d *DialogMedia) checkEarlyMedia(remoteSDP []byte) error {
 	return d.sdpUpdateUnsafe(remoteSDP)
 }
 
-func (d *DialogMedia) sdpUpdateUnsafe(sdp []byte) error {
+func (d *DialogMedia) sdpUpdateUnsafe(remoteSDP []byte) error {
 	msess := d.mediaSession.Fork()
-	if err := msess.RemoteSDP(sdp); err != nil {
+	if err := msess.RemoteSDP(remoteSDP); err != nil {
 		return fmt.Errorf("sdp update media remote SDP applying failed: %w", err)
 	}
 
-	return d.replaceRTPSessionUnsafe(msess)
+	if err := d.replaceRTPSessionUnsafe(msess); err != nil {
+		return err
+	}
+	// Every inbound SDP funnels here. Negotiated recvonly/inactive means the
+	// peer told us to stop sending (hold or one-way media). Our own Hold
+	// installs through mediaUpdateUnsafe and negotiates sendonly, so it can
+	// not trip this flag.
+	dir := msess.NegotiatedDirection()
+	d.remoteHeld = dir == sdp.ModeRecvonly || dir == sdp.ModeInactive
+	return nil
 }
 
 func (d *DialogMedia) mediaUpdateUnsafe(msess *media.MediaSession) error {
@@ -749,6 +780,17 @@ func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereo
 	}
 
 	return newDialogRecordingWav(wavFile, ar, mpropsR, aw, mpropsW)
+}
+
+// IsRemoteHeld reports whether the negotiated media direction currently
+// prevents us from sending — the remote peer put us on hold or set one-way
+// media. It is updated on inbound re-INVITEs (and early-media SDP); our own
+// Hold/Unhold do not change it. Pair with WithOnMediaUpdate to react to
+// remote hold/unhold from application code.
+func (d *DialogMedia) IsRemoteHeld() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.remoteHeld
 }
 
 // PauseAudioRead pauses the dialog audio reader: reads through the audio

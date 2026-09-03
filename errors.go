@@ -23,4 +23,12 @@ var (
 	// ErrDTMFUnsupported is returned by SendDTMF when the peer did not
 	// negotiate telephone-event and the selected method has no fallback.
 	ErrDTMFUnsupported = errors.New("dtmf: telephone-event not negotiated")
+
+	// ErrMusicOnHoldActive is returned by PlayMusicOnHold when a hold-music
+	// loop is already running on the dialog (one loop per dialog).
+	ErrMusicOnHoldActive = errors.New("music on hold already active")
+
+	// ErrMusicOnHoldNoTone is returned by PlayMusicOnHold when neither the
+	// WithMoHTone option nor the dialog MediaConfig provides a hold music tone.
+	ErrMusicOnHoldNoTone = errors.New("music on hold: no tone configured")
 )

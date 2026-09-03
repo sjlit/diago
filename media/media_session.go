@@ -564,6 +564,18 @@ func (s *MediaSession) LocalSDP() []byte {
 	return generateSDPForAudio(s.sessionID, s.sessionVersion, rtpProfile, ip, connIP, rtpPort, mode, codecs, localSDES, dtlsSet, sessionName)
 }
 
+// NegotiatedDirection returns the direction negotiated in the last completed
+// offer/answer exchange: one of sdp.ModeSendrecv, sdp.ModeSendonly,
+// sdp.ModeRecvonly or sdp.ModeInactive. It returns "" before the first
+// negotiation and after a Fork (forks reset it until RemoteSDP applies).
+//
+// The value is written while the owning DialogMedia holds its lock (all
+// RemoteSDP/install paths do); read it under the same discipline. From
+// component code, resolve through DialogMedia instead of capturing a session.
+func (s *MediaSession) NegotiatedDirection() string {
+	return s.mode
+}
+
 // ValidateSDPSessionName rejects session names that could break out of the
 // "s=" line: SDP line breaks are CR or LF, so a name carrying them would
 // inject additional SDP attributes. Empty keeps the library default and is

@@ -16,6 +16,10 @@ Table of contents:
 7. [Close vs Hangup](#7-close-vs-hangup)
 8. [Error contract](#8-error-contract)
 9. [Cancellation migration table](#9-cancellation-migration-table)
+10. [API surface conventions](#10-api-surface-conventions)
+11. [Shutdown and resource ownership](#11-shutdown-and-resource-ownership)
+12. [Recording taps](#12-recording-taps)
+13. [Music on Hold](#13-music-on-hold)
 
 ---
 
@@ -466,3 +470,61 @@ not assume the reader/writer chain is byte-for-byte restored after `Close`.
 
 The caller retains ownership of the WAV writer: neither `StartStereoRecording`
 nor `Close` closes it. Close the underlying fd after `Close` returns.
+
+## 13. Music on Hold
+
+Music on Hold is the optional hold-music loop started by `Hold` (or
+explicitly by `DialogMedia.PlayMusicOnHold`). Its behavior is constrained by
+several contracts to keep it from fighting the rest of the dialog.
+
+**One loop per dialog.** `PlayMusicOnHold` returns `ErrMusicOnHoldActive`
+when a loop is already running. `StopMusicOnHold` is a no-op when nothing is
+playing. There is no "switch tone mid-loop"; stop first, then start again.
+
+**Tone source precedence.** `Hold(ctx, WithMusicOnHold(tone))` overrides the
+dialog-level `MediaConfig.MusicOnHold` for that hold only; a zero tone (no
+segments) explicitly disables music for the call. With no option and no
+dialog default, `Hold` succeeds but plays nothing — the re-INVITE behavior is
+unchanged.
+
+**Tone is re-rendered at the negotiated codec every frame.** The loop does
+not capture a `*media.MediaSession`; it resolves the writer and codec on
+every iteration through `audioWriterProps` (§4). A re-INVITE that changes the
+negotiated codec is picked up on the next frame by re-rendering the tone at
+the new sample rate — a `Tone` needs no resampler, unlike recorded sources.
+This is also why a `MediaSession` getter (`NegotiatedDirection`) is exposed:
+the loop queries it at startup and warns when the peer put us on hold
+(recvonly/inactive negotiated), in which case the RTP direction gate drops
+the audio. The loop keeps running so an unhold on either side resumes
+audibly without a restart.
+
+**Write-gate cooperation.** The loop writes through the same `audioWriter`
+chain that other components use; a `PauseAudioWrite` refcounted gate is
+waited out (the frame is replayed unchanged after release, same as
+`PlayTone`). This means hold music survives a transient pause by another
+component and is cancelled cleanly when the dialog closes (`Close` cancels
+without waiting on it, because the loop takes `d.mu` per frame — the loop
+self-clears `d.moh` on exit).
+
+**Best-effort auto start/stop on Hold/Unhold.** `Hold` starts hold music
+automatically only after its re-INVITE succeeds. Failures are logged at warn
+and never surface as a `Hold` error (the re-INVITE already succeeded;
+returning an error would invite a retry straight into 491 glare). An active
+manual loop is left untouched. `Unhold` stops the loop `Hold` started
+automatically and only that one — manually started music is under the
+caller's `Stop`/ctx control.
+
+**Remote-hold detection.** `DialogMedia.IsRemoteHeld()` reports whether the
+peer put us on hold (negotiated recvonly/inactive). It is set on inbound
+SDP — the funnelpoint of all `RemoteSDP` install paths — and never changes
+on our own `Hold`/`Unhold`. Combine with `WithOnMediaUpdate` to react to
+remote hold/unhold without polling. By RFC convention, the held peer is
+silent; an active MoH on a remote-held dialog is correct (the direction
+gate drops our audio until the peer unholds).
+
+**Bridge limitation.** The proxy media loop in `Bridge` resolves
+reader/writer once at `AddDialogSession` and exits on the first
+`ErrWritePaused`. Stacking MoH on a bridged leg would race the bridge copy
+loop with the music frames and is **not** supported in this revision. To
+hold a bridged call, stop the bridge or apply hold music before the legs
+are bridged.

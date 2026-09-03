@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/audio"
 	"github.com/sjlit/diago/media"
 )
 
@@ -63,6 +64,12 @@ type SignalMediaParams struct {
 	// SDPSessionName overrides the SDP "s=" line for this call only. Empty
 	// means "no per-call change"; check is the caller's responsibility.
 	SDPSessionName string
+
+	// MusicOnHold overrides the hold music consumed by Hold/Unhold. Non-nil
+	// is an explicit per-call choice: a tone with segments replaces the
+	// dialog-level default, a zero tone (no segments) disables music for the
+	// call. Nil means "no per-call change". Consumed by Hold only.
+	MusicOnHold *audio.Tone
 
 	// MediaSession allows passing a fully custom/pre-created media session.
 	// When set the library skips its own media session creation and uses this one.
@@ -135,6 +142,9 @@ func signalMediaConfig(base MediaConfig, p *SignalParams) MediaConfig {
 	}
 	if p.Media.SDPSessionName != "" {
 		conf.SDPSessionName = p.Media.SDPSessionName
+	}
+	if p.Media.MusicOnHold != nil {
+		conf.MusicOnHold = *p.Media.MusicOnHold
 	}
 	return conf
 }
@@ -317,6 +327,18 @@ func WithMediaSession(m *media.MediaSession) SignalOption {
 			return fmt.Errorf("WithMediaSession: media session is nil")
 		}
 		p.Media.MediaSession = m
+		return nil
+	}
+}
+
+// WithMusicOnHold sets the hold music played by Hold for this call, replacing
+// the dialog-level MediaConfig.MusicOnHold. A zero tone (no segments)
+// explicitly disables hold music for the call. On Invite/Answer it becomes
+// the dialog-level default; on Hold it applies to that hold only.
+func WithMusicOnHold(tone audio.Tone) SignalOption {
+	return func(p *SignalParams) error {
+		t := tone
+		p.Media.MusicOnHold = &t
 		return nil
 	}
 }

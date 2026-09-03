@@ -755,7 +755,13 @@ func (d *DialogServerSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
-// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
+// Honors: msg (Headers, Contact, Body, MutateRequest); media: WithMusicOnHold
+// selects the hold music started automatically after the re-INVITE succeeds
+// (falling back to MediaConfig.MusicOnHold); other media overrides are not consumed.
+//
+// The automatic music stops on Unhold, Stop, or ctx cancellation; when the
+// dialog-level default is unset (no MusicOnHold configured anywhere) Hold
+// behaves as before and plays nothing.
 func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -770,11 +776,13 @@ func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) er
 	if err := d.reInviteMediaSession(ctx, m, params); err != nil {
 		return err
 	}
+	d.mohAutoStart(ctx, params.Media.MusicOnHold)
 	return nil
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
-// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
+// Honors: msg (Headers, Contact, Body, MutateRequest); the music started
+// automatically by Hold is stopped on success; other media overrides are not consumed.
 func (d *DialogServerSession) Unhold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
@@ -789,5 +797,6 @@ func (d *DialogServerSession) Unhold(ctx context.Context, opts ...SignalOption) 
 	if err := d.reInviteMediaSession(ctx, m, params); err != nil {
 		return err
 	}
+	d.mohAutoStop()
 	return nil
 }

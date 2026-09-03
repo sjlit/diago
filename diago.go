@@ -18,6 +18,7 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/audio"
 	"github.com/sjlit/diago/media"
 )
 
@@ -181,6 +182,13 @@ type MediaConfig struct {
 	// SDPSessionName overrides the SDP "s=" session-name line. Empty keeps
 	// the library default "Sip Go Media".
 	SDPSessionName string
+
+	// MusicOnHold is the dialog-level default hold music: Hold() starts
+	// looping it automatically once the hold re-INVITE succeeds. Zero value
+	// (no segments) disables automatic hold music; Hold then behaves as
+	// before. Per-call override: WithMusicOnHold; manual control:
+	// DialogMedia.PlayMusicOnHold/StopMusicOnHold.
+	MusicOnHold audio.Tone
 }
 
 func WithMediaConfig(conf MediaConfig) DiagoOption {
