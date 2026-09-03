@@ -6,6 +6,7 @@ package diago
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/audio"
@@ -24,6 +25,8 @@ type SignalParams struct {
 	Media SignalMediaParams
 	// Dialog controls dialog establishment and lifecycle callbacks.
 	Dialog SignalDialogParams
+	// Register configures REGISTER transactions. Register only.
+	Register SignalRegisterParams
 }
 
 // SignalMsgParams shapes the outgoing SIP message.
@@ -100,6 +103,27 @@ type SignalDialogParams struct {
 	OnMediaUpdate func(d *DialogMedia)
 	// OnRefer is called on successful REFER handling.
 	OnRefer OnReferDialogFunc
+	// OnReferNotify receives the transfer status (NOTIFY sipfrag code) of an
+	// outgoing REFER sent with Refer. Refer only.
+	OnReferNotify func(statusCode int)
+}
+
+// SignalRegisterParams configures a REGISTER transaction. All fields are
+// construction-time: they are read when the transaction is created with
+// Diago.Register/RegisterTransaction and have no effect when passed to the
+// per-request methods (Register/Unregister/Qualify). Register only.
+type SignalRegisterParams struct {
+	// Expiry is for Expire header
+	Expiry time.Duration
+	// RetryInterval is interval before next Register is sent
+	RetryInterval time.Duration
+	// AllowHeaders lists the Allow header values sent with REGISTER
+	AllowHeaders []string
+	// ProxyHost overrides the REGISTER request destination
+	ProxyHost string
+
+	// OnRegistered is called after a successful initial REGISTER
+	OnRegistered func()
 }
 
 // SignalOption configures per-call signaling behavior of diago APIs.
@@ -369,6 +393,19 @@ func WithOnRefer(fn OnReferDialogFunc) SignalOption {
 	}
 }
 
+// WithOnReferNotify sets the callback receiving the transfer status
+// (NOTIFY sipfrag code) of an outgoing REFER sent with Refer.
+// Refer only.
+func WithOnReferNotify(fn func(statusCode int)) SignalOption {
+	return func(p *SignalParams) error {
+		if fn == nil {
+			return fmt.Errorf("WithOnReferNotify: fn is nil")
+		}
+		p.Dialog.OnReferNotify = fn
+		return nil
+	}
+}
+
 // WithRequestMutator registers a last-chance hook invoked with the outgoing
 // request just before it is sent. Use it for anything not covered by
 // dedicated options.
@@ -441,6 +478,59 @@ func WithAuthCredentials(username string, password string) SignalOption {
 func WithEarlyMediaDetect() SignalOption {
 	return func(p *SignalParams) error {
 		p.Dialog.EarlyMediaDetect = true
+		return nil
+	}
+}
+
+// WithRegisterExpiry sets the Expires header value of the REGISTER requests
+// of this transaction. Zero (default) sends no Expires header unless the
+// server provides one. Register only.
+func WithRegisterExpiry(d time.Duration) SignalOption {
+	return func(p *SignalParams) error {
+		p.Register.Expiry = d
+		return nil
+	}
+}
+
+// WithRegisterRetryInterval sets a fixed interval before the next REGISTER
+// is sent. Zero (default) derives it from the negotiated expiry.
+// Register only.
+func WithRegisterRetryInterval(d time.Duration) SignalOption {
+	return func(p *SignalParams) error {
+		p.Register.RetryInterval = d
+		return nil
+	}
+}
+
+// WithRegisterAllowHeaders sets the Allow header values sent with REGISTER.
+// Register only.
+func WithRegisterAllowHeaders(headers ...string) SignalOption {
+	return func(p *SignalParams) error {
+		p.Register.AllowHeaders = headers
+		return nil
+	}
+}
+
+// WithRegisterProxyHost overrides the REGISTER request destination.
+// Register only.
+func WithRegisterProxyHost(host string) SignalOption {
+	return func(p *SignalParams) error {
+		if host == "" {
+			return fmt.Errorf("WithRegisterProxyHost: host is empty")
+		}
+		p.Register.ProxyHost = host
+		return nil
+	}
+}
+
+// WithOnRegistered sets the callback invoked after a successful initial
+// REGISTER. Register only.
+func WithOnRegistered(fn func()) SignalOption {
+	return func(p *SignalParams) error {
+		if fn == nil {
+			return fmt.Errorf("WithOnRegistered: fn is nil")
+		}
+		p.Register.OnRegistered = fn
 		return nil
 	}
 }

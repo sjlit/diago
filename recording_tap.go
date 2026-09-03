@@ -17,7 +17,7 @@ import (
 var ErrRecordingClosed = errors.New("recording already closed")
 
 // RecordingOption configures DialogMedia.StartStereoRecording.
-type RecordingOption func(*recordingConfig)
+type RecordingOption func(*recordingConfig) error
 
 type recordingConfig struct {
 	failOpen bool
@@ -31,7 +31,7 @@ type recordingConfig struct {
 // the reader/writer chain instead (the pre-existing tap behaviour), which lets
 // a full disk interrupt bridged media.
 func WithRecordingFailOpen(b bool) RecordingOption {
-	return func(c *recordingConfig) { c.failOpen = b }
+	return func(c *recordingConfig) error { c.failOpen = b; return nil }
 }
 
 // WithRecordingSpoolDir sets the directory holding the two per-direction raw
@@ -39,7 +39,7 @@ func WithRecordingFailOpen(b bool) RecordingOption {
 // uses os.TempDir(). Point it at the same partition as the WAV output to keep
 // recording IO local and to size disk headroom against a single spool.
 func WithRecordingSpoolDir(dir string) RecordingOption {
-	return func(c *recordingConfig) { c.spoolDir = dir }
+	return func(c *recordingConfig) error { c.spoolDir = dir; return nil }
 }
 
 // StereoRecording is an active inline recording tap returned by
@@ -75,7 +75,12 @@ type StereoRecording struct {
 func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOption) (*StereoRecording, error) {
 	cfg := recordingConfig{failOpen: true}
 	for _, o := range opts {
-		o(&cfg)
+		if o == nil {
+			continue
+		}
+		if err := o(&cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	d.mu.Lock()

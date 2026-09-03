@@ -112,7 +112,7 @@ dg.Serve(ctx, func(inDialog *diago.DialogServerSession) {
 	defer playfile.Close()
 
 	// Create playback and play file.
-	pb, _ := inDialog.PlaybackCreate()
+	pb, _ := inDialog.CreatePlayback()
 	if err := pb.Play(playfile, "audio/wav"); err != nil {
 		fmt.Println("Playing failed", err)
 	}

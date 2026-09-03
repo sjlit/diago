@@ -31,52 +31,11 @@ func (e RegisterResponseError) Error() string {
 	return e.Msg
 }
 
-type RegisterOptions struct {
-	// Digest auth
-	Username  string
-	Password  string
-	ProxyHost string
-
-	// Expiry is for Expire header
-	Expiry time.Duration
-	// Retry interval is interval before next Register is sent
-	RetryInterval time.Duration
-	AllowHeaders  []string
-
-	// Contact overrides the default Contact header built from the transport
-	Contact *sip.ContactHeader
-	// Headers are appended to every REGISTER request of this transaction
-	Headers []sip.Header
-
-	OnRegistered func()
-
-	// Useragent default will be used on what is provided as NewUA()
-	// UserAgent         string
-	// UserAgentHostname string
-}
-
-// Options converts the signal-representable fields (credentials, Contact,
-// Headers) into SignalOptions for use with RegisterTransaction methods. The
-// remaining fields (ProxyHost, Expiry, RetryInterval, AllowHeaders,
-// OnRegistered) configure the transaction itself and have no SignalOption
-// equivalent.
-func (o *RegisterOptions) Options() []SignalOption {
-	var opts []SignalOption
-	if o.Username != "" || o.Password != "" {
-		opts = append(opts, WithAuthCredentials(o.Username, o.Password))
-	}
-	if o.Contact != nil {
-		opts = append(opts, WithContact(o.Contact))
-	}
-	if len(o.Headers) > 0 {
-		opts = append(opts, WithHeaders(o.Headers...))
-	}
-	return opts
-}
-
 type RegisterTransaction struct {
-	opts   RegisterOptions
-	Origin *sip.Request
+	register SignalRegisterParams
+	username string
+	password string
+	Origin   *sip.Request
 
 	client *sipgo.Client
 	log    *slog.Logger
@@ -84,19 +43,23 @@ type RegisterTransaction struct {
 	expiry time.Duration
 }
 
-func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, opts RegisterOptions) *RegisterTransaction {
-	expiry, allowHDRS := opts.Expiry, opts.AllowHeaders
+func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, params *SignalParams) *RegisterTransaction {
+	if params == nil {
+		params = &SignalParams{}
+	}
+	reg := params.Register
+	expiry, allowHDRS := reg.Expiry, reg.AllowHeaders
 	// log := p.getLoggerCtx(ctx, "Register")
 	req := sip.NewRequest(sip.REGISTER, recipient)
-	if opts.Contact != nil {
+	if params.Msg.Contact != nil {
 		// Per registration Contact override
-		req.AppendHeader(opts.Contact.Clone())
+		req.AppendHeader(params.Msg.Contact.Clone())
 	} else {
 		req.AppendHeader(&contact)
 	}
 
-	if opts.ProxyHost != "" {
-		req.SetDestination(opts.ProxyHost)
+	if reg.ProxyHost != "" {
+		req.SetDestination(reg.ProxyHost)
 	}
 	if expiry > 0 {
 		expires := sip.ExpiresHeader(expiry.Seconds())
@@ -105,26 +68,25 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 	if allowHDRS != nil {
 		req.AppendHeader(sip.NewHeader("Allow", strings.Join(allowHDRS, ", ")))
 	}
-	for _, h := range opts.Headers {
+	for _, h := range params.Msg.Headers {
 		if h == nil {
 			continue
 		}
 		req.AppendHeader(h)
 	}
 
-	// if opts.Username == "" {
-	// 	opts.Username = opts.UserAgent
-	// }
-
-	if opts.Username == "" {
-		opts.Username = client.Name()
+	username := params.Dialog.Username
+	if username == "" {
+		username = client.Name()
 	}
 
 	t := &RegisterTransaction{
-		Origin: req, // origin maybe updated after first register
-		opts:   opts,
-		client: client,
-		log:    log.With("caller", "Register"),
+		Origin:   req, // origin maybe updated after first register
+		register: reg,
+		username: username,
+		password: params.Dialog.Password,
+		client:   client,
+		log:      log.With("caller", "Register"),
 	}
 
 	return t
@@ -133,27 +95,27 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 // Register sends the initial REGISTER. Options allow customizing Contact,
 // extra headers and the final request of this registration attempt.
 // Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password);
-// credentials fall back to RegisterOptions when not provided via options.
+// credentials fall back to the transaction ones when not provided via options.
 func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {
 		return err
 	}
-	if err := t.register(ctx, params); err != nil {
+	if err := t.doRegister(ctx, params); err != nil {
 		return err
 	}
 
-	if t.opts.OnRegistered != nil {
-		t.opts.OnRegistered()
+	if t.register.OnRegistered != nil {
+		t.register.OnRegistered()
 	}
 	return nil
 }
 
 // signalCredentials overlays credentials passed via WithAuthCredentials on top
-// of the ones from RegisterOptions. Empty SignalOption fields fall back to the
-// RegisterOptions values.
+// of the transaction ones. Empty SignalOption fields fall back to the
+// transaction values.
 func (t *RegisterTransaction) signalCredentials(params *SignalParams) (string, string) {
-	username, password := t.opts.Username, t.opts.Password
+	username, password := t.username, t.password
 	if params != nil {
 		if params.Dialog.Username != "" {
 			username = params.Dialog.Username
@@ -165,7 +127,7 @@ func (t *RegisterTransaction) signalCredentials(params *SignalParams) (string, s
 	return username, password
 }
 
-func (t *RegisterTransaction) register(ctx context.Context, params *SignalParams) error {
+func (t *RegisterTransaction) doRegister(ctx context.Context, params *SignalParams) error {
 	username, password := t.signalCredentials(params)
 	client := t.client
 	req := t.Origin.Clone()
@@ -264,7 +226,7 @@ func (t *RegisterTransaction) register(ctx context.Context, params *SignalParams
 	}
 
 	// Now update server expiry
-	t.expiry = t.opts.Expiry
+	t.expiry = t.register.Expiry
 	if h := res.GetHeader("Expires"); h != nil {
 		val, err := strconv.Atoi(h.Value())
 		if err != nil {
@@ -314,8 +276,8 @@ func (t *RegisterTransaction) reregisterLoop(ctx context.Context, retry time.Dur
 
 func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 	// Allow caller to use own interval
-	if t.opts.RetryInterval != 0 {
-		return t.opts.RetryInterval
+	if t.register.RetryInterval != 0 {
+		return t.register.RetryInterval
 	}
 
 	calc := expiry.Seconds() * 0.75

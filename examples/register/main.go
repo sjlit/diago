@@ -41,23 +41,20 @@ func main() {
 		return
 	}
 
-	err := start(ctx, recipientUri, diago.RegisterOptions{
-		Username: *fUsername,
-		Password: *fPassword,
-	})
+	err := start(ctx, recipientUri, *fUsername, diago.WithAuthCredentials(*fUsername, *fPassword))
 	if err != nil {
 		slog.Error("PBX finished with error", "error", err)
 	}
 }
 
-func start(ctx context.Context, recipientURI string, regOpts diago.RegisterOptions) error {
+func start(ctx context.Context, recipientURI string, username string, regOpts ...diago.SignalOption) error {
 	recipient := sip.Uri{}
 	if err := sip.ParseUri(recipientURI, &recipient); err != nil {
 		return fmt.Errorf("failed to parse register uri: %w", err)
 	}
 
 	// Setup our main transaction user
-	useragent := regOpts.Username
+	useragent := username
 	if useragent == "" {
 		useragent = "change-me"
 	}
@@ -79,11 +76,11 @@ func start(ctx context.Context, recipientURI string, regOpts diago.RegisterOptio
 	// Start listening incoming calls
 	go func() {
 		tu.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-			slog.Info("New dialog request", "id", inDialog.ID)
-			defer slog.Info("Dialog finished", "id", inDialog.ID)
+			slog.Info("New dialog request", "id", inDialog.ID())
+			defer slog.Info("Dialog finished", "id", inDialog.ID())
 		})
 	}()
 
 	// Do register or fail on error
-	return tu.Register(ctx, recipient, regOpts)
+	return tu.Register(ctx, recipient, regOpts...)
 }

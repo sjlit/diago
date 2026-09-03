@@ -7,11 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	mrand "math/rand/v2"
 	"net"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -48,8 +46,8 @@ func (d *DialogClientSession) Close() error {
 	return errors.Join(e1, e2)
 }
 
-func (d *DialogClientSession) Id() string {
-	return d.ID
+func (d *DialogClientSession) ID() string {
+	return d.DialogClientSession.ID
 }
 
 // Hangup terminates dialog with BYE.
@@ -593,63 +591,17 @@ func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption
 		return err
 	}
 
-	// reInviteDo already sends the ACK via WriteAck. Do not append a second
+	// reInviteExchange already sends the ACK. Do not append a second
 	// ACK here — an earlier revision did and shipped two same-CSeq,
 	// different-branch ACKs per re-INVITE.
-	_, err = d.reInviteDo(ctx, req)
+	_, err = reInviteExchange(ctx, d, req)
 	return err
 }
 
-func (d *DialogClientSession) reInviteDo(ctx context.Context, req *sip.Request) (*sip.Response, error) {
-
-	for {
-		res, err := d.Do(ctx, req.Clone())
-		if err != nil {
-			return nil, err
-		}
-
-		if !res.IsSuccess() {
-			// https://datatracker.ietf.org/doc/html/rfc3261#section-14.1
-			// If a UAC receives a 491 response to a re-INVITE, it SHOULD start a
-			//    timer with a value T chosen as follows:
-			//       1. If the UAC is the owner of the Call-ID of the dialog ID
-			//          (meaning it generated the value), T has a randomly chosen value
-			//          between 2.1 and 4 seconds in units of 10 ms.
-
-			//       2. If the UAC is not the owner of the Call-ID of the dialog ID, T
-			//          has a randomly chosen value of between 0 and 2 seconds in units
-			//          of 10 ms.
-
-			if res.StatusCode == sip.StatusRequestPending {
-				select {
-				case <-time.After(time.Duration(2000+mrand.IntN(200)*10) * time.Millisecond):
-					continue
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			}
-
-			return nil, sipgo.ErrDialogResponse{
-				Res: res,
-			}
-		}
-
-		// ACK the 2xx at its Contact (RFC 3261 §13.2.1). A 2xx without Contact
-		// is malformed but does occur in the wild — dereferencing it here used
-		// to panic. Fall back to the dialog's remote target.
-		ackContact := res.Contact()
-		if ackContact == nil {
-			ackContact = d.RemoteContact()
-		}
-		if ackContact == nil {
-			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ACK")
-		}
-		if err := d.ack(ctx, ackContact.Address, nil, nil); err != nil {
-			return res, err
-		}
-
-		return res, nil
-	}
+// writeReInviteACK sends the final ACK of a re-INVITE exchange without
+// options; see reInviteExchange.
+func (d *DialogClientSession) writeReInviteACK(ctx context.Context, target sip.Uri) error {
+	return d.ack(ctx, target, nil, nil)
 }
 
 // reInviteMediaSession updates with full new media session
@@ -667,16 +619,13 @@ func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *medi
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
 	req.AppendHeader(d.InviteRequest.Contact())
-	if params != nil && params.Msg.Contact != nil {
-		setSignalContact(req, params.Msg.Contact)
-	}
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.SetBody(sdpBody)
 	if err := applyRequestSignal(req, params); err != nil {
 		return err
 	}
 
-	res, err := d.reInviteDo(ctx, req)
+	res, err := reInviteExchange(ctx, d, req)
 	if err != nil {
 		return err
 	}
@@ -706,7 +655,7 @@ func (d *DialogClientSession) reInviteKeepAlive(ctx context.Context) error {
 	req := sip.NewRequest(sip.INVITE, contact.Address)
 	req.AppendHeader(d.InviteRequest.Contact())
 
-	res, err := d.reInviteDo(ctx, req)
+	res, err := reInviteExchange(ctx, d, req)
 	if err != nil {
 		return err
 	}
@@ -719,35 +668,25 @@ func (d *DialogClientSession) reInviteKeepAlive(ctx context.Context) error {
 	return nil
 }
 
-// Refer tries todo refer (blind transfer) on call. For more control use ReferOptions
+// Refer tries todo refer (blind transfer) on call.
+// Options allow customizing headers of the REFER request and receiving the
+// transfer status via WithOnReferNotify.
+// Honors: msg (Headers, Contact, MutateRequest); dialog (OnReferNotify via
+// WithOnReferNotify).
 //
 // NOTE: It is expected that after calling this you are hanguping call to send BYE
-func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, headers ...sip.Header) error {
-	// cont := d.InviteRequest.Contact()
-	// return dialogRefer(ctx, d, cont.Address, referTo, headers...)
-	return d.ReferOptions(ctx, referTo, ReferClientOptions{
-		Headers: headers,
-	})
-}
-
-type ReferClientOptions struct {
-	Headers []sip.Header
-	// OnNotify sends notify status code.
-	// If implemented you need to react on different status code.
-	OnNotify func(statusCode int)
-}
-
-func (d *DialogClientSession) ReferOptions(ctx context.Context, referTo sip.Uri, opts ReferClientOptions) error {
-	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
-		return fmt.Errorf("can only be called on answered dialog")
+func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, opts ...SignalOption) error {
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return err
 	}
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()
-	if opts.OnNotify != nil {
-		d.onReferNotify = opts.OnNotify
+	if params.Dialog.OnReferNotify != nil {
+		d.onReferNotify = params.Dialog.OnReferNotify
 	}
 	d.mu.Unlock()
-	return dialogRefer(ctx, d, cont.Address, referTo, d.InviteResponse.Contact().Address, opts.Headers...)
+	return dialogRefer(ctx, d, cont.Address, referTo, d.InviteResponse.Contact().Address, params)
 }
 
 func (d *DialogClientSession) handleReferNotify(req *sip.Request, tx sip.ServerTransaction) {

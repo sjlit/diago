@@ -37,8 +37,8 @@ func start(ctx context.Context) error {
 	tu := diago.NewDiago(ua)
 
 	return tu.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-		slog.Info("New dialog request", "id", inDialog.ID)
-		defer slog.Info("Dialog finished", "id", inDialog.ID)
+		slog.Info("New dialog request", "id", inDialog.ID())
+		defer slog.Info("Dialog finished", "id", inDialog.ID())
 		if err := Record(inDialog); err != nil {
 			slog.Error("Record finished with error", "error", err)
 		}

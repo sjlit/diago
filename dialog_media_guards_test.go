@@ -64,28 +64,28 @@ func TestDialogMediaGuardsNotAnswered(t *testing.T) {
 		assert.ErrorIs(t, d.StopRTP(1, 0), ErrDialogNotAnswered)
 		assert.ErrorIs(t, d.StartRTP(1, 0), ErrDialogNotAnswered)
 	})
-	t.Run("PlaybackCreate", func(t *testing.T) {
-		_, err := d.PlaybackCreate()
+	t.Run("CreatePlayback", func(t *testing.T) {
+		_, err := d.CreatePlayback()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("PlaybackControlCreate", func(t *testing.T) {
-		_, err := d.PlaybackControlCreate()
+	t.Run("CreatePlaybackControl", func(t *testing.T) {
+		_, err := d.CreatePlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("PlaybackDTMFCreate", func(t *testing.T) {
-		_, err := d.PlaybackDTMFCreate()
+	t.Run("CreatePlaybackDTMF", func(t *testing.T) {
+		_, err := d.CreatePlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("PlaybackRingtoneCreate", func(t *testing.T) {
-		_, err := d.PlaybackRingtoneCreate()
+	t.Run("CreateRingtonePlayback", func(t *testing.T) {
+		_, err := d.CreateRingtonePlayback()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("AudioReaderDTMF", func(t *testing.T) {
-		_, err := d.AudioReaderDTMF()
+	t.Run("CreateDTMFReader", func(t *testing.T) {
+		_, err := d.CreateDTMFReader()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("AudioWriterDTMF", func(t *testing.T) {
-		_, err := d.AudioWriterDTMF()
+	t.Run("CreateDTMFWriter", func(t *testing.T) {
+		_, err := d.CreateDTMFWriter()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("AudioStereoRecordingCreate", func(t *testing.T) {
@@ -122,28 +122,28 @@ func TestDialogMediaGuardsClosed(t *testing.T) {
 	t.Run("ListenUntil", func(t *testing.T) {
 		assert.ErrorIs(t, d.ListenUntil(0), ErrDialogClosed)
 	})
-	t.Run("PlaybackCreate", func(t *testing.T) {
-		_, err := d.PlaybackCreate()
+	t.Run("CreatePlayback", func(t *testing.T) {
+		_, err := d.CreatePlayback()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("PlaybackControlCreate", func(t *testing.T) {
-		_, err := d.PlaybackControlCreate()
+	t.Run("CreatePlaybackControl", func(t *testing.T) {
+		_, err := d.CreatePlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("PlaybackDTMFCreate", func(t *testing.T) {
-		_, err := d.PlaybackDTMFCreate()
+	t.Run("CreatePlaybackDTMF", func(t *testing.T) {
+		_, err := d.CreatePlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("PlaybackRingtoneCreate", func(t *testing.T) {
-		_, err := d.PlaybackRingtoneCreate()
+	t.Run("CreateRingtonePlayback", func(t *testing.T) {
+		_, err := d.CreateRingtonePlayback()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("AudioReaderDTMF", func(t *testing.T) {
-		_, err := d.AudioReaderDTMF()
+	t.Run("CreateDTMFReader", func(t *testing.T) {
+		_, err := d.CreateDTMFReader()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("AudioWriterDTMF", func(t *testing.T) {
-		_, err := d.AudioWriterDTMF()
+	t.Run("CreateDTMFWriter", func(t *testing.T) {
+		_, err := d.CreateDTMFWriter()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("AudioStereoRecordingCreate", func(t *testing.T) {

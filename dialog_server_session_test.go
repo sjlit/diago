@@ -95,7 +95,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	require.NoError(t, d.Ringing())
 
 	// We can play some file ringtone
-	playback, err := d.PlaybackCreate()
+	playback, err := d.CreatePlayback()
 	require.NoError(t, err)
 	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	require.NoError(t, err)
 
 	// New playback is needed to follow new media session
-	playback, err = d.PlaybackCreate()
+	playback, err = d.CreatePlayback()
 	require.NoError(t, err)
 	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
@@ -232,9 +232,10 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 
 	reinviteCtx, cancelReinvite := context.WithTimeout(ctx, 6*time.Second)
 	defer cancelReinvite()
-	// Under load the UAS may still consider the initial INVITE transaction
-	// pending when the re-INVITE lands and correctly rejects it with 491
-	// (RFC 3261 section 14.2). Retry briefly instead of failing the test.
+	// The UAS answers 491 while the initial INVITE transaction is still
+	// pending (RFC 3261 §14.2): this re-INVITE races with ACK processing on
+	// the server. Retry on 491 like a real UAC would (cf. reInviteExchange).
+	// Each attempt clones the template as Do mutates the request in place.
 	var res *sip.Response
 	for {
 		res, err = dialog.Do(reinviteCtx, reinvite.Clone())
@@ -243,9 +244,9 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 			break
 		}
 		select {
+		case <-time.After(100 * time.Millisecond):
 		case <-reinviteCtx.Done():
-			t.Fatal("re-INVITE kept being rejected as request pending")
-		case <-time.After(200 * time.Millisecond):
+			require.NoError(t, reinviteCtx.Err())
 		}
 	}
 	require.Equal(t, sip.StatusOK, res.StatusCode)
@@ -372,11 +373,9 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		require.NoError(t, err)
 
 		referState := make(chan int)
-		err = d.ReferOptions(d.Context(), sip.Uri{Host: "127.0.0.1", Port: 15072}, ReferServerOptions{
-			OnNotify: func(statusCode int) {
-				referState <- statusCode
-			},
-		})
+		err = d.Refer(d.Context(), sip.Uri{Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+			referState <- statusCode
+		}))
 		require.NoError(t, err)
 
 		assert.Equal(t, 100, <-referState)
@@ -392,11 +391,9 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		require.NoError(t, err)
 
 		referState := make(chan int)
-		err = d.ReferOptions(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: 15072}, ReferServerOptions{
-			OnNotify: func(statusCode int) {
-				referState <- statusCode
-			},
-		})
+		err = d.Refer(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+			referState <- statusCode
+		}))
 		require.NoError(t, err)
 
 		assert.Equal(t, 100, <-referState)
@@ -412,11 +409,9 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		require.NoError(t, err)
 
 		referState := make(chan int)
-		err = d.ReferOptions(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: 15072}, ReferServerOptions{
-			OnNotify: func(statusCode int) {
-				referState <- statusCode
-			},
-		})
+		err = d.Refer(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+			referState <- statusCode
+		}))
 		require.NoError(t, err)
 
 		assert.Equal(t, 100, <-referState)
@@ -434,7 +429,7 @@ func TestIntegrationDialogServerPlayback(t *testing.T) {
 		},
 	}
 
-	playback, err := dialog.PlaybackCreate()
+	playback, err := dialog.CreatePlayback()
 	require.NoError(t, err)
 
 	initTS := dialog.RTPPacketWriter.InitTimestamp()

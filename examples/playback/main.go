@@ -36,8 +36,8 @@ func start(ctx context.Context) error {
 	tu := diago.NewDiago(ua)
 
 	return tu.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-		slog.Info("New dialog request", "id", inDialog.ID)
-		defer slog.Info("Dialog finished", "id", inDialog.ID)
+		slog.Info("New dialog request", "id", inDialog.ID())
+		defer slog.Info("Dialog finished", "id", inDialog.ID())
 		if err := Playback(inDialog); err != nil {
 			slog.Error("Failed to play", "error", err)
 		}
@@ -54,7 +54,7 @@ func Playback(inDialog *diago.DialogServerSession) error {
 	playfile, _ := testdata.OpenFile("demo-echodone.wav")
 	slog.Info("Playing a file", "file", "demo-echodone.wav")
 
-	pb, err := inDialog.PlaybackCreate()
+	pb, err := inDialog.CreatePlayback()
 	if err != nil {
 		return err
 	}

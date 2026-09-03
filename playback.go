@@ -56,7 +56,7 @@ type AudioPlayback struct {
 }
 
 // NewAudioPlayback creates a playback where writer is encoder/streamer to media codec
-// Use dialog.PlaybackCreate() instead creating manually playback
+// Use dialog.CreatePlayback() instead creating manually playback
 func NewAudioPlayback(writer io.Writer, codec media.Codec) AudioPlayback {
 	return AudioPlayback{
 		writer:      writer,

@@ -310,7 +310,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 		},
 	}
 
-	pb, err := dialog.PlaybackDTMFCreate(WithReplayKeys("*"))
+	pb, err := dialog.CreatePlaybackDTMF(WithReplayKeys("*"))
 	require.NoError(t, err)
 	defer pb.Close()
 

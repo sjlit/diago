@@ -46,13 +46,13 @@ func start(ctx context.Context) error {
 	}
 
 	return dg.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-		slog.Info("New dialog request", "id", inDialog.ID)
-		defer slog.Info("Dialog finished", "id", inDialog.ID)
+		slog.Info("New dialog request", "id", inDialog.ID())
+		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
 		// Challenge/validate the INVITE. On first INVITE this answers 401 and
 		// returns an error - the caller must re-INVITE with Authorization.
 		if err := inDialog.Authorize(authServer, auth); err != nil {
-			slog.Info("Call not authorized", "id", inDialog.ID, "error", err)
+			slog.Info("Call not authorized", "id", inDialog.ID(), "error", err)
 			return
 		}
 
@@ -61,7 +61,7 @@ func start(ctx context.Context) error {
 			slog.Error("Answer failed", "error", err)
 			return
 		}
-		slog.Info("Call authorized and answered", "id", inDialog.ID)
+		slog.Info("Call authorized and answered", "id", inDialog.ID())
 
 		<-inDialog.Context().Done()
 	})

@@ -265,7 +265,7 @@ closed locally (all return wrapped sentinels, never panic):
 |---|---|---|
 | `Echo` | `ErrDialogNotAnswered` | `ErrDialogClosed` |
 | `AudioReader` / `AudioWriter` (+ DTMF variants) | `ErrDialogNotAnswered` | `ErrDialogClosed` |
-| `PlaybackCreate` / `PlaybackControlCreate` / `PlaybackDTMFCreate` | `ErrDialogNotAnswered` | `ErrDialogClosed` |
+| `CreatePlayback` / `CreatePlaybackControl` / `CreatePlaybackDTMF` | `ErrDialogNotAnswered` | `ErrDialogClosed` |
 | `Listen` / `ListenBackground` / `ListenContext` / `ListenUntil` | `ErrDialogNotAnswered` | `ErrDialogClosed` |
 | `ReInvite` / `Hold` / `Unhold` (client & server) | `ErrDialogNotAnswered` | network-level error (send failure) |
 | `ClientHangup` without any response | `ErrDialogNotAnswered` | network-level error |
@@ -297,15 +297,21 @@ remain functional for compatibility but must not be mixed with the gates.
 
 `SignalOption` is the single functional-option style for per-call customization.
 It is accepted by every signaling method (server progress/answer, client
-invite/bye/refer-side requests, REGISTER) and by `NewDialog`. Legacy option
-structs survive only as migration input: `InviteOptions`, `NewDialogOptions`
-and `InviteClientOptions` carry an `Options()` converter and are deprecated;
-`ProgressMediaOptions` and `AnswerOptions` are consumed only through their
-deprecated wrapper methods, which convert inline. `ReferClientOptions`/
-`ReferServerOptions` are NOT deprecated — `Refer` has no SignalOption variant
-and `ReferOptions` is the granular REFER API. `RegisterOptions` stays the
-primary Register API and provides `Options()` for the signal-representable
-fields (credentials, Contact, Headers).
+invite/ack/bye/re-INVITE/refer, hold/unhold, `NewDialog`, and the REGISTER
+family: `Diago.Register`/`RegisterTransaction` plus the per-request
+`Register`/`Unregister`/`Qualify`). Legacy option structs survive only as
+migration input: `InviteOptions` and `InviteClientOptions` carry an
+`Options()` converter and are deprecated; `NewDialogOptions.Options()` takes
+no error while `InviteOptions.Options()` returns one (legacy inconsistency,
+kept as is); `ProgressMediaOptions` and `AnswerOptions` are consumed only
+through their deprecated wrapper methods, which convert inline. The old
+struct-based `ReferClientOptions`/`ReferServerOptions`/`ReferOptions` and
+`RegisterOptions` were removed: `Refer` takes `...SignalOption` (transfer
+status via `WithOnReferNotify`), and REGISTER is configured with the scoped
+`WithRegister*` options. The media-side option families
+(`AudioReaderOption`, `AudioWriterOption`, `DTMFSendOption`, `MoHOption`,
+`ToneOption`, `RecordingOption`, `PlaybackDTMFOption`) all share the
+`func(*T) error` shape.
 
 ### Single-execution guarantee
 
@@ -322,16 +328,36 @@ MutateRequest, MutateResponse — outgoing message shaping), **media** (Codecs,
 RTPNAT, MediaBindIP, MediaExternalIP, MediaDTLSConf, MediaSession — consumed
 only via `signalMediaConfig` and the media-install sites), **dialog**
 (Transport, TransportID, Originator, Username, Password, EarlyMediaDetect,
-OnResponse, OnMediaUpdate, OnRefer). Fields irrelevant to the called method are
-ignored; each method's godoc states which groups it honors. Credentials passed
-via `WithAuthCredentials` are honored by `Invite` and by REGISTER
-(`Register`/`Unregister`/`Qualify`), falling back to `RegisterOptions`.
+OnResponse, OnMediaUpdate, OnRefer, OnReferNotify), **register** (Expiry,
+RetryInterval, AllowHeaders, ProxyHost, OnRegistered — construction-time,
+read by `Register`/`RegisterTransaction` only). Fields irrelevant to the
+called method are ignored; each method's godoc states which groups it honors.
+Credentials passed via `WithAuthCredentials` are honored by `Invite` and by
+REGISTER (`Register`/`Unregister`/`Qualify`), falling back to the transaction
+values.
 
 ### Getter-options
 
 `WithAudioReaderMediaProps` / `WithAudioWriterMediaProps` are the only
 output-options: they fill the caller's `MediaProps` with the negotiated codec
 and addresses. Every other option is input-only.
+
+### Factories and handle shapes
+
+Media factories on `DialogMedia` use the `Create` prefix: `CreatePlayback`,
+`CreatePlaybackControl`, `CreateRingtonePlayback`, `CreatePlaybackDTMF`,
+`CreateDTMFReader`, `CreateDTMFWriter`. The return shape is intentional:
+lightweight handles are returned by value (`AudioPlayback`,
+`AudioPlaybackControl`, `AudioRingtone`); stateful handles by pointer
+(`AudioPlaybackDTMF`, `StereoRecording`). `StartStereoRecording` keeps its
+verb name: it installs a tap rather than just constructing a handle.
+
+### Dialog identity
+
+`DialogSession.ID()` returns the dialog ID. It shadows the embedded sipgo
+`ID` string field on both session types: inside the library the field is
+reached explicitly (`d.DialogClientSession.ID`,
+`d.DialogServerSession.ID`); user code should call the method.
 
 ### Global mutable variables (inventory, see recommendation 4)
 

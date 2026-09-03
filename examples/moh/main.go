@@ -70,9 +70,9 @@ func run(ctx context.Context) error {
 		}
 
 		// DTMF reader for Hold (1) and Unhold (2).
-		reader, err := inDialog.AudioReaderDTMF()
+		reader, err := inDialog.CreateDTMFReader()
 		if err != nil {
-			slog.Error("AudioReaderDTMF failed", "error", err)
+			slog.Error("CreateDTMFReader failed", "error", err)
 			return
 		}
 		reader.OnDTMF(func(r rune) error {

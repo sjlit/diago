@@ -235,20 +235,20 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
 	err := tu.ServeBackground(ctx, func(in *DialogServerSession) {
-		defer func() { dialogExit <- in.ID }()
+		defer func() { dialogExit <- in.ID() }()
 
 		in.Trying()
 		in.Ringing()
 		in.Answer()
 
 		// Add us in bridge
-		t.Log("Adding into bridge", in.ID)
+		t.Log("Adding into bridge", in.ID())
 		if err := bridgePtr.Load().AddDialogSession(in); err != nil {
 			t.Log("Adding dialog in bridge failed", err)
 			return
 		}
 		defer func() {
-			t.Log("Removing from bridge", in.ID)
+			t.Log("Removing from bridge", in.ID())
 			bridgePtr.Load().RemoveDialogSession(in)
 		}()
 

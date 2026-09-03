@@ -6,6 +6,7 @@ package diago
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -22,29 +23,35 @@ var (
 )
 
 // PlaybackDTMFOption configures AudioPlaybackDTMF
-type PlaybackDTMFOption func(*AudioPlaybackDTMF)
+type PlaybackDTMFOption func(*AudioPlaybackDTMF) error
 
 // WithInterruptKeys sets DTMF keys that interrupt playback. Default is any
 // key interrupts. Empty string disables interrupting.
 func WithInterruptKeys(keys string) PlaybackDTMFOption {
-	return func(p *AudioPlaybackDTMF) {
+	return func(p *AudioPlaybackDTMF) error {
 		p.interruptKeys = parseDTMFKeys(keys)
+		return nil
 	}
 }
 
 // WithReplayKeys sets DTMF keys that replay playback from the beginning.
 // Default is no replay keys.
 func WithReplayKeys(keys string) PlaybackDTMFOption {
-	return func(p *AudioPlaybackDTMF) {
+	return func(p *AudioPlaybackDTMF) error {
 		p.replayKeys = parseDTMFKeys(keys)
+		return nil
 	}
 }
 
 // WithOnDTMF registers additional callback invoked on every received DTMF.
 // It is executed on RTP reading goroutine and MUST NOT block.
 func WithOnDTMF(fn func(dtmf rune)) PlaybackDTMFOption {
-	return func(p *AudioPlaybackDTMF) {
+	return func(p *AudioPlaybackDTMF) error {
+		if fn == nil {
+			return fmt.Errorf("WithOnDTMF: fn is nil")
+		}
 		p.onDTMF = fn
+		return nil
 	}
 }
 
@@ -80,11 +87,11 @@ type AudioPlaybackDTMF struct {
 	started   atomic.Bool
 }
 
-// PlaybackDTMFCreate creates playback controlled with in-band RTP DTMF.
+// CreatePlaybackDTMF creates playback controlled with in-band RTP DTMF.
 //
 // By default any DTMF key interrupts playback. Use options to customize:
 //
-//	pb, _ := dialog.PlaybackDTMFCreate(
+//	pb, _ := dialog.CreatePlaybackDTMF(
 //	    WithInterruptKeys("1234567890"), // only number keys interrupt
 //	    WithReplayKeys("*"),             // star key replays prompt
 //	)
@@ -93,15 +100,15 @@ type AudioPlaybackDTMF struct {
 //	pb.Close()
 //
 // While playback is active DTMF keys are detected by reading audio RTP in
-// background. Other audio reading (AudioReaderDTMF, Echo, recording) MUST NOT
+// background. Other audio reading (CreateDTMFReader, Echo, recording) MUST NOT
 // be used until Close is called.
-func (d *DialogMedia) PlaybackDTMFCreate(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
-	pb, err := d.PlaybackControlCreate()
+func (d *DialogMedia) CreatePlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
+	pb, err := d.CreatePlaybackControl()
 	if err != nil {
 		return nil, err
 	}
 
-	dtmfReader, err := d.AudioReaderDTMF()
+	dtmfReader, err := d.CreateDTMFReader()
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +124,13 @@ func (d *DialogMedia) PlaybackDTMFCreate(opts ...PlaybackDTMFOption) (*AudioPlay
 		stopCh:               make(chan struct{}),
 	}
 	for _, o := range opts {
-		o(p)
+		if o == nil {
+			continue
+		}
+		if err := o(p); err != nil {
+			readCancel()
+			return nil, err
+		}
 	}
 
 	dtmfReader.OnDTMF(p.handleDTMF)

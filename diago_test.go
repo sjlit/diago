@@ -68,7 +68,7 @@ func TestDiagoRegister(t *testing.T) {
 	})
 
 	ctx := context.TODO()
-	rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"}, RegisterOptions{})
+	rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 
 	err = rtx.Register(ctx)
@@ -90,7 +90,7 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 	ctx := context.TODO()
 
 	t.Run("SignalOptionCredentials", func(t *testing.T) {
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"}, RegisterOptions{})
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 
 		err = rtx.Register(ctx, WithAuthCredentials("aliceFromSignal", "secret"))
@@ -98,8 +98,8 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 		assert.Contains(t, authValue.Load(), `username="aliceFromSignal"`)
 	})
 
-	t.Run("RegisterOptionsFallback", func(t *testing.T) {
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "bob", Host: "localhost"}, RegisterOptions{Username: "bobFromOpts", Password: "pw"})
+	t.Run("RegisterTransactionCredentialsFallback", func(t *testing.T) {
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "bob", Host: "localhost"}, WithAuthCredentials("bobFromOpts", "pw"))
 		require.NoError(t, err)
 
 		err = rtx.Register(ctx)
@@ -297,12 +297,12 @@ func TestDiagoNewDialog(t *testing.T) {
 
 		err = dialog.Invite(ctx)
 		require.NoError(t, err)
-		assert.NotEmpty(t, dialog.ID)
+		assert.NotEmpty(t, dialog.ID())
 
 		err = dialog.Ack(ctx)
 		require.NoError(t, err)
 
-		// assert.NotEmpty(t, dialog.ID)
+		// assert.NotEmpty(t, dialog.ID())
 	})
 
 	// _, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
@@ -468,7 +468,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
-	// pb, err := d.PlaybackCreate()
+	// pb, err := d.CreatePlayback()
 	// if err != nil {
 	// 	panic(err)
 	// }
@@ -555,7 +555,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
-	// pb, err := d.PlaybackCreate()
+	// pb, err := d.CreatePlayback()
 	// if err != nil {
 	// 	panic(err)
 	// }

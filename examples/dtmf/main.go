@@ -38,8 +38,8 @@ func start(ctx context.Context) error {
 	tu := diago.NewDiago(ua)
 
 	return tu.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-		slog.Info("New dialog request", "id", inDialog.ID)
-		defer slog.Info("Dialog finished", "id", inDialog.ID)
+		slog.Info("New dialog request", "id", inDialog.ID())
+		defer slog.Info("Dialog finished", "id", inDialog.ID())
 		ReadDTMF(inDialog)
 	})
 }
@@ -65,7 +65,7 @@ func ReadDTMF(inDialog *diago.DialogServerSession) error {
 		slog.Error("Ringback failed", "error", err)
 	}
 
-	reader, err := inDialog.AudioReaderDTMF()
+	reader, err := inDialog.CreateDTMFReader()
 	if err != nil {
 		return err
 	}

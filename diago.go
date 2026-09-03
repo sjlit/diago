@@ -327,12 +327,12 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 
 		defer closeAndLog(dWrap, "closing dialog server returned error")
 
-		if err := dg.cache.server.DialogStore(dWrap.Context(), dWrap.ID, dWrap); err != nil {
+		if err := dg.cache.server.DialogStore(dWrap.Context(), dWrap.DialogServerSession.ID, dWrap); err != nil {
 			return fmt.Errorf("failed to store server dialog: %w", err)
 		}
 		defer func() {
 			// TODO: have better context
-			if err := dg.cache.server.DialogDelete(context.Background(), dWrap.ID); err != nil {
+			if err := dg.cache.server.DialogDelete(context.Background(), dWrap.DialogServerSession.ID); err != nil {
 				dg.log.Error("Failed to delete server dialog", "error", err)
 			}
 		}()
@@ -934,13 +934,13 @@ func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, contact *sip.C
 		}
 
 		// Now dialog is established and can be add into store
-		if err := dg.cache.client.DialogStore(context.Background(), d.ID, d); err != nil {
+		if err := dg.cache.client.DialogStore(context.Background(), d.DialogClientSession.ID, d); err != nil {
 			dg.log.Error("Failed to store in dialog cache", "error", err)
 		}
 	})
 
 	d.OnClose(func() error {
-		return dg.cache.client.DialogDelete(context.Background(), d.ID)
+		return dg.cache.client.DialogDelete(context.Background(), d.DialogClientSession.ID)
 	})
 	return d, nil
 }
@@ -1008,9 +1008,15 @@ func (dg *Diago) findTransport(transport string, id string) (*Transport, bool) {
 }
 
 // Register will create register transaction and keep registration ongoing until error is hit.
-// For more granular control over registrations use RegisterTransaction
-func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts RegisterOptions) error {
-	t, err := dg.RegisterTransaction(ctx, recipient, opts)
+// For more granular control over registrations use RegisterTransaction.
+// Options configure the transaction (WithRegisterExpiry,
+// WithRegisterRetryInterval, WithRegisterProxyHost, WithRegisterAllowHeaders,
+// WithOnRegistered) and every REGISTER attempt (WithAuthCredentials,
+// WithContact, WithHeaders, WithRequestMutator).
+// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password),
+// register (all).
+func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...SignalOption) error {
+	t, err := dg.RegisterTransaction(ctx, recipient, opts...)
 	if err != nil {
 		return err
 	}
@@ -1071,7 +1077,14 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts RegisterO
 }
 
 // Register transaction creates register transaction object that can be used for Register Unregister requests
-func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opts RegisterOptions) (*RegisterTransaction, error) {
+// Options configure the transaction (see Register) and every REGISTER
+// attempt. Honors: msg (Headers, Contact, MutateRequest), dialog (Username,
+// Password), register (all).
+func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (*RegisterTransaction, error) {
+	params, err := newSignalParams(opts)
+	if err != nil {
+		return nil, err
+	}
 	// Make our client reuse address
 	transport, exists := recipient.UriParams.Get("transport")
 	if !exists {
@@ -1094,7 +1107,7 @@ func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opt
 	// 	return nil, err
 	// }
 	client := dg.getClient(tran)
-	return newRegisterTransaction(client, recipient, contactHDR, dg.log, opts), nil
+	return newRegisterTransaction(client, recipient, contactHDR, dg.log, params), nil
 }
 
 func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {

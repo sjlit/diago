@@ -284,14 +284,14 @@ func TestPlaybackControlReplayFile(t *testing.T) {
 	}
 
 	// Measure single pass first
-	single, err := dialog().PlaybackControlCreate()
+	single, err := dialog().CreatePlaybackControl()
 	require.NoError(t, err)
 	singleWritten, err := single.PlayFile("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	require.Greater(t, singleWritten, int64(10000))
 
 	// Replay once, so at least double amount should be written
-	playback, err := dialog().PlaybackControlCreate()
+	playback, err := dialog().CreatePlaybackControl()
 	require.NoError(t, err)
 
 	done := make(chan error, 1)

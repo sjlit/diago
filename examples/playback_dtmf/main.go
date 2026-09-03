@@ -40,8 +40,8 @@ func start(ctx context.Context) error {
 	tu := diago.NewDiago(ua)
 
 	return tu.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-		slog.Info("New dialog request", "id", inDialog.ID)
-		defer slog.Info("Dialog finished", "id", inDialog.ID)
+		slog.Info("New dialog request", "id", inDialog.ID())
+		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
 		if err := PlaybackDTMF(inDialog); err != nil {
 			slog.Error("Playback finished with error", "error", err)
@@ -56,7 +56,7 @@ func PlaybackDTMF(inDialog *diago.DialogServerSession) error {
 		return err
 	}
 
-	pb, err := inDialog.PlaybackDTMFCreate(
+	pb, err := inDialog.CreatePlaybackDTMF(
 		diago.WithReplayKeys("*"),
 	)
 	if err != nil {

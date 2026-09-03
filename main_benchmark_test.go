@@ -71,7 +71,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 			return
 		}
 
-		pb, err := d.PlaybackCreate()
+		pb, err := d.CreatePlayback()
 		if err != nil {
 			t.Log(err.Error())
 			return

@@ -22,7 +22,7 @@ import (
 func TestDialogMediaSessionReplacementDTMF(t *testing.T) {
 	d := newTestDialogMedia(t)
 
-	r, err := d.AudioReaderDTMF()
+	r, err := d.CreateDTMFReader()
 	require.NoError(t, err)
 
 	oldSess := d.currentMediaSession()

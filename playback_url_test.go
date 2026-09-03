@@ -51,7 +51,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		in.Ringing()
 		in.Answer()
 		t.Log("Playing url ", urlStr)
-		pb, _ := in.PlaybackCreate()
+		pb, _ := in.CreatePlayback()
 		if _, err := pb.PlayURL(urlStr); err != nil {
 			errServer = errors.Join(errServer, err)
 		}

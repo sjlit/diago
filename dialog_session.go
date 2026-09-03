@@ -7,15 +7,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	mrand "math/rand/v2"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
 
 type DialogSession interface {
-	Id() string
+	ID() string
 	Context() context.Context
 	// Hangup terminates the dialog. Options allow customizing headers of the
 	// outgoing BYE / decline response (ex. Reason header)
@@ -30,7 +32,7 @@ type DialogSession interface {
 // Here are many common functions built for dialog
 //
 
-func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referTo sip.Uri, refferedBy sip.Uri, headers ...sip.Header) error {
+func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referTo sip.Uri, refferedBy sip.Uri, params *SignalParams) error {
 	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
 		return fmt.Errorf("can only be called on answered dialog")
 	}
@@ -39,18 +41,28 @@ func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referT
 	// Invite request tags must be preserved but switched
 	req.AppendHeader(sip.NewHeader("Refer-To", uri2Header(referTo)))
 	req.AppendHeader(sip.NewHeader("Referred-By", uri2Header(refferedBy)))
-	for _, h := range headers {
-		if h == nil {
-			return fmt.Errorf("refer header is nil")
+	if params != nil {
+		if params.Msg.Contact != nil {
+			setSignalContact(req, params.Msg.Contact)
 		}
+		for _, h := range params.Msg.Headers {
+			if h == nil {
+				continue
+			}
 
-		switch h.Name() {
-		// Avoid duplicates
-		case "Refer-To", "refer-to", "Referred-By", "reffered-by":
-			req.ReplaceHeader(h)
-			continue
-		default:
-			req.AppendHeader(h)
+			switch h.Name() {
+			// Avoid duplicates
+			case "Refer-To", "refer-to", "Referred-By", "reffered-by":
+				req.ReplaceHeader(h)
+				continue
+			default:
+				req.AppendHeader(h)
+			}
+		}
+		if params.Msg.MutateRequest != nil {
+			if err := params.Msg.MutateRequest(req); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -289,4 +301,64 @@ func dialogReferInvite(d DialogSession, dg *Diago, referToUri sip.Uri, remoteTar
 	// Now this dialog will receive BYE and it will terminate
 	// We need to send this referDialog to control of caller
 	return nil
+}
+
+// reInviteExchangeTransport abstracts the dialog operations needed by the
+// shared re-INVITE exchange driver. Both DialogClientSession and
+// DialogServerSession satisfy it.
+type reInviteExchangeTransport interface {
+	Do(ctx context.Context, req *sip.Request) (*sip.Response, error)
+	RemoteContact() *sip.ContactHeader
+	writeReInviteACK(ctx context.Context, target sip.Uri) error
+}
+
+// reInviteExchange sends a re-INVITE request and drives the exchange to
+// completion, identically for client and server dialogs: it retries on 491
+// Request Pending (RFC 3261 §14.1) with a randomized backoff and ACKs the
+// 2xx at its Contact, falling back to the dialog's remote target when the
+// response carries none. The final ACK is sent without options.
+//
+// Each side keeps its own ACK sender (client WriteAck, server WriteRequest):
+// the observable behavior — one ACK, no options — is the same.
+func reInviteExchange(ctx context.Context, t reInviteExchangeTransport, req *sip.Request) (*sip.Response, error) {
+	for {
+		res, err := t.Do(ctx, req.Clone())
+		if err != nil {
+			return nil, err
+		}
+
+		if !res.IsSuccess() {
+			// Retry on 491 Request Pending (RFC 3261 §14.1) with a simplified
+			// single-tier randomized backoff of 2.0-4.0s, instead of the RFC's
+			// Call-ID-owner-dependent two tiers.
+			if res.StatusCode == sip.StatusRequestPending {
+				select {
+				case <-time.After(time.Duration(2000+mrand.IntN(200)*10) * time.Millisecond):
+					continue
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+
+			return nil, sipgo.ErrDialogResponse{
+				Res: res,
+			}
+		}
+
+		// ACK the 2xx at its Contact (RFC 3261 §13.2.1). A 2xx without Contact
+		// is malformed but does occur in the wild — dereferencing it here used
+		// to panic. Fall back to the dialog's remote target.
+		ackContact := res.Contact()
+		if ackContact == nil {
+			ackContact = t.RemoteContact()
+		}
+		if ackContact == nil {
+			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ACK")
+		}
+		if err := t.writeReInviteACK(ctx, ackContact.Address); err != nil {
+			return res, err
+		}
+
+		return res, nil
+	}
 }

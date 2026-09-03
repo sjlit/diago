@@ -32,7 +32,7 @@ type Bridge struct {
 	// Originator is dialog session that created bridge
 	Originator DialogSession
 	// DTMFpass is also dtmf pipeline and proxy. By default only audio media is proxied
-	// NOTE: this may not work if you are already processing DTMF with AudioReaderDTMF
+	// NOTE: this may not work if you are already processing DTMF with CreateDTMFReader
 	DTMFpass bool
 
 	log *slog.Logger
@@ -103,7 +103,7 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 		m := d.Media()
 		mprops := MediaProps{}
 		if _, err := m.audioWriterProps(&mprops); err != nil {
-			return fmt.Errorf("bridge dialog %q has no media: %w", d.Id(), err)
+			return fmt.Errorf("bridge dialog %q has no media: %w", d.ID(), err)
 		}
 
 		err := func() error {
@@ -132,7 +132,7 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Check are both answered
 	for _, d := range b.dialogs {
 		if err := d.Media().checkMediaUsable(); err != nil {
-			return fmt.Errorf("dialog session not answered %q: %w", d.Id(), err)
+			return fmt.Errorf("dialog session not answered %q: %w", d.ID(), err)
 		}
 	}
 
@@ -394,7 +394,7 @@ func (b *BridgeMix) String() string {
 	str := fmt.Sprintf("state: %d", b.mixState)
 	str += " dialogs:["
 	for _, d := range b.dialogs {
-		str += " " + d.Id()
+		str += " " + d.ID()
 	}
 	str += "]"
 	return str
@@ -419,24 +419,24 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 	}
 
 	// Stop any current mixing
-	b.log.Debug("Stoping mix", "dialog", d.Id())
+	b.log.Debug("Stoping mix", "dialog", d.ID())
 	if err := b.mixStopWait(); err != nil {
 		return fmt.Errorf("failed to stop current mixing: %w", err)
 	}
 
 	b.dialogs = append(b.dialogs, d)
-	b.log.Debug("Added dialog", "dialog", d.Id(), "total", len(b.dialogs))
+	b.log.Debug("Added dialog", "dialog", d.ID(), "total", len(b.dialogs))
 	if err := b.mixStart(); err != nil {
 		// Add must be atomic: if the mix could not be (re)started (e.g. media
 		// torn down by a concurrent BYE), roll the dialog back out of the
 		// bridge instead of leaving a stuck entry no one will remove.
 		for i, dd := range b.dialogs {
-			if dd.Id() == d.Id() {
+			if dd.ID() == d.ID() {
 				b.dialogs = append(b.dialogs[:i], b.dialogs[i+1:]...)
 				break
 			}
 		}
-		b.log.Debug("Added dialog rolled back", "dialog", d.Id(), "total", len(b.dialogs))
+		b.log.Debug("Added dialog rolled back", "dialog", d.ID(), "total", len(b.dialogs))
 		return fmt.Errorf("failed to start mixing: %w", err)
 	}
 	return nil
@@ -445,11 +445,11 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	dialogID := d.Id()
+	dialogID := d.ID()
 
 	var dialog DialogSession
 	for _, d := range b.dialogs {
-		if d.Id() == dialogID {
+		if d.ID() == dialogID {
 			dialog = d
 			break
 		}
@@ -458,7 +458,7 @@ func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
 		return nil
 	}
 
-	b.log.Debug("Stoping mix", "dialog", dialog.Id())
+	b.log.Debug("Stoping mix", "dialog", dialog.ID())
 
 	// Remove the dialog even if stopping the mix reports errors: a failed
 	// pause (e.g. media already closed by a concurrent BYE) must never leave
@@ -468,13 +468,13 @@ func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
 
 	// NOTE: mixStopWait unlocks so we can not do any update before
 	for i, d := range b.dialogs {
-		if d.Id() == dialogID {
+		if d.ID() == dialogID {
 			b.dialogs = append(b.dialogs[:i], b.dialogs[i+1:]...)
 			break
 		}
 	}
 
-	b.log.Debug("Removed dialog", "dialog", dialog.Id(), "total", len(b.dialogs))
+	b.log.Debug("Removed dialog", "dialog", dialog.ID(), "total", len(b.dialogs))
 	if err := b.mixStart(); err != nil {
 		return errors.Join(mixStopErr, err)
 	}

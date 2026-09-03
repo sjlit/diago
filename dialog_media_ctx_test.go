@@ -226,7 +226,7 @@ func TestPlaybackDTMFCloseStopsReadLoopWithoutDeadlines(t *testing.T) {
 	d := newTestDialogMedia(t)
 	send := ctxSender(t, d)
 
-	pb, err := d.PlaybackDTMFCreate()
+	pb, err := d.CreatePlaybackDTMF()
 	require.NoError(t, err)
 
 	data := make([]byte, 6400)

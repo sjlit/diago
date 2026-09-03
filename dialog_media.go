@@ -726,8 +726,8 @@ func (d *DialogMedia) EchoContext(ctx context.Context) error {
 	return err
 }
 
-// PlaybackCreate creates playback for audio
-func (d *DialogMedia) PlaybackCreate() (AudioPlayback, error) {
+// CreatePlayback creates playback for audio
+func (d *DialogMedia) CreatePlayback() (AudioPlayback, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -739,8 +739,8 @@ func (d *DialogMedia) PlaybackCreate() (AudioPlayback, error) {
 	return p, nil
 }
 
-// PlaybackControlCreate creates playback with controls like mute, stop, pause, resume and replay
-func (d *DialogMedia) PlaybackControlCreate() (AudioPlaybackControl, error) {
+// CreatePlaybackControl creates playback with controls like mute, stop, pause, resume and replay
+func (d *DialogMedia) CreatePlaybackControl() (AudioPlaybackControl, error) {
 	// NOTE we should avoid returning pointers for any IN dialplan to avoid heap
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
@@ -758,10 +758,10 @@ func (d *DialogMedia) PlaybackControlCreate() (AudioPlaybackControl, error) {
 	return p, nil
 }
 
-// PlaybackRingtoneCreate is creating playback for ringtone
+// CreateRingtonePlayback creates playback for ringtone
 //
 // Experimental
-func (d *DialogMedia) PlaybackRingtoneCreate() (AudioRingtone, error) {
+func (d *DialogMedia) CreateRingtonePlayback() (AudioRingtone, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -799,6 +799,7 @@ func (d *DialogMedia) PlaybackRingtoneCreate() (AudioRingtone, error) {
 // half-wired window), is fail-open by default so a full disk cannot interrupt
 // bridged media, and supports Pause/Resume and configurable spool. See
 // docs/contracts.md §12 for the install-before-Bridge timing contract.
+// This method will be removed in a future release; do not use in new code.
 func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereoRecordingWav, error) {
 	mpropsW := MediaProps{}
 	aw, err := d.audioWriterProps(&mpropsW)
@@ -1071,14 +1072,14 @@ func (m *DialogMedia) dtmfCodec() media.Codec {
 	return media.CodecTelephoneEvent8000
 }
 
-// AudioReaderDTMF is DTMF over RTP. It reads audio and provides hook for dtmf while listening for audio
+// CreateDTMFReader is DTMF over RTP. It reads audio and provides hook for dtmf while listening for audio
 // Use Listen or OnDTMF after this call
 //
 // Unlike the WithAudioReaderDTMF option, the returned reader is NOT installed
 // into the dialog audio pipeline: it wraps the current audio reader chain at
 // creation time. Deadline control resolves the current media session at use
 // time (docs/contracts.md §4).
-func (m *DialogMedia) AudioReaderDTMF() (*DTMFReader, error) {
+func (m *DialogMedia) CreateDTMFReader() (*DTMFReader, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {
@@ -1226,12 +1227,12 @@ type DTMFWriter struct {
 	dtmfWriter *media.RTPDtmfWriter
 }
 
-// AudioWriterDTMF is DTMF over RTP on the write side.
+// CreateDTMFWriter is DTMF over RTP on the write side.
 //
 // Unlike the WithAudioWriterDTMF option, the returned writer is NOT installed
 // into the dialog audio pipeline: it wraps the current audio writer chain at
 // creation time (docs/contracts.md §4).
-func (m *DialogMedia) AudioWriterDTMF() (*DTMFWriter, error) {
+func (m *DialogMedia) CreateDTMFWriter() (*DTMFWriter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {

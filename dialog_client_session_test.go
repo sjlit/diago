@@ -557,7 +557,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, err)
-	pb, _ := dialog.PlaybackCreate()
+	pb, _ := dialog.CreatePlayback()
 	_, err = pb.Play(bytes.NewBuffer(beep), "audio/pcm")
 	require.NoError(t, err)
 
@@ -766,11 +766,9 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		defer d.Hangup(d.Context())
 
 		referState := make(chan int)
-		err = d.ReferOptions(d.Context(), sip.Uri{Host: "127.0.0.1", Port: 15072}, ReferClientOptions{
-			OnNotify: func(statusCode int) {
-				referState <- statusCode
-			},
-		})
+		err = d.Refer(d.Context(), sip.Uri{Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+			referState <- statusCode
+		}))
 		require.NoError(t, err)
 
 		assert.Equal(t, 100, <-referState)
@@ -784,11 +782,9 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		defer d.Hangup(d.Context())
 
 		referState := make(chan int)
-		err = d.ReferOptions(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: 15072}, ReferClientOptions{
-			OnNotify: func(statusCode int) {
-				referState <- statusCode
-			},
-		})
+		err = d.Refer(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+			referState <- statusCode
+		}))
 		require.NoError(t, err)
 
 		assert.Equal(t, 100, <-referState)
@@ -802,11 +798,9 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		defer d.Hangup(d.Context())
 
 		referState := make(chan int)
-		err = d.ReferOptions(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: 15072}, ReferClientOptions{
-			OnNotify: func(statusCode int) {
-				referState <- statusCode
-			},
-		})
+		err = d.Refer(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+			referState <- statusCode
+		}))
 		require.NoError(t, err)
 
 		assert.Equal(t, 100, <-referState)

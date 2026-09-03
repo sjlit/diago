@@ -84,7 +84,7 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 	}
 
 	t.Run("withControl", func(t *testing.T) {
-		playback, err := dialog.PlaybackControlCreate()
+		playback, err := dialog.CreatePlaybackControl()
 		require.NoError(t, err)
 
 		// Stop before play is cleared when new play starts
@@ -95,7 +95,7 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 	})
 
 	t.Run("default", func(t *testing.T) {
-		playback, err := dialog.PlaybackCreate()
+		playback, err := dialog.CreatePlayback()
 		require.NoError(t, err)
 
 		written, err := playback.PlayFile("testdata/files/demo-echodone.wav")
