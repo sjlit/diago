@@ -298,6 +298,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 }
 
 func TestIntegrationDialogClientReinvite(t *testing.T) {
+	skipShort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -422,6 +423,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 }
 
 func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
+	skipShort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -496,7 +498,6 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 				// fmt.Println("Server media update", d)
 			}))
 
-			// ar, _ := d.AudioReader()
 			ar := d.RTPPacketReader
 			ctx, cancel := context.WithCancel(context.Background())
 			go func() {
@@ -508,15 +509,18 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 			time.Sleep(60 * time.Millisecond)
 			var err error
 			ms := d.MediaSession().Fork()
+			// Forked session must advertise the address it actually binds:
+			// LocalSDP prefers ExternalIP (inherited from the parent session)
+			// over Laddr, so a mismatched ExternalIP silently redirects the
+			// peer's RTP to a dead address.
 			ms.Laddr = net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 39999}
+			ms.ExternalIP = net.IPv4(127, 0, 0, 2)
 			err = ms.Init() // This will start new listener
 			require.NoError(t, err)
 
 			err = d.reInviteMediaSession(ctx, ms, nil)
 			require.NoError(t, err)
 
-			// beepEncoded, _ := media.ReadAll(ar, 160)
-			// audioReceived <- beepEncoded
 			<-ctx.Done()
 		})
 		require.NoError(t, err)
@@ -526,8 +530,11 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	defer ua.Close()
 
 	dg := newDialer(ua)
-	// err := dg.ServeBackground(context.TODO(), func(d *DialogServerSession) {})
-	// require.NoError(t, err)
+	// Client must serve: without a bound listener the server re-INVITE
+	// (media fork to 127.0.0.2:39999) can never be answered and the SIP
+	// transaction FSM deadlocks.
+	err := dg.ServeBackground(context.TODO(), func(d *DialogServerSession) {})
+	require.NoError(t, err)
 	dialog, err := dg.NewDialog(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15079})
 	require.NoError(t, err)
 	err = dialog.Invite(ctx,

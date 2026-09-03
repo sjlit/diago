@@ -18,6 +18,7 @@ import (
 )
 
 func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
+	skipShort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -407,6 +408,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 }
 
 func TestIntegrationDialogServerPlayback(t *testing.T) {
+	skipShort(t)
 	rtpBuf := newRTPWriterBuffer()
 	dialog := &DialogServerSession{
 		DialogMedia: DialogMedia{

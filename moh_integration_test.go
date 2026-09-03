@@ -95,6 +95,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 // UAS receives a sendonly answer and flips IsRemoteHeld() inside the
 // OnMediaUpdate callback. The next re-INVITE (UAC Unhold) clears the flag.
 func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
+	skipShort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

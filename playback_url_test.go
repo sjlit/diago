@@ -22,6 +22,7 @@ import (
 )
 
 func TestIntegrationPlaybackURL(t *testing.T) {
+	skipShort(t)
 	// Create transaction users, as many as needed.
 	ua, _ := sipgo.NewUA(
 		sipgo.WithUserAgent("inbound"),

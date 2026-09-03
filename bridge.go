@@ -315,7 +315,12 @@ type BridgeMix struct {
 	mu      sync.Mutex
 	dialogs []DialogSession
 
-	mixWG    sync.WaitGroup
+	// mixWG and mixDone track the CURRENT mix generation. A fresh WaitGroup
+	// is created per mix (re)start, so a stopper waiting on a drained
+	// generation can never be wedged by a later mix reusing the same
+	// WaitGroup (the Add-after-Wait misuse that stranded teardowns).
+	mixWG    *sync.WaitGroup
+	mixDone  chan struct{}
 	mixState int
 	// pauseReleases holds reader gate releases taken by mixStop, applied by
 	// mixStopWait after the mix goroutines rejoin. Guarded by mu.
@@ -394,7 +399,19 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 
 	b.dialogs = append(b.dialogs, d)
 	b.log.Debug("Added dialog", "dialog", d.Id(), "total", len(b.dialogs))
-	b.mixStart()
+	if err := b.mixStart(); err != nil {
+		// Add must be atomic: if the mix could not be (re)started (e.g. media
+		// torn down by a concurrent BYE), roll the dialog back out of the
+		// bridge instead of leaving a stuck entry no one will remove.
+		for i, dd := range b.dialogs {
+			if dd.Id() == d.Id() {
+				b.dialogs = append(b.dialogs[:i], b.dialogs[i+1:]...)
+				break
+			}
+		}
+		b.log.Debug("Added dialog rolled back", "dialog", d.Id(), "total", len(b.dialogs))
+		return fmt.Errorf("failed to start mixing: %w", err)
+	}
 	return nil
 }
 
@@ -416,9 +433,11 @@ func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
 
 	b.log.Debug("Stoping mix", "dialog", dialog.Id())
 
-	if err := b.mixStopWait(); err != nil {
-		return fmt.Errorf("failed to stop current mixing: %w", err)
-	}
+	// Remove the dialog even if stopping the mix reports errors: a failed
+	// pause (e.g. media already closed by a concurrent BYE) must never leave
+	// the entry stuck in the bridge. The mix drains on its own via closed
+	// media in that case, and mixStopWait still waits for it below.
+	mixStopErr := b.mixStopWait()
 
 	// NOTE: mixStopWait unlocks so we can not do any update before
 	for i, d := range b.dialogs {
@@ -429,7 +448,10 @@ func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
 	}
 
 	b.log.Debug("Removed dialog", "dialog", dialog.Id(), "total", len(b.dialogs))
-	return b.mixStart()
+	if err := b.mixStart(); err != nil {
+		return errors.Join(mixStopErr, err)
+	}
+	return mixStopErr
 }
 
 func (b *BridgeMix) stateWrite(s int) {
@@ -450,14 +472,19 @@ func (b *BridgeMix) stateRead() int {
 
 func (b *BridgeMix) mixStopWait() error {
 	// DO NOT CALL THIS INSIDE LOOP of b.dialogs. This Unlocks
-	stopInProgress, err := b.mixStop()
-	if err != nil {
-		return fmt.Errorf("failed to stop current mixing: %w", err)
-	}
+	// NOTE: pause errors are reported but must not skip the wait: even with a
+	// failed pause the mix drains on its own (closed media errors the reads).
+	stopInProgress, stopErr := b.mixStop()
 
 	if stopInProgress {
+		// Wait on the captured generation: it is closed exactly once when
+		// every goroutine of that mix has exited. Later mixes run on their
+		// own generation, so they can not wedge this wait.
+		done := b.mixDone
 		b.mu.Unlock()
-		b.mixWG.Wait()
+		if done != nil {
+			<-done
+		}
 		b.mu.Lock()
 	}
 	// Release read pauses (mixStop paused the dialogs to stop the mix)
@@ -466,27 +493,38 @@ func (b *BridgeMix) mixStopWait() error {
 		release()
 	}
 	b.pauseReleases = nil
+	if stopErr != nil {
+		allErros = errors.Join(allErros, fmt.Errorf("failed to stop current mixing: %w", stopErr))
+	}
 	return allErros
 }
 
 func (b *BridgeMix) mixStop() (bool, error) {
-	if state := b.mixState; state != 1 {
-		// Only if state is running this goroutine can stop it
-		return false, nil
-	}
-	b.mixState = 2 // Set it stoping in progress
-	var allErros error
-	for _, d := range b.dialogs {
-		// Pause reading: interrupts the mix loop reads through the reader
-		// gate; releases are held until mixStopWait rejoins the mix.
-		release, err := d.Media().PauseAudioRead()
-		if err != nil {
-			allErros = errors.Join(allErros, err)
-			continue
+	switch b.mixState {
+	case 1:
+		b.mixState = 2 // Set it stoping in progress
+		var allErros error
+		for _, d := range b.dialogs {
+			// Pause reading: interrupts the mix loop reads through the reader
+			// gate; releases are held until mixStopWait rejoins the mix.
+			release, err := d.Media().PauseAudioRead()
+			if err != nil {
+				allErros = errors.Join(allErros, err)
+				continue
+			}
+			b.pauseReleases = append(b.pauseReleases, release)
 		}
-		b.pauseReleases = append(b.pauseReleases, release)
+		return true, allErros
+	case 2:
+		// Another goroutine already initiated the stop and is waiting in
+		// mixStopWait for the mix goroutine to drain. We must wait for it as
+		// well: proceeding now would mutate b.dialogs while the stop is still
+		// in flight and skip the deferred mixStart, stranding state=2 with
+		// dialogs left in the bridge.
+		return true, nil
 	}
-	return true, allErros
+	// state == 0: no mix running
+	return false, nil
 }
 
 func (b *BridgeMix) mixStart() error {
@@ -505,13 +543,14 @@ func (b *BridgeMix) mixStart() error {
 	ctx, cancelPoll := context.WithCancel(context.Background())
 	// We could decide and optimize here, poll vs deadlines
 	poll := b.Poll
+	wg := &sync.WaitGroup{}
 	rwStreams, err := func() ([]*bridgePCMStream, error) {
 		rwStreams := make([]*bridgePCMStream, len(b.dialogs))
 		firstDialogCodec := media.Codec{}
 
 		for i, d := range b.dialogs {
 			rwStreams[i] = &bridgePCMStream{}
-			if err := b.addDialogStream(ctx, d, rwStreams[i], &firstDialogCodec, poll); err != nil {
+			if err := b.addDialogStream(ctx, d, rwStreams[i], wg, &firstDialogCodec, poll); err != nil {
 				return nil, err
 			}
 		}
@@ -522,12 +561,23 @@ func (b *BridgeMix) mixStart() error {
 		return err
 	}
 
-	// Start new mix
-	b.mixWG.Add(1)
+	// Start new mix on a fresh generation. The reaper closes mixDone once the
+	// mix loop and all poll stream readers have exited; mixStopWait blocks on
+	// it instead of a shared WaitGroup (Add-after-Wait reuse race).
+	done := make(chan struct{})
+	b.mixWG = wg
+	b.mixDone = done
 	b.stateWriteUnsafe(1)
+	// Add for the main loop must precede the reaper so the counter can never
+	// be observed as drained before the loop is even started.
+	wg.Add(1)
+	go func(wg *sync.WaitGroup, done chan struct{}) {
+		wg.Wait()
+		close(done)
+	}(wg, done)
 	go func(rwStreams []*bridgePCMStream) {
 		defer cancelPoll()
-		defer b.mixWG.Done()
+		defer wg.Done()
 		defer b.stateWrite(0)
 		b.log.Debug("Starting mix loop", "streams.len", len(rwStreams))
 		if err := b.mixLoop(rwStreams, poll); err != nil {
@@ -620,7 +670,7 @@ type bridgePCMStream struct {
 	markGone  bool
 }
 
-func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream *bridgePCMStream, firstDialogCodec *media.Codec, poll bool) error {
+func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream *bridgePCMStream, wg *sync.WaitGroup, firstDialogCodec *media.Codec, poll bool) error {
 	m := d.Media()
 
 	p := MediaProps{}
@@ -681,10 +731,10 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 
 	if poll {
 		// We do buffering because initial packet can be read oner than actual mixing has started
-		b.mixWG.Add(1)
+		wg.Add(1)
 		bridgeTrace("poll: starting stream", "stream.id", stream.id)
 		go func(s *bridgePCMStream) {
-			defer b.mixWG.Done()
+			defer wg.Done()
 
 			bufPtr := bridgeReadPool.Get().(*[]byte)
 			defer bridgeReadPool.Put(bufPtr)

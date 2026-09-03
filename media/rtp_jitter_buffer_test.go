@@ -324,6 +324,9 @@ func TestRTPJitterBufferOverflow(t *testing.T) {
 }
 
 func TestRTPJitterBufferRealtimeSimulation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping realtime simulation (300 pkts x 20ms wall clock) in -short mode")
+	}
 	const (
 		ssrc        = 1234
 		packetCount = 300

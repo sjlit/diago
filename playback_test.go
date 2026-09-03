@@ -15,6 +15,7 @@ import (
 )
 
 func TestIntegrationStreamWAV(t *testing.T) {
+	skipShort(t)
 	fh, err := os.Open("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	sess, err := media.NewMediaSession(net.IPv4(127, 0, 0, 1), 0)

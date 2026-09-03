@@ -48,6 +48,16 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
+// skipShort skips tests that take multiple seconds of real (wall-clock) time,
+// keeping `go test -short ./...` as a fast development loop. Run the full
+// suite without -short in CI to cover them.
+func skipShort(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping slow test in -short mode")
+	}
+}
+
 func TestDiagoRegister(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		sync.OnceFunc(func() {

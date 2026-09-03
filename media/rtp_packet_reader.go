@@ -256,7 +256,22 @@ func (r *RTPPacketReader) Reader() RTPReader {
 }
 
 func (r *RTPPacketReader) UpdateRTPSession(rtpSess *RTPSession) {
+	// The old session may be abandoned by this update: an in-flight read
+	// blocks on its underlying RTP conn and would never observe the swap.
+	// Poke it with an immediate deadline AFTER the swap, so a woken Read()
+	// always snapshots the new reader and retries there. Only poke when the
+	// conn actually changes - a fork that shares the parent's conn (client
+	// side updates) keeps the in-flight read valid, and a leftover deadline
+	// would break all reads on the shared socket. Generic UpdateReader
+	// callers (e.g. jitter buffer) may reuse the same session, so only
+	// UpdateRTPSession pokes.
+	old := r.Reader()
 	r.UpdateReader(rtpSess)
+	if s, ok := old.(*RTPSession); ok {
+		if s.Sess.rtpConn != rtpSess.Sess.rtpConn {
+			s.Sess.rtpConn.SetReadDeadline(time.Now())
+		}
+	}
 
 	// codec := CodecFromSession(rtpSess.Sess)
 	// r.mu.Lock()
