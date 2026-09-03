@@ -43,14 +43,14 @@ func (m *MusicOnHold) Done() <-chan struct{} {
 }
 
 // Stop cancels the loop and waits for it to exit. It is idempotent and safe
-// from any goroutine. A loop ended by Stop (or by its context) returns nil;
-// a loop that failed on its own returns that error.
+// from any goroutine. A loop ended by Stop, by its context, or by the dialog
+// closing returns nil; a loop that failed on its own returns that error.
 func (m *MusicOnHold) Stop() error {
 	m.cancel()
 	<-m.done
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if errors.Is(m.err, context.Canceled) {
+	if errors.Is(m.err, context.Canceled) || errors.Is(m.err, ErrDialogClosed) {
 		return nil
 	}
 	return m.err
@@ -133,8 +133,17 @@ func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto
 	// Synchronous render validation: resolve the writer now so setup mistakes
 	// surface as a return value instead of a loop that dies instantly.
 	props := MediaProps{}
-	if _, err := d.audioWriterProps(&props); err != nil {
+	_, err := d.audioWriterProps(&props)
+	if err != nil {
 		return nil, err
+	}
+	// Validate the codec path synchronously as well: an unsupported negotiated
+	// codec would otherwise surface only as an instantly-dying loop.
+	{
+		var enc audio.PCMEncoderWriter
+		if err := enc.Init(props.Codec, io.Discard); err != nil {
+			return nil, fmt.Errorf("music on hold: %w", err)
+		}
 	}
 
 	m := &MusicOnHold{auto: auto, done: make(chan struct{})}
@@ -174,6 +183,11 @@ func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto
 // re-INVITE already succeeded, and surfacing a music failure as a Hold error
 // would invite a retry straight into 491 glare. A loop that is already
 // running (manual or previous Hold) is left untouched and unlogged.
+//
+// The loop lifetime is detached from the Hold call's context: Hold's ctx
+// typically carries the re-INVITE timeout, so the music derives from
+// context.WithoutCancel(ctx) and runs until Unhold, Stop/StopMusicOnHold,
+// or dialog Close. Manual PlayMusicOnHold loops keep their caller ctx.
 func (d *DialogMedia) mohAutoStart(ctx context.Context, toneOverride *audio.Tone) {
 	tone := audio.Tone{}
 	if toneOverride != nil {
@@ -186,7 +200,10 @@ func (d *DialogMedia) mohAutoStart(ctx context.Context, toneOverride *audio.Tone
 	if len(tone.Segments) == 0 {
 		return
 	}
-	if _, err := d.playMusicOnHold(ctx, tone, true); err != nil && !errors.Is(err, ErrMusicOnHoldActive) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := d.playMusicOnHold(context.WithoutCancel(ctx), tone, true); err != nil && !errors.Is(err, ErrMusicOnHoldActive) {
 		slog.Warn("Hold: automatic music on hold failed to start", "error", err)
 	}
 }
@@ -209,6 +226,8 @@ func (d *DialogMedia) mohAutoStop() {
 // Writer and codec are re-resolved every frame: a re-INVITE that changes the
 // negotiated codec is picked up on the next frame by re-rendering the tone at
 // the new sample rate — a Tone needs no resampler, unlike recorded sources.
+// The tone restarts from its first segment on such a switch (phase is not
+// preserved across sample-rate changes); the glitch is one cadence at most.
 //
 // Lock order: the loop takes d.mu per frame via audioWriterProps. Nothing may
 // hold d.mu while waiting on this loop; DialogMedia.Close only cancels.

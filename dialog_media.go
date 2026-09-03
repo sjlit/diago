@@ -110,8 +110,9 @@ type DialogMedia struct {
 	mohTone audio.Tone
 
 	// remoteHeld reports whether the negotiated direction prevents us from
-	// sending — the remote put us on hold. Set in sdpUpdateUnsafe, the
-	// funnelpoint of all inbound SDP; queried via IsRemoteHeld.
+	// sending — the remote put us on hold. Maintained by updateRemoteHeldUnsafe
+	// on every media install (inbound offers via sdpUpdateUnsafe, answers via
+	// mediaUpdateUnsafe/initRTPSessionUnsafe); queried via IsRemoteHeld.
 	remoteHeld bool
 
 	closed bool
@@ -224,6 +225,22 @@ func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media
 	d.rtpSession = rtpSess
 	d.RTPPacketReader = media.NewRTPPacketReaderSession(rtpSess)
 	d.RTPPacketWriter = media.NewRTPPacketWriterSession(rtpSess)
+	d.updateRemoteHeldUnsafe()
+}
+
+// updateRemoteHeldUnsafe refreshes the remote-held flag from the current
+// media session's negotiated direction. Callers must hold d.mu.
+// Our own Hold/Unhold install through mediaUpdateUnsafe and negotiate
+// sendonly/sendrecv, so they never trip the flag; a peer answering our
+// sendrecv offer with sendonly negotiates to recvonly here and correctly
+// marks us held.
+func (d *DialogMedia) updateRemoteHeldUnsafe() {
+	if d.mediaSession == nil {
+		d.remoteHeld = false
+		return
+	}
+	dir := d.mediaSession.NegotiatedDirection()
+	d.remoteHeld = dir == sdp.ModeRecvonly || dir == sdp.ModeInactive
 }
 
 func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
@@ -347,17 +364,24 @@ func (d *DialogMedia) sdpUpdateUnsafe(remoteSDP []byte) error {
 	if err := d.replaceRTPSessionUnsafe(msess); err != nil {
 		return err
 	}
-	// Every inbound SDP funnels here. Negotiated recvonly/inactive means the
+	// Every inbound offer funnels here. Negotiated recvonly/inactive means the
 	// peer told us to stop sending (hold or one-way media). Our own Hold
 	// installs through mediaUpdateUnsafe and negotiates sendonly, so it can
 	// not trip this flag.
-	dir := msess.NegotiatedDirection()
-	d.remoteHeld = dir == sdp.ModeRecvonly || dir == sdp.ModeInactive
+	d.updateRemoteHeldUnsafe()
 	return nil
 }
 
 func (d *DialogMedia) mediaUpdateUnsafe(msess *media.MediaSession) error {
-	return d.replaceRTPSessionUnsafe(msess)
+	if err := d.replaceRTPSessionUnsafe(msess); err != nil {
+		return err
+	}
+	// Outgoing-offer answers land here (re-INVITE 2xx, initial INVITE 2xx).
+	// The same direction rule applies: our own Hold negotiates sendonly and
+	// stays unheld, while a peer answering sendonly to our sendrecv offer
+	// negotiates to recvonly and marks us held.
+	d.updateRemoteHeldUnsafe()
+	return nil
 }
 
 // replaceRTPSessionUnsafe replaces the RTP session after the old monitor has
@@ -784,9 +808,10 @@ func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereo
 
 // IsRemoteHeld reports whether the negotiated media direction currently
 // prevents us from sending — the remote peer put us on hold or set one-way
-// media. It is updated on inbound re-INVITEs (and early-media SDP); our own
-// Hold/Unhold do not change it. Pair with WithOnMediaUpdate to react to
-// remote hold/unhold from application code.
+// media. It is updated on every media install (inbound re-INVITE offers and
+// answers to our own offers, including the initial INVITE answer); our own
+// Hold/Unhold negotiate sendonly/sendrecv and do not change it. Pair with
+// WithOnMediaUpdate to react to remote hold/unhold from application code.
 func (d *DialogMedia) IsRemoteHeld() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

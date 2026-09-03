@@ -464,6 +464,7 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 			if err := sess.RemoteSDP(body); err != nil {
 				return err
 			}
+			d.updateRemoteHeldUnsafe()
 
 			// Finalize session
 			if err := sess.Finalize(); err != nil {
@@ -759,9 +760,10 @@ func (d *DialogServerSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 // selects the hold music started automatically after the re-INVITE succeeds
 // (falling back to MediaConfig.MusicOnHold); other media overrides are not consumed.
 //
-// The automatic music stops on Unhold, Stop, or ctx cancellation; when the
-// dialog-level default is unset (no MusicOnHold configured anywhere) Hold
-// behaves as before and plays nothing.
+// The automatic music runs detached from the Hold call's context (which
+// typically carries the re-INVITE timeout) until Unhold, Stop/StopMusicOnHold,
+// or dialog Close; when the dialog-level default is unset (no MusicOnHold
+// configured anywhere) Hold behaves as before and plays nothing.
 func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts)
 	if err != nil {

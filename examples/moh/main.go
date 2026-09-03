@@ -22,7 +22,7 @@ import (
 //
 // Run with:
 //
-//	diago-go run ./examples/moh
+//	go run ./examples/moh
 //
 // Dial:
 //

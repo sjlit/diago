@@ -492,10 +492,11 @@ not capture a `*media.MediaSession`; it resolves the writer and codec on
 every iteration through `audioWriterProps` (§4). A re-INVITE that changes the
 negotiated codec is picked up on the next frame by re-rendering the tone at
 the new sample rate — a `Tone` needs no resampler, unlike recorded sources.
-This is also why a `MediaSession` getter (`NegotiatedDirection`) is exposed:
-the loop queries it at startup and warns when the peer put us on hold
-(recvonly/inactive negotiated), in which case the RTP direction gate drops
-the audio. The loop keeps running so an unhold on either side resumes
+The tone restarts from its first segment on such a switch (phase is not
+preserved). This is also why a `MediaSession` getter (`NegotiatedDirection`)
+is exposed: the loop queries it at startup and warns when the peer put us on
+hold (recvonly/inactive negotiated), in which case the RTP direction gate
+drops the audio. The loop keeps running so an unhold on either side resumes
 audibly without a restart.
 
 **Write-gate cooperation.** The loop writes through the same `audioWriter`
@@ -507,20 +508,24 @@ without waiting on it, because the loop takes `d.mu` per frame — the loop
 self-clears `d.moh` on exit).
 
 **Best-effort auto start/stop on Hold/Unhold.** `Hold` starts hold music
-automatically only after its re-INVITE succeeds. Failures are logged at warn
-and never surface as a `Hold` error (the re-INVITE already succeeded;
-returning an error would invite a retry straight into 491 glare). An active
-manual loop is left untouched. `Unhold` stops the loop `Hold` started
-automatically and only that one — manually started music is under the
-caller's `Stop`/ctx control.
+automatically only after its re-INVITE succeeds. The music lifetime is
+detached from the `Hold` call's context (which typically carries the
+re-INVITE timeout): it runs until `Unhold`, `Stop`/`StopMusicOnHold`, or
+dialog `Close`. Failures are logged at warn and never surface as a `Hold`
+error (the re-INVITE already succeeded; returning an error would invite a
+retry straight into 491 glare). An active manual loop is left untouched.
+`Unhold` stops the loop `Hold` started automatically and only that one —
+manually started music is under the caller's `Stop`/ctx control.
 
 **Remote-hold detection.** `DialogMedia.IsRemoteHeld()` reports whether the
-peer put us on hold (negotiated recvonly/inactive). It is set on inbound
-SDP — the funnelpoint of all `RemoteSDP` install paths — and never changes
-on our own `Hold`/`Unhold`. Combine with `WithOnMediaUpdate` to react to
-remote hold/unhold without polling. By RFC convention, the held peer is
-silent; an active MoH on a remote-held dialog is correct (the direction
-gate drops our audio until the peer unholds).
+peer put us on hold (negotiated recvonly/inactive). It is refreshed on every
+media install — inbound offer SDP (`sdpUpdateUnsafe`) and answers to our own
+offers (`mediaUpdateUnsafe`/`initRTPSessionUnsafe`, including the initial
+INVITE answer). Our own `Hold`/`Unhold` negotiate sendonly/sendrecv and never
+trip it. Combine with `WithOnMediaUpdate` to react to remote hold/unhold
+without polling. By RFC convention, the held peer is silent; an active MoH on
+a remote-held dialog is correct (the direction gate drops our audio until the
+peer unholds).
 
 **Bridge limitation.** The proxy media loop in `Bridge` resolves
 reader/writer once at `AddDialogSession` and exits on the first

@@ -68,7 +68,9 @@ type SignalMediaParams struct {
 	// MusicOnHold overrides the hold music consumed by Hold/Unhold. Non-nil
 	// is an explicit per-call choice: a tone with segments replaces the
 	// dialog-level default, a zero tone (no segments) disables music for the
-	// call. Nil means "no per-call change". Consumed by Hold only.
+	// call. Nil means "no per-call change". On Invite/Answer it is persisted
+	// as the dialog-level default (via signalMediaConfig); on Hold it applies
+	// to that hold only.
 	MusicOnHold *audio.Tone
 
 	// MediaSession allows passing a fully custom/pre-created media session.
