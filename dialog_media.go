@@ -1024,7 +1024,27 @@ type DTMFReader struct {
 	// interrupts; the pointer never changes across media updates
 	packetReader *media.RTPPacketReader
 	dtmfReader   *media.RTPDtmfReader
-	onDTMF       func(dtmf rune) error
+
+	// mu guards onDTMF: it is installed by OnDTMF/Listen/ListenContext on
+	// the application/media goroutine and read by deliverDTMF on SIP
+	// transaction goroutines (see dtmf_info.go), so plain access races.
+	mu     sync.Mutex
+	onDTMF func(dtmf rune) error
+}
+
+// setOnDTMF installs the DTMF callback. Safe from any goroutine.
+func (d *DTMFReader) setOnDTMF(onDTMF func(dtmf rune) error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.onDTMF = onDTMF
+}
+
+// getOnDTMF returns the installed DTMF callback (nil when unset). Safe from
+// any goroutine.
+func (d *DTMFReader) getOnDTMF() func(dtmf rune) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.onDTMF
 }
 
 // dtmfCodec resolves the negotiated telephone-event codec. DTMF payload type
@@ -1093,10 +1113,11 @@ func (m *DialogMedia) deliverDTMF(dtmf rune, dur time.Duration) {
 		return
 	}
 	for _, r := range readers {
-		if r.onDTMF == nil {
+		fn := r.getOnDTMF()
+		if fn == nil {
 			continue
 		}
-		if err := r.onDTMF(dtmf); err != nil {
+		if err := fn(dtmf); err != nil {
 			slog.Error("DTMF callback failed on SIP INFO DTMF", "error", err)
 		}
 	}
@@ -1107,7 +1128,7 @@ func (m *DialogMedia) deliverDTMF(dtmf rune, dur time.Duration) {
 //
 // Deprecated: Use ListenContext with a context deadline.
 func (d *DTMFReader) Listen(onDTMF func(dtmf rune) error, dur time.Duration) error {
-	d.onDTMF = onDTMF
+	d.setOnDTMF(onDTMF)
 	buf := make([]byte, media.RTPBufSize)
 	for {
 		if _, err := d.readDeadline(buf, dur); err != nil {
@@ -1127,7 +1148,7 @@ func (d *DTMFReader) Listen(onDTMF func(dtmf rune) error, dur time.Duration) err
 // Unlike the deprecated Listen(dur), the dialog reader is not touched with
 // deadlines: pauses and other components do not terminate the listen.
 func (d *DTMFReader) ListenContext(ctx context.Context, onDTMF func(dtmf rune) error) error {
-	d.onDTMF = onDTMF
+	d.setOnDTMF(onDTMF)
 	buf := make([]byte, media.RTPBufSize)
 	if d.packetReader != nil {
 		disarm := d.packetReader.ArmReadInterrupt(ctx)
@@ -1168,7 +1189,7 @@ func (d *DTMFReader) readDeadline(buf []byte, dur time.Duration) (n int, err err
 
 // OnDTMF must be called before audio reading
 func (d *DTMFReader) OnDTMF(onDTMF func(dtmf rune) error) {
-	d.onDTMF = onDTMF
+	d.setOnDTMF(onDTMF)
 }
 
 // Read exposes io.Reader that can be used as AudioReader
@@ -1181,8 +1202,12 @@ func (d *DTMFReader) Read(buf []byte) (n int, err error) {
 	}
 
 	if dtmf, ok := dtmfReader.ReadDTMF(); ok {
-		if err := d.onDTMF(dtmf); err != nil {
-			return n, err
+		// The callback is optional: pure audio consumers may Read without
+		// ever installing one, so a nil callback skips instead of panicking.
+		if fn := d.getOnDTMF(); fn != nil {
+			if err := fn(dtmf); err != nil {
+				return n, err
+			}
 		}
 	}
 	return n, nil

@@ -74,7 +74,10 @@ func (d *DialogServerSession) ToUser() string {
 //
 // On the first call the INVITE transaction is answered 401 Unauthorized with a
 // WWW-Authenticate challenge and a non-nil error is returned; the caller must
-// re-INVITE with an Authorization header. Successful validation sends no
+// re-INVITE with an Authorization header. Failed validation is answered the
+// same way inside the transaction (401 carrying a fresh challenge for bad
+// credentials or unknown/expired nonces, 400/403 for malformed credentials)
+// and also returns a non-nil error. Successful validation sends no
 // response - dialog processing (Trying, Ringing, Answer) continues normally.
 func (d *DialogServerSession) Authorize(s *DigestAuthServer, auth DigestAuth) error {
 	return s.AuthorizeDialog(d, auth)

@@ -235,3 +235,123 @@ func TestDigestAuthorizeDialogSends401(t *testing.T) {
 		t.Fatal("first Authorize must fail with 401 challenge")
 	}
 }
+
+func TestDigestAuthorizeDialogBadCredsWrites401(t *testing.T) {
+	inviteReq := newAuthInvite(t)
+	dialogUA := sipgo.DialogUA{
+		Client:     &sipgo.Client{},
+		ContactHDR: sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "tester", Host: "127.0.0.1", Port: 5060}},
+	}
+	tx := siptest.NewServerTxRecorder(inviteReq)
+	sess, err := dialogUA.ReadInvite(inviteReq, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &DialogServerSession{DialogServerSession: sess}
+
+	srv := NewDigestServer()
+	defer srv.Close()
+	auth := DigestAuth{Username: "alice", Password: "wonderland"}
+
+	// Challenge on the dialog's request, then answer it with a wrong password.
+	res, _ := srv.AuthorizeRequest(d.InviteRequest, auth)
+	chal, err := digest.ParseChallenge(res.GetHeader("WWW-Authenticate").Value())
+	if err != nil {
+		t.Fatal(err)
+	}
+	badCred, err := digest.Digest(chal, digest.Options{
+		Method:   d.InviteRequest.Method.String(),
+		URI:      d.InviteRequest.Recipient.Addr(),
+		Username: auth.Username,
+		Password: "wrong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.InviteRequest.RemoveHeader("Authorization")
+	d.InviteRequest.AppendHeader(sip.NewHeader("Authorization", badCred.String()))
+
+	// WriteResponse blocks until ACK/TimerH - run it in the background.
+	authDone := make(chan error, 1)
+	go func() { authDone <- d.Authorize(srv, auth) }()
+
+	// Give the Authorize goroutine time to answer the transaction. The read
+	// of tx.Result below happens only after <-authDone, which synchronizes
+	// with the Respond write; polling Result concurrently would race with
+	// the transaction FSM inside the siptest recorder.
+	time.Sleep(time.Second)
+
+	// Terminate so the blocked WriteResponse (waiting on ACK/TimerH) returns.
+	tx.Terminate()
+	if err := <-authDone; err == nil {
+		t.Fatal("Authorize with bad credentials must fail")
+	}
+
+	// The transaction must carry a 401 (provisional auto-Trying ignored).
+	var unauthorized *sip.Response
+	for _, r := range tx.Result() {
+		if r.StatusCode == sip.StatusUnauthorized {
+			unauthorized = r
+		}
+	}
+	if unauthorized == nil {
+		t.Fatalf("no 401 written to transaction for bad credentials, got %+v", tx.Result())
+	}
+	if h := unauthorized.GetHeader("WWW-Authenticate"); h == nil || !strings.Contains(h.Value(), "nonce=") {
+		t.Fatalf("bad-creds 401 must carry a fresh WWW-Authenticate challenge, got %v", unauthorized)
+	}
+}
+
+func TestDigestAuthBadCredsBurnsNonce(t *testing.T) {
+	srv := NewDigestServer()
+	defer srv.Close()
+
+	req := newAuthInvite(t)
+	auth := DigestAuth{Username: "alice", Password: "wonderland"}
+
+	res, _ := srv.AuthorizeRequest(req, auth)
+	chal, err := digest.ParseChallenge(res.GetHeader("WWW-Authenticate").Value())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	badCred, err := digest.Digest(chal, digest.Options{
+		Method:   req.Method.String(),
+		URI:      req.Recipient.Addr(),
+		Username: auth.Username,
+		Password: "wrong-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AppendHeader(sip.NewHeader("Authorization", badCred.String()))
+
+	res, err = srv.AuthorizeRequest(req, auth)
+	if err == nil {
+		t.Fatal("expected error for bad credentials")
+	}
+	if res.StatusCode != sip.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.StatusCode)
+	}
+	newChalHeader := res.GetHeader("WWW-Authenticate")
+	if newChalHeader == nil {
+		t.Fatal("bad-creds 401 must carry a fresh challenge for retry")
+	}
+	newChal, err := digest.ParseChallenge(newChalHeader.Value())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newChal.Nonce == chal.Nonce {
+		t.Fatal("bad-creds 401 must rotate the nonce")
+	}
+
+	// The burned nonce is single-use: replaying the same Authorization header
+	// must re-challenge instead of re-verifying.
+	res, err = srv.AuthorizeRequest(req, auth)
+	if err == nil {
+		t.Fatal("burned nonce must return error")
+	}
+	if res.StatusCode != sip.StatusUnauthorized {
+		t.Fatalf("expected 401 on burned-nonce replay, got %d", res.StatusCode)
+	}
+}

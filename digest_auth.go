@@ -102,7 +102,18 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 	}
 
 	if cred.Response != digCred.Response {
-		return sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil), ErrDigestAuthBadCreds
+		// Burn the presented nonce and answer with a fresh challenge: the
+		// client can retry in the normal way, and the old nonce cannot be
+		// reused for password guessing within its expiry window.
+		s.mu.Lock()
+		if stale, ok := s.cache[cred.Nonce]; ok {
+			delete(s.cache, cred.Nonce)
+			if stale.expireTimer != nil {
+				stale.expireTimer.Stop()
+			}
+		}
+		s.mu.Unlock()
+		return s.challenge(req, auth), ErrDigestAuthBadCreds
 	}
 
 	// Nonce is single-use: delete after successful auth to prevent replay
@@ -133,14 +144,16 @@ func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Res
 	res := sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil)
 	res.AppendHeader(sip.NewHeader("WWW-Authenticate", e.Challenge.String()))
 
-	s.mu.Lock()
-	s.cache[nonce] = e
-	s.mu.Unlock()
+	// Arm the expiry before publishing: AuthorizeRequest may load the entry
+	// (and stop its timer) on another goroutine as soon as it is visible.
 	e.expireTimer = time.AfterFunc(auth.expire(), func() {
 		s.mu.Lock()
 		delete(s.cache, nonce)
 		s.mu.Unlock()
 	})
+	s.mu.Lock()
+	s.cache[nonce] = e
+	s.mu.Unlock()
 
 	return res
 }
@@ -149,8 +162,15 @@ func (s *DigestAuthServer) AuthorizeDialog(d *DialogServerSession, auth DigestAu
 	// https://www.rfc-editor.org/rfc/rfc2617#page-6
 	req := d.InviteRequest
 	res, err := s.AuthorizeRequest(req, auth)
-	if err == nil && res.StatusCode != 200 {
-		err = fmt.Errorf("not authorized")
+	if res != nil && res.StatusCode != sip.StatusOK {
+		// Every non-2xx outcome must terminate the INVITE transaction here:
+		// the initial challenge (err == nil), bad credentials, unknown or
+		// expired nonces (fresh challenge), malformed credentials (400) and
+		// digest errors (403). Without the write the caller hangs until the
+		// framework falls through to Hangup and answers 480 instead.
+		if err == nil {
+			err = fmt.Errorf("not authorized")
+		}
 		return errors.Join(err, d.WriteResponse(res))
 	}
 	return errors.Join(err, nil)
