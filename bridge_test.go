@@ -131,7 +131,7 @@ func TestIntegrationBridging(t *testing.T) {
 			return
 		}
 
-		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.200", Port: 5090}, &bridge)
+		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: 5091}, &bridge)
 		if err != nil {
 			t.Log("Dialing failed", err)
 			return
@@ -161,8 +161,8 @@ func TestIntegrationBridging(t *testing.T) {
 		dg := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
-				BindHost:  "127.0.0.200",
-				BindPort:  5090,
+				BindHost:  "127.0.0.1",
+				BindPort:  5091,
 			},
 		))
 

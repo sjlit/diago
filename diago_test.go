@@ -213,7 +213,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
 				Transport:    "udp",
-				BindHost:     "127.0.0.111",
+				BindHost:     "127.0.0.1",
 				BindPort:     15060,
 				ExternalHost: "1.2.3.4",
 			},
@@ -228,12 +228,12 @@ func TestDiagoTransportConfs(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
 				Transport:    "udp",
-				BindHost:     "127.0.0.111",
+				BindHost:     "127.0.0.1",
 				BindPort:     15060,
 				ExternalHost: "myhost.pbx.com",
 			},
 			expectedContactHostPort: "myhost.pbx.com:15060",
-			expectedMediaHost:       "127.0.0.111", // Hosts are not resolved so it goes with bind
+			expectedMediaHost:       "127.0.0.1", // Hosts are not resolved so it goes with bind
 		}
 
 		doTest(tc)
@@ -243,7 +243,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
 				Transport:       "udp",
-				BindHost:        "127.0.0.111",
+				BindHost:        "127.0.0.1",
 				BindPort:        15060,
 				ExternalHost:    "myhost.pbx.com",
 				MediaExternalIP: net.IPv4(1, 2, 3, 4),
