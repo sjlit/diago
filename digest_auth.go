@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,26 @@ type DigestAuth struct {
 	Password string
 	Realm    string
 	Expire   time.Duration
+
+	// Algorithms are the digest hash algorithms advertised in the 401
+	// challenge (RFC 8760). One WWW-Authenticate challenge is issued per
+	// algorithm, each with its own nonce; the client picks one to respond
+	// with. Must be supported by github.com/icholy/digest: MD5, SHA-256,
+	// SHA-512, SHA-512-256. Defaults to MD5 when empty.
+	Algorithms []string
+}
+
+// algorithms normalizes the advertised algorithm list. Empty means MD5,
+// keeping RFC 2617-only clients working (pre-RFC 8760 default).
+func (a *DigestAuth) algorithms() []string {
+	if len(a.Algorithms) == 0 {
+		return []string{"MD5"}
+	}
+	algs := make([]string, 0, len(a.Algorithms))
+	for _, alg := range a.Algorithms {
+		algs = append(algs, strings.ToUpper(alg))
+	}
+	return algs
 }
 
 func (a *DigestAuth) expire() time.Duration {
@@ -126,36 +147,40 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 	return sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil), nil
 }
 
-// challenge issues a new nonce and builds a 401 carrying the WWW-Authenticate header
+// challenge issues a fresh nonce per advertised algorithm and builds a 401
+// carrying one WWW-Authenticate challenge per algorithm (RFC 8760)
 func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Response {
-	nonce, err := generateNonce()
-	if err != nil {
-		return sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil)
-	}
-
-	e := &digestChallengeEntry{
-		Challenge: digest.Challenge{
-			Realm: auth.Realm,
-			Nonce: nonce,
-			// Opaque:    "sipgo",
-			Algorithm: "MD5",
-		},
-	}
-
 	res := sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil)
-	res.AppendHeader(sip.NewHeader("WWW-Authenticate", e.Challenge.String()))
 
-	// Arm the expire timer before publishing the entry: any goroutine that
-	// later reads the entry from the cache (AuthorizeRequest, Close) must
-	// observe a non-nil expireTimer, otherwise it races on the field write.
-	e.expireTimer = time.AfterFunc(auth.expire(), func() {
+	for _, alg := range auth.algorithms() {
+		nonce, err := generateNonce()
+		if err != nil {
+			return sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil)
+		}
+
+		e := &digestChallengeEntry{
+			Challenge: digest.Challenge{
+				Realm: auth.Realm,
+				Nonce: nonce,
+				// Opaque:    "sipgo",
+				Algorithm: alg,
+			},
+		}
+
+		res.AppendHeader(sip.NewHeader("WWW-Authenticate", e.Challenge.String()))
+
+		// Arm the expire timer before publishing the entry: any goroutine that
+		// later reads the entry from the cache (AuthorizeRequest, Close) must
+		// observe a non-nil expireTimer, otherwise it races on the field write.
+		e.expireTimer = time.AfterFunc(auth.expire(), func() {
+			s.mu.Lock()
+			delete(s.cache, nonce)
+			s.mu.Unlock()
+		})
 		s.mu.Lock()
-		delete(s.cache, nonce)
+		s.cache[nonce] = e
 		s.mu.Unlock()
-	})
-	s.mu.Lock()
-	s.cache[nonce] = e
-	s.mu.Unlock()
+	}
 
 	return res
 }

@@ -294,7 +294,7 @@ func TestDigestAuthorizeDialogBadCredsWrites401(t *testing.T) {
 		Client:     &sipgo.Client{},
 		ContactHDR: sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "tester", Host: "127.0.0.1", Port: 5060}},
 	}
-	tx := siptest.NewServerTxRecorder(inviteReq)
+	tx := newSyncServerTxRecorder(inviteReq)
 	sess, err := dialogUA.ReadInvite(inviteReq, tx)
 	if err != nil {
 		t.Fatal(err)
@@ -405,5 +405,96 @@ func TestDigestAuthBadCredsBurnsNonce(t *testing.T) {
 	}
 	if res.StatusCode != sip.StatusUnauthorized {
 		t.Fatalf("expected 401 on burned-nonce replay, got %d", res.StatusCode)
+	}
+}
+
+// TestDigestAuthAlgorithmNegotiation: with Algorithms configured the 401 must
+// carry one challenge per algorithm (RFC 8760), each with its own nonce, and
+// the client must be able to complete the handshake against whichever
+// challenge it picks.
+func TestDigestAuthAlgorithmNegotiation(t *testing.T) {
+	srv := NewDigestServer()
+	defer srv.Close()
+
+	for _, pick := range []string{"SHA-256", "MD5"} {
+		req := newAuthInvite(t)
+		auth := DigestAuth{Username: "alice", Password: "wonderland", Algorithms: []string{"SHA-256", "MD5"}}
+
+		res, err := srv.AuthorizeRequest(req, auth)
+		if err != nil {
+			t.Fatalf("challenge returned error: %v", err)
+		}
+		if res.StatusCode != sip.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", res.StatusCode)
+		}
+		wwwAuths := res.GetHeaders("WWW-Authenticate")
+		if len(wwwAuths) != 2 {
+			t.Fatalf("expected 2 challenges (SHA-256, MD5), got %d", len(wwwAuths))
+		}
+
+		var chal *digest.Challenge
+		seen := make(map[string]string)
+		for _, h := range wwwAuths {
+			c, err := digest.ParseChallenge(h.Value())
+			if err != nil {
+				t.Fatalf("failed to parse challenge: %v", err)
+			}
+			if c.Algorithm != "SHA-256" && c.Algorithm != "MD5" {
+				t.Fatalf("unexpected advertised algorithm %q", c.Algorithm)
+			}
+			if other, ok := seen[c.Algorithm]; ok {
+				t.Fatalf("duplicate %s challenge (nonces %q and %q)", c.Algorithm, other, c.Nonce)
+			}
+			seen[c.Algorithm] = c.Nonce
+			if c.Algorithm == pick {
+				chal = c
+			}
+		}
+		if chal == nil {
+			t.Fatalf("no %s challenge advertised", pick)
+		}
+
+		cred, err := digest.Digest(chal, digest.Options{
+			Method:   req.Method.String(),
+			URI:      req.Recipient.Addr(),
+			Username: auth.Username,
+			Password: auth.Password,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AppendHeader(sip.NewHeader("Authorization", cred.String()))
+
+		res, err = srv.AuthorizeRequest(req, auth)
+		if err != nil {
+			t.Fatalf("authorize with %s challenge failed: %v", pick, err)
+		}
+		if res.StatusCode != sip.StatusOK {
+			t.Fatalf("expected 200 with %s, got %d", pick, res.StatusCode)
+		}
+	}
+}
+
+// TestDigestAuthDefaultSingleMD5Challenge: without Algorithms configured the
+// behavior stays backward compatible - a single MD5 challenge.
+func TestDigestAuthDefaultSingleMD5Challenge(t *testing.T) {
+	srv := NewDigestServer()
+	defer srv.Close()
+
+	req := newAuthInvite(t)
+	res, err := srv.AuthorizeRequest(req, DigestAuth{Username: "alice", Password: "wonderland"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wwwAuths := res.GetHeaders("WWW-Authenticate")
+	if len(wwwAuths) != 1 {
+		t.Fatalf("expected single default challenge, got %d", len(wwwAuths))
+	}
+	chal, err := digest.ParseChallenge(wwwAuths[0].Value())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chal.Algorithm != "MD5" {
+		t.Fatalf("expected default algorithm MD5, got %q", chal.Algorithm)
 	}
 }
