@@ -30,8 +30,9 @@ func srtpProfileString(p srtp.ProtectionProfile) string {
 	case srtp.ProtectionProfileNullHmacSha1_80:
 		return "NULL_HMAC_SHA1_80"
 	}
-	// TODO: this is still wrong
-	return strings.TrimPrefix("SRTP_", p.String())
+	// Fallback for profiles outside the switch: pion renders them as
+	// "SRTP_<name>" while SDES wants the bare name.
+	return strings.TrimPrefix(p.String(), "SRTP_")
 }
 
 func srtpProfileParse(alg string) srtp.ProtectionProfile {
