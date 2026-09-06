@@ -592,11 +592,17 @@ func (b *BridgeMix) mixLoop(rwStreams []*bridgePCMStream, poll bool) error {
 
 	if len(rwStreams) == 1 {
 		b.log.Debug("Only single stream in bridge, reading bufffers...")
-		// Just keep streaming
+		// Just keep streaming: drain and discard so the RTP flow (and RTCP
+		// stats) stays alive until the read fails. Accumulating the payload
+		// would grow unboundedly over a long call.
 		r := rwStreams[0]
 		if !poll {
-			_, err := media.ReadAll(r.r, media.RTPBufSize)
-			return err
+			buf := make([]byte, media.RTPBufSize)
+			for {
+				if _, err := r.r.Read(buf); err != nil {
+					return err
+				}
+			}
 		}
 
 		for {
@@ -683,7 +689,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 		firstDialogCodec = &p.Codec
 	}
 
-	if firstDialogCodec.SampleRate != p.Codec.SampleRate && firstDialogCodec.SampleDur != p.Codec.SampleDur {
+	if firstDialogCodec.SampleRate != p.Codec.SampleRate || firstDialogCodec.SampleDur != p.Codec.SampleDur {
 		return fmt.Errorf("Codec missmatch. Resampling or transcoding is not supported")
 	}
 
@@ -771,10 +777,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte, poll bool) (int, error) {
 	maxN := 0
 	// zero mixed buf
-	for i := 0; i < len(mixedBuf); i++ {
-		mixedBuf[i] = 0
-		// binary.LittleEndian.PutUint16(mixedBuf[i:], uint16(0))
-	}
+	clear(mixedBuf)
 
 	if !poll {
 		// If are not polling data then we need todo direct read

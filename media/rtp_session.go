@@ -90,6 +90,10 @@ type RTPReadStats struct {
 	IntervalFirstPktSeqNum    uint16
 	IntervalFirstPktSeqNumExt uint64
 	IntervalPacketsCount      uint16
+	// intervalStarted marks that IntervalFirst* hold a real sample. Sequence
+	// number 0 is a legal first packet, so the sentinel must not be the value
+	// itself - otherwise an interval opening at seq 0 re-arms every packet.
+	intervalStarted bool
 
 	PacketsCount uint64
 	OctetCount   uint64
@@ -354,7 +358,8 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 	stats.LastSequenceNumber = readPkt.SequenceNumber
 	// stats.clockRTPTimestamp+=
 
-	if stats.IntervalFirstPktSeqNum == 0 {
+	if !stats.intervalStarted {
+		stats.intervalStarted = true
 		stats.IntervalFirstPktSeqNum = readPkt.SequenceNumber
 		stats.IntervalFirstPktSeqNumExt = stats.lastSeq.ReadExtendedSeq()
 	}
@@ -670,6 +675,7 @@ func (s *RTPSession) writeRTCP(now time.Time) error {
 	s.readStats.IntervalFirstPktSeqNum = 0
 	s.readStats.IntervalFirstPktSeqNumExt = 0
 	s.readStats.IntervalPacketsCount = 0
+	s.readStats.intervalStarted = false
 
 	// Add interceptor
 	if s.onWriteRTCP != nil {

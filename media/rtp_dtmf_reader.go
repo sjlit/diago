@@ -63,6 +63,13 @@ func (w *RTPDtmfReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
 		DefaultLogger().Debug("Processing DTMF event", "ev", ev, "mbit", mbit)
 	}
 	if ev.EndOfEvent {
+		if mbit {
+			// RFC 4733 §3.6: a short event may fit a single packet carrying
+			// both the marker and end bit. There is no preceding start
+			// packet, so lastEv is empty here - complete it directly.
+			w.completeEvent(ev)
+			return
+		}
 		if w.lastEv.Duration == 0 {
 			// Ignore this packet if we had no lastEv set
 			// This can be also due to EndEvent retransmission
@@ -74,16 +81,7 @@ func (w *RTPDtmfReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
 			return
 		}
 
-		// More for PSTN check
-		// dur := ev.Duration - w.lastEv.Duration
-		// if dur <= 3*160 { // Expect at least ~50ms duration
-		// 	DefaultLogger().Debug("Received DTMF packet but short duration", "dur", dur)
-		// 	return
-		// }
-
-		w.dtmf = DTMFToRune(ev.Event)
-		w.dtmfEnd = true
-		w.lastEv = DTMFEvent{}
+		w.completeEvent(ev)
 		return
 	}
 
@@ -99,6 +97,17 @@ func (w *RTPDtmfReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
 
 	// New packet
 	w.lastEv = ev
+}
+
+// completeEvent surfaces the digit and clears the tracked start event.
+// Event codes above 15 are RFC 4733 line events (ex. flash), not DTMF keys.
+func (w *RTPDtmfReader) completeEvent(ev DTMFEvent) {
+	if ev.Event > 15 {
+		return
+	}
+	w.dtmf = DTMFToRune(ev.Event)
+	w.dtmfEnd = true
+	w.lastEv = DTMFEvent{}
 }
 
 func (w *RTPDtmfReader) ReadDTMF() (rune, bool) {

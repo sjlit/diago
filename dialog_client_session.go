@@ -743,6 +743,9 @@ type ReferClientOptions struct {
 }
 
 func (d *DialogClientSession) ReferOptions(ctx context.Context, referTo sip.Uri, opts ReferClientOptions) error {
+	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
+		return fmt.Errorf("can only be called on answered dialog")
+	}
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()
 	if opts.OnNotify != nil {

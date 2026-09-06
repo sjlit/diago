@@ -164,7 +164,7 @@ func (d *PCMDecoderWriter) Write(b []byte) (n int, err error) {
 
 	nn := 0
 	for nn < len(lpcm) {
-		n, err = d.Writer.Write(lpcm)
+		n, err = d.Writer.Write(lpcm[nn:])
 		if err != nil {
 			return 0, err
 		}

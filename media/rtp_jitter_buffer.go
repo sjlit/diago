@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	defaultRTPJitterBufferDelayPackets = 20
-	defaultRTPJitterBufferMaxPackets   = 40
+	defaultRTPJitterBufferDelayPackets = 3
+	defaultRTPJitterBufferMaxPackets   = 10
 )
 
 var rtpJitterDebug = envBool("JITTER_DEBUG")

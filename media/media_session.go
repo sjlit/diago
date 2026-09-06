@@ -1073,7 +1073,7 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 	m.ReadRTPFromAddr = from
 
 	// Handle NAT
-	if m.RTPNAT == 1 && from.String() != m.Raddr.String() {
+	if m.RTPNAT == 1 && !udpAddrEqual(from, &m.Raddr) {
 		// Moving this to RTP session could have simplify validation (sequence tracking), but for now here is more easier to maintain
 		func() {
 			// Make sure it is valid pkt
@@ -1170,7 +1170,7 @@ func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err erro
 		return 0, err
 	}
 
-	if m.RTPNAT == 1 && from.String() != m.rtcpRaddr.String() {
+	if m.RTPNAT == 1 && !udpAddrEqual(from, &m.rtcpRaddr) {
 		func() {
 			fromAddr, ok := from.(*net.UDPAddr)
 			if !ok {
@@ -1516,6 +1516,16 @@ func sdpIP(ip net.IP) string {
 		return "IP6"
 	}
 	return "IP4"
+}
+
+// udpAddrEqual compares without the string allocations of Addr.String() on
+// the per-packet NAT check path.
+func udpAddrEqual(a net.Addr, b *net.UDPAddr) bool {
+	ua, ok := a.(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	return ua.IP.Equal(b.IP) && ua.Port == b.Port && ua.Zone == b.Zone
 }
 
 // negotiateMediaDirection computes our local direction based on the remote SDP offer/answer

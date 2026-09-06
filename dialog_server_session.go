@@ -7,16 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	mrand "math/rand/v2"
 	"strconv"
 	"sync/atomic"
 	"time"
 
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/media/sdp"
 )
 
 type OnReferDialogFunc func(referDialog *DialogClientSession) error
@@ -136,7 +135,7 @@ func (d *DialogServerSession) Trying(opts ...SignalOption) error {
 
 // Progress sends 100 trying.
 //
-// Deprecated: Use Trying. It will change behavior to 183 Sesion Progress in future releases
+// Deprecated: Use Trying. It will change behavior to 183 Session Progress in future releases
 func (d *DialogServerSession) Progress() error {
 	return d.Trying()
 }
@@ -469,9 +468,10 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 			}
 			d.updateRemoteHeldUnsafe()
 
-			// Finalize session
+			// Finalize session. A failed finalize (ex. DTLS handshake) must
+			// surface: proceeding with dead media is worse than hanging up.
 			if err := sess.Finalize(); err != nil {
-				return nil
+				return err
 			}
 		}
 		return nil
@@ -500,7 +500,7 @@ func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) 
 	if state >= sip.DialogStateConfirmed {
 		return d.byeSignal(ctx, params)
 	}
-	return d.respondSignal(sip.StatusTemporarilyUnavailable, "Temporarly unavailable", nil, params)
+	return d.respondSignal(sip.StatusTemporarilyUnavailable, "Temporarily Unavailable", nil, params)
 }
 
 // ReInvite sends a re-INVITE with the current media session.
@@ -699,6 +699,9 @@ type ReferServerOptions struct {
 }
 
 func (d *DialogServerSession) ReferOptions(ctx context.Context, referTo sip.Uri, opts ReferServerOptions) error {
+	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
+		return fmt.Errorf("can only be called on answered dialog")
+	}
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()
 	if opts.OnNotify != nil {
@@ -744,7 +747,7 @@ func (d *DialogServerSession) handleReInvite(req *sip.Request, tx sip.ServerTran
 			//    second INVITE and MUST include a Retry-After header field with a
 			//    randomly chosen value of between 0 and 10 seconds.
 			res := sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil)
-			res.AppendHeader(sip.NewHeader("Retry-After", strconv.Itoa(rand.IntN(10))))
+			res.AppendHeader(sip.NewHeader("Retry-After", strconv.Itoa(mrand.IntN(10))))
 			return tx.Respond(res)
 		}
 

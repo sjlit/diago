@@ -256,7 +256,13 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 	}
 
 	if dg.server == nil {
-		dg.server, _ = sipgo.NewServer(ua, sipgo.WithServerLogger(dg.log))
+		srv, err := sipgo.NewServer(ua, sipgo.WithServerLogger(dg.log))
+		if err != nil {
+			// Only reachable with a broken UA handle; failing loudly beats a
+			// silently nil server that panics on the first request.
+			panic(fmt.Sprintf("diago: failed to create default sip server: %v", err))
+		}
+		dg.server = srv
 	}
 	server := dg.server
 
@@ -486,7 +492,9 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 }
 
 func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id string) error {
-	ctx := context.TODO()
+	// Cache lookups are in-memory and context-free today; Background only
+	// satisfies the interface.
+	ctx := context.Background()
 	// No Error means we have ID
 	s, err := dg.cache.server.DialogLoad(ctx, id)
 	if err != nil {
