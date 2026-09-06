@@ -1097,7 +1097,7 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 		}()
 	}
 
-	if m.mode == sdp.ModeSendonly {
+	if m.mode == sdp.ModeSendonly || m.mode == sdp.ModeInactive {
 		// We allow parsing of pkt but we indicate that this pkt should not be consumed
 		return 0, nil
 	}
@@ -1223,7 +1223,7 @@ func (m *MediaSession) ReadRTCPRawDeadline(buf []byte, t time.Time) (int, error)
 }
 
 func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
-	if m.mode == sdp.ModeRecvonly {
+	if m.mode == sdp.ModeRecvonly || m.mode == sdp.ModeInactive {
 		// We block here as we would violate our media direction
 		return nil
 	}
