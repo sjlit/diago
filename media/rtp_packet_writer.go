@@ -70,9 +70,8 @@ type RTPPacketWriter struct {
 	initTimestamp       uint32
 }
 
-// RTPPacketWriter packetize payload in RTP packet before passing on media session
+// RTPPacketWriter packetizes payload in RTP packet before passing on media session
 // Not having:
-// - random Timestamp
 // - allow different clock rate
 // - CSRC contribution source
 // - Silence detection and marker set
@@ -83,11 +82,13 @@ func NewRTPPacketWriter(writer RTPWriter, codec Codec) *RTPPacketWriter {
 		seqWriter: NewRTPSequencer(),
 		SSRC:      rand.Uint32(),
 		codec:     codec,
-		// initTimestamp: rand.Uint32(), // TODO random start timestamp
+		// RFC 3550 section 5.1: the initial timestamp SHOULD be random so
+		// streams are not guessable across calls.
+		initTimestamp: rand.Uint32(),
 		// MTU:         1500,
 
-		// TODO: CSRC CSRC is contribution source identifiers.
-		// This is set when media is passed trough mixer/translators and original SSRC wants to be preserverd
+		// CSRC is contribution source identifiers. It is set when media is
+		// passed trough mixer/translators and original SSRC wants to be preserved
 	}
 
 	w.nextTimestamp = w.initTimestamp
@@ -240,7 +241,8 @@ func (p *RTPPacketWriter) writeSamplesUnsafe(writer RTPWriter, payload []byte, s
 		PayloadType: payloadType,
 		// Timestamp should increase linear and monotonic for media clock
 		// Payload must be in same clock rate
-		// TODO: what about wrapp arround
+		// uint32 arithmetic intentionally wraps modulo 2^32, as RTP
+		// timestamps are defined to do (RFC 3550 section 5.1)
 		Timestamp:      p.nextTimestamp,
 		SequenceNumber: p.seqWriter.NextSeqNumber(),
 		SSRC:           p.SSRC,

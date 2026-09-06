@@ -93,6 +93,23 @@ func TestRTPWriterConcurrent(t *testing.T) {
 
 // Regression: Close must release the pacing timer (it used to fire forever
 // per call) and wake a Write parked on the clock instead of stranding it.
+func TestRTPPacketWriterRandomInitTimestamp(t *testing.T) {
+	rtpConn := bytes.NewBuffer([]byte{})
+	sess := fakeMediaSessionWriter(0, 1234, rtpConn)
+	rtpSession := NewRTPSession(sess)
+	rtpWriter := NewRTPPacketWriterSession(rtpSession)
+	// Release the pacing clock: this test only inspects the first packet
+	require.NoError(t, rtpWriter.Close())
+
+	payload := make([]byte, 160)
+	_, err := rtpWriter.Write(payload)
+	require.NoError(t, err)
+
+	// First packet carries the random initial timestamp and the start marker
+	require.Equal(t, rtpWriter.InitTimestamp(), rtpWriter.PacketHeader.Timestamp)
+	require.True(t, rtpWriter.PacketHeader.Marker)
+}
+
 func TestRTPPacketWriterCloseReleasesClock(t *testing.T) {
 	newWriter := func() *RTPPacketWriter {
 		sess := fakeMediaSessionWriter(0, 1234, bytes.NewBuffer([]byte{}))
