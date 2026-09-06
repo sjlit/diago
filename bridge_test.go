@@ -131,7 +131,7 @@ func TestIntegrationBridging(t *testing.T) {
 			return
 		}
 
-		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: 5091}, &bridge)
+		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: 5091}, bridge)
 		if err != nil {
 			t.Log("Dialing failed", err)
 			return

@@ -73,7 +73,7 @@ func BridgeCall(d *diago.Diago, inDialog *diago.DialogServerSession, recipient s
 		return err
 	}
 
-	outDialog, err := d.InviteBridge(ctx, recipient, &bridge)
+	outDialog, err := d.InviteBridge(ctx, recipient, bridge)
 	if err != nil {
 		return err
 	}

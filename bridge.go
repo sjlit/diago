@@ -40,6 +40,10 @@ type Bridge struct {
 	// This gives high performance but you can not attach any pipeline in media processing
 	// RTPpass bool
 
+	// dialogs and Originator are guarded by mu: AddDialogSession may be called
+	// while a previous proxyMedia goroutine is still reading the list, and
+	// ProxyMediaControl's stop iterates it from another goroutine.
+	mu      sync.Mutex
 	dialogs []DialogSession
 
 	// minDialogs is just helper flag when to start proxy
@@ -54,10 +58,12 @@ var bridgeReadPool = sync.Pool{
 }
 
 // NewBridge creates bridge with default settings.
-func NewBridge() Bridge {
+// The bridge state (dialog list, originator) is guarded internally, so the
+// pointer must be used: methods are not safe to call on a copied value.
+func NewBridge() *Bridge {
 	b := Bridge{}
 	b.Init(media.DefaultLogger())
-	return b
+	return &b
 }
 
 func (b *Bridge) Init(log *slog.Logger) {
@@ -76,11 +82,16 @@ func (b *Bridge) Init(log *slog.Logger) {
 // Deprecated: Not synchronized with bridge state and not used by the library;
 // keep track of the sessions you added yourself.
 func (b *Bridge) GetDialogs() []DialogSession {
-	return b.dialogs
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.dialogs)
 }
 
 func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Check can this dialog be added to bridge. NO TRANSCODING
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if b.Originator != nil {
 		// This may look ugly but it is safe way of reading
 		origM := b.Originator.Media()
@@ -150,7 +161,10 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 //
 // Experimental
 func (b *Bridge) ProxyMedia() error {
-	if len(b.dialogs) < 2 {
+	b.mu.Lock()
+	n := len(b.dialogs)
+	b.mu.Unlock()
+	if n < 2 {
 		return fmt.Errorf("number of dialogs must equal to 2")
 	}
 
@@ -183,9 +197,13 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 		// Interrupt the proxy through the write gate: the in-flight write
 		// completes and the next write surfaces media.ErrWritePaused, which
 		// the proxy treats as a clean stop.
-		rels := make([]func(), 0, len(b.dialogs))
+		b.mu.Lock()
+		dialogs := slices.Clone(b.dialogs)
+		b.mu.Unlock()
+
+		rels := make([]func(), 0, len(dialogs))
 		var pauseErrs error
-		for _, d := range b.dialogs {
+		for _, d := range dialogs {
 			release, err := d.Media().PauseAudioWrite()
 			if err != nil {
 				pauseErrs = errors.Join(pauseErrs, err)
@@ -211,8 +229,17 @@ func (b *Bridge) proxyMedia() error {
 	var err error
 	log := b.log
 
-	m1 := b.dialogs[0].Media()
-	m2 := b.dialogs[1].Media()
+	// Snapshot the dialog list: AddDialogSession may append (and fail with
+	// "only support 2 party") while proxying is already running.
+	b.mu.Lock()
+	dialogs := slices.Clone(b.dialogs)
+	b.mu.Unlock()
+	if len(dialogs) < 2 {
+		return fmt.Errorf("number of dialogs must equal to 2")
+	}
+
+	m1 := dialogs[0].Media()
+	m2 := dialogs[1].Media()
 
 	// Lets for now simplify proxy and later optimize
 

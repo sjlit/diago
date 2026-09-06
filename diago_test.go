@@ -147,7 +147,7 @@ func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
 
 	bridge := NewBridge()
 	ctx := context.TODO()
-	d, err := dg.InviteBridge(ctx, sip.Uri{User: "alice", Host: "localhost"}, &bridge,
+	d, err := dg.InviteBridge(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge,
 		func(p *SignalParams) error {
 			runs.Add(1)
 			return nil

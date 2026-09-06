@@ -154,9 +154,12 @@ func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
 // TODO: multiple media descriptions.
 // Consider https://datatracker.ietf.org/doc/rfc3388/ for grouping multiple media
 //
-// NOTE: Not thread safe. IO must be funneled through a single reader and a
-// single writer per direction (diago's RTPPacketReader/RTPPacketWriter do
-// this); direct concurrent WriteRTP on one session is not supported.
+// NOTE: Not thread safe. Negotiation (RemoteSDP/LocalSDP/Finalize) must be
+// funneled through a single goroutine; IO goes through diago's
+// RTPPacketReader/RTPPacketWriter stable handles. Concurrent WriteRTP calls do
+// not corrupt each other's packet bytes (pooled per-call marshaling), but
+// ordering, sequence numbers and SSRC bookkeeping still assume a single
+// writer per direction.
 
 type MediaSession struct {
 	// SDP stuff
@@ -204,7 +207,6 @@ type MediaSession struct {
 	rtpConn      net.PacketConn
 	rtcpConn     net.PacketConn
 	rtcpRaddr    net.UDPAddr
-	writeRTPBuf  []byte
 
 	// SRTP
 	localCtxSRTP  *srtp.Context
@@ -1224,14 +1226,18 @@ func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
 		return nil
 	}
 
-	writeBuf := m.getWriteBuf()
+	// A pooled per-call buffer instead of a session-wide one: concurrent
+	// WriteRTP calls (user IO racing a pipeline component) would otherwise
+	// marshal over each other's packet bytes. Steady state hits the pool, so
+	// the hot path stays allocation free.
+	writeBuf := rtpBufPool.Get().([]byte)
+	defer rtpBufPool.Put(writeBuf)
 
 	n, err := p.MarshalTo(writeBuf)
 	if err != nil {
 		return fmt.Errorf("failed to marshal to write RTP buf: %w", err)
 	}
 	data := writeBuf[:n]
-	// data, err := p.Marshal()
 
 	if m.localCtxSRTP != nil {
 		data, err = m.localCtxSRTP.EncryptRTP(writeBuf, data, &p.Header)
@@ -1251,13 +1257,6 @@ func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
 
 	logRTPWrite(m, p)
 	return nil
-}
-
-func (m *MediaSession) getWriteBuf() []byte {
-	if m.writeRTPBuf == nil {
-		m.writeRTPBuf = make([]byte, RTPBufSize)
-	}
-	return m.writeRTPBuf
 }
 
 func (m *MediaSession) WriteRTPRaw(data []byte) (n int, err error) {
