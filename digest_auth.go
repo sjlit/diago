@@ -79,6 +79,12 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 
 	s.mu.Lock()
 	e, exists := s.cache[cred.Nonce]
+	// Nonce is single-use: consume it atomically with the lookup. Deleting
+	// only after a successful verification would leave a window where two
+	// concurrent requests replaying the same nonce both authenticate.
+	if exists {
+		delete(s.cache, cred.Nonce)
+	}
 	s.mu.Unlock()
 	if !exists {
 		// Unknown or expired nonce: re-challenge so the client can retry.
@@ -86,6 +92,7 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 		// so stale=true is not sent - clients treat a fresh challenge the same.
 		return s.challenge(req, auth), ErrDigestAuthNoChallenge
 	}
+	e.expireTimer.Stop()
 	chal := &e.Challenge
 
 	// Make digest and compare response
@@ -116,12 +123,6 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 		return s.challenge(req, auth), ErrDigestAuthBadCreds
 	}
 
-	// Nonce is single-use: delete after successful auth to prevent replay
-	s.mu.Lock()
-	delete(s.cache, cred.Nonce)
-	s.mu.Unlock()
-	e.expireTimer.Stop()
-
 	return sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil), nil
 }
 
@@ -144,8 +145,9 @@ func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Res
 	res := sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil)
 	res.AppendHeader(sip.NewHeader("WWW-Authenticate", e.Challenge.String()))
 
-	// Arm the expiry before publishing: AuthorizeRequest may load the entry
-	// (and stop its timer) on another goroutine as soon as it is visible.
+	// Arm the expire timer before publishing the entry: any goroutine that
+	// later reads the entry from the cache (AuthorizeRequest, Close) must
+	// observe a non-nil expireTimer, otherwise it races on the field write.
 	e.expireTimer = time.AfterFunc(auth.expire(), func() {
 		s.mu.Lock()
 		delete(s.cache, nonce)
