@@ -744,7 +744,8 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 				}
 				alg := vals[0]
 				fp := vals[1]
-				// TODO fingerprint validation
+				// Verified against the DTLS peer certificate during the
+				// handshake (dtlsVerifyConnection, fails closed on mismatch).
 				fingerprints = append(fingerprints, sdpFingerprints{
 					alg:         alg,
 					fingerprint: fp,

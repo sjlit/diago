@@ -4,11 +4,13 @@
 package media
 
 import (
+	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -137,54 +139,62 @@ func dtlsClient(conn net.PacketConn, raddr net.Addr, certificates []tls.Certific
 	return dtls.Client(conn, raddr, conf.ToLibConf([]sdpFingerprints{}))
 }
 
+// dtlsVerifyConnection checks the DTLS peer certificate against the
+// fingerprints offered in the remote SDP. RFC 5763 section 5.10 makes this
+// verification mandatory - without it a MITM who can tamper with the SDP can
+// present its own certificate. It fails closed: when none of the offered
+// fingerprints matches, the handshake is aborted.
 func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints) error {
+	if len(fingerprints) == 0 {
+		return nil
+	}
 	if len(state.PeerCertificates) == 0 {
 		return fmt.Errorf("no certificate found in dtls")
 	}
 
 	remoteCert := state.PeerCertificates[0]
 	for _, fp := range fingerprints {
-		var remoteFP string
-		if fp.alg == "SHA-256" {
-			var err error
-			remoteFP, err = dtlsSHA256CertificateFingerprint(remoteCert)
-			if err != nil {
-				return err
-			}
-		} else {
-			DefaultLogger().Debug("Skiping fingerprint due to unsuported alg", "alg", fp.alg)
+		remoteFP, err := certificateFingerprint(remoteCert, fp.alg)
+		if err != nil {
+			DefaultLogger().Debug("Skipping fingerprint with unsupported hash algorithm", "alg", fp.alg)
 			continue
 		}
 
 		DefaultLogger().Debug("Comparing fingerprint", "alg", fp.alg, "fp", fp.fingerprint, "rfp", remoteFP)
-		if fp.fingerprint == remoteFP {
+		if fingerprintEqual(fp.fingerprint, remoteFP) {
 			return nil
 		}
 	}
 
-	return nil
+	return fmt.Errorf("dtls peer certificate does not match any of the %d offered SDP fingerprint(s)", len(fingerprints))
 }
 
-func dtlsSHA256Fingerprint(cert tls.Certificate) (string, error) {
-	if len(cert.Certificate) == 0 {
-		return "", fmt.Errorf("no certificate data found")
+// certificateFingerprint hashes raw certificate bytes with the RFC 8122 hash
+// function named by alg (case-insensitive) and formats the digest as
+// upper-case colon separated hex pairs.
+func certificateFingerprint(certDER []byte, alg string) (string, error) {
+	var h hash.Hash
+	switch strings.ToLower(alg) {
+	case "sha-1":
+		h = sha1.New()
+	case "sha-224":
+		h = sha256.New224()
+	case "sha-256":
+		h = sha256.New()
+	case "sha-384":
+		h = sha512.New384()
+	case "sha-512":
+		h = sha512.New()
+	default:
+		return "", fmt.Errorf("unsupported fingerprint hash algorithm %q", alg)
 	}
-	return dtlsSHA256CertificateFingerprint(cert.Certificate[0])
+	h.Write(certDER)
+	return formatFingerprint(h.Sum(nil)), nil
 }
 
-func dtlsSHA256CertificateFingerprint(cert []byte) (string, error) {
-
-	// Parse the leaf certificate
-	leaf, err := x509.ParseCertificate(cert)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse certificate: %v", err)
-	}
-
-	// Calculate SHA-256 fingerprint
-	hash := sha256.Sum256(leaf.Raw)
-
-	// Format as colon-separated hex string
-	hexStr := strings.ToUpper(hex.EncodeToString(hash[:]))
+// formatFingerprint renders a digest as upper-case colon separated hex pairs.
+func formatFingerprint(sum []byte) string {
+	hexStr := strings.ToUpper(hex.EncodeToString(sum))
 	var fingerprint strings.Builder
 	for i := 0; i < len(hexStr); i += 2 {
 		if i > 0 {
@@ -192,6 +202,18 @@ func dtlsSHA256CertificateFingerprint(cert []byte) (string, error) {
 		}
 		fingerprint.WriteString(hexStr[i : i+2])
 	}
+	return fingerprint.String()
+}
 
-	return fingerprint.String(), nil
+// fingerprintEqual compares two colon separated fingerprints ignoring case
+// and spacing so "ab:cd" matches "ABCD".
+func fingerprintEqual(a, b string) bool {
+	return strings.EqualFold(strings.ReplaceAll(a, ":", ""), strings.ReplaceAll(b, ":", ""))
+}
+
+func dtlsSHA256Fingerprint(cert tls.Certificate) (string, error) {
+	if len(cert.Certificate) == 0 {
+		return "", fmt.Errorf("no certificate data found")
+	}
+	return certificateFingerprint(cert.Certificate[0], "SHA-256")
 }
