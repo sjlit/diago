@@ -163,3 +163,38 @@ func TestPCM16ToByte(t *testing.T) {
 	samplesByteToInt16(bytearr, outputPcm)
 	assert.Equal(t, pcm, outputPcm)
 }
+
+// shortChunkWriter accepts at most chunk bytes per Write call, exercising
+// partial-write handling of pipeline writers.
+type shortChunkWriter struct {
+	chunk int
+	buf   []byte
+}
+
+func (w *shortChunkWriter) Write(b []byte) (int, error) {
+	n := len(b)
+	if n > w.chunk {
+		n = w.chunk
+	}
+	w.buf = append(w.buf, b[:n]...)
+	return n, nil
+}
+
+func TestPCMDecoderWriterPartialWrite(t *testing.T) {
+	encoded := make([]byte, 160)
+	for i := range encoded {
+		encoded[i] = g711.EncodeUlawFrame(int16(i * 7))
+	}
+	want := make([]byte, 2*len(encoded))
+	DecodeUlawTo(want, encoded)
+
+	w := &shortChunkWriter{chunk: 100}
+	dec, err := NewPCMDecoderWriter(0, w)
+	require.NoError(t, err)
+	_, err = dec.Write(encoded)
+	require.NoError(t, err)
+
+	// A partial write must resume from the remainder, never re-send the
+	// whole chunk (which would duplicate audio).
+	assert.Equal(t, want, w.buf)
+}

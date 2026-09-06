@@ -57,3 +57,14 @@ func (r *clientTxRequester) Request(ctx context.Context, req *sip.Request) (sip.
 
 	return tx, nil
 }
+
+// canBindUDPAddr reports whether a UDP listener can bind addr. Some tests fork
+// media onto extra loopback IPs (ex. 127.0.0.2) which are absent on hosts
+// without a loopback alias (common macOS setup).
+func canBindUDPAddr(addr *net.UDPAddr) bool {
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return false
+	}
+	return conn.Close() == nil
+}

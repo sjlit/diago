@@ -466,6 +466,11 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 }
 
 func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
+	// The re-INVITE forks media onto a second loopback IP; hosts without a
+	// loopback alias (common macOS setups) cannot bind it.
+	if !canBindUDPAddr(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 2)}) {
+		t.Skip("127.0.0.2 is not bindable on this host (missing loopback alias)")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	beep, _ := audio.BeepLoadPCM(media.CodecAudioUlaw)

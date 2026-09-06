@@ -121,3 +121,40 @@ func TestDTMFReaderCases(t *testing.T) {
 	dtmf := testDTMFLoopSequence(&r, sequence)
 	assert.Equal(t, "1", dtmf)
 }
+
+func TestDTMFReaderSinglePacketEvent(t *testing.T) {
+	r := RTPDtmfReader{}
+
+	// RFC 4733 §3.6: a short event may fit one packet carrying both marker
+	// and end bit. It must surface a digit, and its retransmissions (same
+	// packet, no marker) must not duplicate it.
+	r.processDTMFEvent(DTMFEvent{Event: 5, EndOfEvent: true, Volume: 10, Duration: 80}, true)
+	dtmf, set := r.ReadDTMF()
+	assert.True(t, set)
+	assert.Equal(t, '5', dtmf)
+
+	r.processDTMFEvent(DTMFEvent{Event: 5, EndOfEvent: true, Volume: 10, Duration: 80}, false)
+	_, set = r.ReadDTMF()
+	assert.False(t, set, "end retransmission must not re-emit the digit")
+
+	// A next event still works after a single-packet one
+	r.processDTMFEvent(DTMFEvent{Event: 9, EndOfEvent: true, Volume: 10, Duration: 80}, true)
+	dtmf, set = r.ReadDTMF()
+	assert.True(t, set)
+	assert.Equal(t, '9', dtmf)
+}
+
+func TestDTMFReaderIgnoresLineEvents(t *testing.T) {
+	r := RTPDtmfReader{}
+
+	// RFC 4733 event codes above 15 are line events (ex. flash), not DTMF
+	// keys. Both single-packet and multi-packet shapes must be ignored.
+	r.processDTMFEvent(DTMFEvent{Event: 16, EndOfEvent: true, Volume: 10, Duration: 80}, true)
+	_, set := r.ReadDTMF()
+	assert.False(t, set)
+
+	r.processDTMFEvent(DTMFEvent{Event: 16, EndOfEvent: false, Volume: 10, Duration: 160}, true)
+	r.processDTMFEvent(DTMFEvent{Event: 16, EndOfEvent: true, Volume: 10, Duration: 320}, false)
+	_, set = r.ReadDTMF()
+	assert.False(t, set)
+}

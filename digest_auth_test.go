@@ -4,15 +4,67 @@
 package diago
 
 import (
+	"log/slog"
+	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/siptest"
 	"github.com/icholy/digest"
 )
+
+// syncServerTxRecorder is siptest.NewServerTxRecorder with a mutex: the INVITE
+// server transaction writes its 401 from the FSM goroutine while the test polls
+// Result, and siptest's connRecorder is not synchronized (data race).
+type syncServerTxRecorder struct {
+	*sip.ServerTx
+
+	mu   sync.Mutex
+	msgs []sip.Message
+}
+
+func newSyncServerTxRecorder(req *sip.Request) *syncServerTxRecorder {
+	key, err := sip.ServerTxKeyMake(req)
+	if err != nil {
+		panic(err)
+	}
+	r := &syncServerTxRecorder{}
+	stx := sip.NewServerTx(key, req, r, slog.Default())
+	if err := stx.Init(); err != nil {
+		panic(err)
+	}
+	r.ServerTx = stx
+	return r
+}
+
+func (r *syncServerTxRecorder) LocalAddr() net.Addr { return nil }
+
+func (r *syncServerTxRecorder) WriteMsg(msg sip.Message) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.msgs = append(r.msgs, msg)
+	return nil
+}
+
+func (r *syncServerTxRecorder) Ref(int) int { return 0 }
+
+func (r *syncServerTxRecorder) TryClose() (int, error) { return 0, nil }
+
+func (r *syncServerTxRecorder) Close() error { return nil }
+
+// Result returns recorded responses. Can be nil if none was written yet.
+func (r *syncServerTxRecorder) Result() []*sip.Response {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	resps := make([]*sip.Response, len(r.msgs))
+	for i, m := range r.msgs {
+		resps[i] = m.(*sip.Response).Clone()
+	}
+	return resps
+}
 
 func newAuthInvite(t *testing.T) *sip.Request {
 	t.Helper()
@@ -197,7 +249,7 @@ func TestDigestAuthorizeDialogSends401(t *testing.T) {
 		Client:     &sipgo.Client{},
 		ContactHDR: sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "tester", Host: "127.0.0.1", Port: 5060}},
 	}
-	tx := siptest.NewServerTxRecorder(inviteReq)
+	tx := newSyncServerTxRecorder(inviteReq)
 	sess, err := dialogUA.ReadInvite(inviteReq, tx)
 	if err != nil {
 		t.Fatal(err)

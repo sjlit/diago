@@ -324,6 +324,13 @@ func TestRTPJitterBufferOverflow(t *testing.T) {
 }
 
 func TestRTPJitterBufferRealtimeSimulation(t *testing.T) {
+	// This test requires the reader to sustain 50 packets/second wall clock.
+	// Race instrumentation multiplies read-path cost, so the playout queue
+	// drains and packets get declared lost - skip, not fix, under -race.
+	// The 300-packet realtime run also exceeds the -short mode budget.
+	if buildRace {
+		t.Skip("timing-sensitive realtime simulation cannot sustain pacing under the race detector")
+	}
 	if testing.Short() {
 		t.Skip("skipping realtime simulation (300 pkts x 20ms wall clock) in -short mode")
 	}
@@ -558,5 +565,15 @@ func realtimeJitterDelay(seq uint16) time.Duration {
 		return time.Duration(50+int(seq%8)*20) * time.Millisecond
 	default:
 		return time.Duration(100+int(seq%11)*30) * time.Millisecond
+	}
+}
+
+func TestRTPJitterBufferDefaults(t *testing.T) {
+	jb := NewRTPJitterBuffer(&sliceRTPReader{}, 20*time.Millisecond, RTPJitterBufferOptions{})
+	defer jb.Close()
+	// 3 packets x 20ms = 60ms playout delay by default. Larger defaults are a
+	// voice-quality hazard (a 20-packet default once shipped as 400ms).
+	if jb.delayPackets != 3 || jb.maxPackets != 10 {
+		t.Fatalf("unexpected jitter buffer defaults: delay=%d max=%d", jb.delayPackets, jb.maxPackets)
 	}
 }
