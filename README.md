@@ -1,7 +1,7 @@
 <img src="icons/diago-icon-text.svg" width="300" alt="DIAGO">
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/sjlit/diago)](https://goreportcard.com/report/github.com/sjlit/diago)
-![Coverage](https://img.shields.io/badge/coverage-61.1%25-blue)
+![Coverage](https://img.shields.io/badge/coverage-60.6%25-blue)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/sjlit/diago)
 
 Short of **dialog + GO**.  
