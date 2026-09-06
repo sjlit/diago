@@ -27,9 +27,44 @@ func (b *rtpBuffer) WriteRTP(p *rtp.Packet) error {
 func TestMonitorPCMReaderWriter(t *testing.T) {
 	codecR := media.CodecAudioAlaw
 
+	// Frames must carry distinct content, otherwise the gap assertions below
+	// cannot tell the pre-gap frames from the post-gap ones.
+	pcmSrc := make([]byte, 0, 4*codecR.Samples16())
+	for i := range 4 {
+		pcmSrc = append(pcmSrc, bytes.Repeat([]byte{byte('0' + i)}, codecR.Samples16())...)
+	}
 	audioAlawBuf := make([]byte, 4*160)
-	_, err := EncodeAlawTo(audioAlawBuf, bytes.Repeat([]byte("0123456789"), media.CodecAudioAlaw.Samples16()*4/10))
+	_, err := EncodeAlawTo(audioAlawBuf, pcmSrc)
 	require.NoError(t, err)
+
+	// expectRecordedGap pins the gap contract: the real frames are preserved
+	// in order (first two at the start, last two after the gap) and the gap
+	// is filled with whole silence frames. The silence count is inherently
+	// wall-clock dependent (scheduler jitter moves it by +-1 frame), so an
+	// exact total would flake.
+	expectRecordedGap := func(t *testing.T, recording *bytes.Buffer) {
+		t.Helper()
+		frameSize := codecR.Samples16()
+		pcm := make([]byte, 2*len(audioAlawBuf))
+		_, err := DecodeAlawTo(pcm, audioAlawBuf)
+		require.NoError(t, err)
+
+		got := recording.Bytes()
+		// Sleep(3*SampleDur) guarantees a gap above 2 frames, so at least one
+		// silence frame must be injected.
+		require.GreaterOrEqual(t, len(got), 5*frameSize, "4 data frames + at least 1 silence frame")
+
+		assert.Equal(t, pcm[:2*frameSize], got[:2*frameSize], "first two frames recorded unmodified")
+
+		tail := pcm[2*frameSize:]
+		idx := bytes.Index(got, tail)
+		require.Greater(t, idx, 2*frameSize, "last two frames recorded after the gap")
+		require.GreaterOrEqual(t, idx-2*frameSize, frameSize, "gap filled with at least one silence frame")
+		require.Zero(t, (idx-2*frameSize)%frameSize, "silence must be whole frames")
+		for _, b := range got[2*frameSize:idx] {
+			require.Zero(t, b, "gap must be filled with silence")
+		}
+	}
 
 	t.Run("Reader", func(t *testing.T) {
 		rtpBufferReader := bytes.NewBuffer(audioAlawBuf)
@@ -46,9 +81,8 @@ func TestMonitorPCMReaderWriter(t *testing.T) {
 
 		mon.Flush()
 
-		// 2 Frames, 2 Silence, 2 Frames
-		frameSize := codecR.Samples16()
-		assert.Equal(t, 2*frameSize+2*frameSize+2*frameSize, recording.Len())
+		// 2 Frames, silence, 2 Frames
+		expectRecordedGap(t, recording)
 	})
 
 	t.Run("Writer", func(t *testing.T) {
@@ -65,9 +99,8 @@ func TestMonitorPCMReaderWriter(t *testing.T) {
 
 		mon.Flush()
 
-		// 2 Frames, 2 Silence, 2 Frames
-		frameSize := codecR.Samples16()
-		assert.Equal(t, 2*frameSize+2*frameSize+2*frameSize, recording.Len())
+		// 2 Frames, silence, 2 Frames
+		expectRecordedGap(t, recording)
 	})
 
 }

@@ -5,12 +5,15 @@ package diago
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pion/rtp"
 	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
@@ -435,4 +438,186 @@ func TestIntegrationDialogServerPlayback(t *testing.T) {
 
 	// Timestamp should be offset more than previous diff by Sleep
 	assert.Greater(t, diffTS2, diffTS+5*media.CodecAudioUlaw.SampleTimestamp())
+}
+
+// TestIntegrationDialogServerAnswerLate covers the late-offer flow: INVITE
+// without SDP, 200 OK carrying our offer, ACK carrying the remote answer.
+// AnswerLate returns only after the ACK was processed, so media must be fully
+// negotiated (RemoteSDP applied) and monitoring started when it returns.
+func TestIntegrationDialogServerAnswerLate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	waitDialog := make(chan *DialogServerSession, 1)
+	answerLateErr := make(chan error, 1)
+	audioGot := make(chan int, 1)
+
+	{
+		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uas"))
+		defer ua.Close()
+
+		dg := NewDiago(ua, WithTransport(
+			Transport{
+				Transport: "udp",
+				BindHost:  "127.0.0.1",
+				BindPort:  15100,
+			},
+		))
+
+		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+			waitDialog <- d
+			// Blocks until the ACK is processed (RemoteSDP applied).
+			answerLateErr <- d.AnswerLate()
+
+			reader, err := d.AudioReader()
+			if err != nil {
+				t.Log("AudioReader failed", err)
+				return
+			}
+			go func() {
+				buf := make([]byte, media.RTPBufSize)
+				n, err := reader.Read(buf)
+				if err != nil {
+					return
+				}
+				audioGot <- n
+			}()
+			<-d.Context().Done()
+		})
+		require.NoError(t, err)
+	}
+
+	// Raw sipgo UAC: diago clients always send early offers, so the late
+	// offer flow needs INVITE without body and ACK with the answer.
+	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uac"))
+	defer ua.Close()
+
+	uacAddr := "127.0.0.1:15101"
+	srv, err := sipgo.NewServer(ua)
+	require.NoError(t, err)
+	srv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
+	})
+	go func() {
+		if err := srv.ListenAndServe(ctx, "udp", uacAddr); err != nil {
+			t.Log("UAC listener stopped", err)
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	cli, err := sipgo.NewClient(ua, sipgo.WithClientAddr(uacAddr))
+	require.NoError(t, err)
+
+	// Our RTP endpoint referenced by the answer SDP
+	rtpSock, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	defer rtpSock.Close()
+	rtpPort := rtpSock.LocalAddr().(*net.UDPAddr).Port
+
+	recipient := sip.Uri{User: "service", Host: "127.0.0.1", Port: 15100}
+	invite := sip.NewRequest(sip.INVITE, recipient)
+	invite.AppendHeader(sip.NewHeader("Contact", "<sip:127.0.0.1:15101>"))
+	require.NoError(t, sipgo.ClientRequestBuild(cli, invite))
+
+	tx, err := cli.TransactionRequest(ctx, invite)
+	require.NoError(t, err)
+
+	var res200 *sip.Response
+	deadline := time.After(10 * time.Second)
+	for res200 == nil {
+		select {
+		case res := <-tx.Responses():
+			if res.IsSuccess() {
+				res200 = res
+			}
+		case <-deadline:
+			t.Fatal("no 200 OK received for late offer")
+		}
+	}
+	require.NotEmpty(t, res200.Body(), "200 OK must carry our SDP offer")
+
+	// Target the exact connection line from the offer (it may be a non-loopback
+	// interface IP resolved for the media session).
+	offer := sdp.SessionDescription{}
+	require.NoError(t, sdp.Unmarshal(res200.Body(), &offer))
+	offerMd, err := offer.MediaDescription("audio")
+	require.NoError(t, err)
+	offerCi, err := offer.ConnectionInformationFor("audio")
+	require.NoError(t, err)
+
+	target := recipient
+	if res200.Contact() != nil {
+		target = res200.Contact().Address
+	}
+
+	answerSDP := fmt.Sprintf(`v=0
+o=- 77 2 IN IP4 127.0.0.1
+s=lateoffer-test
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio %d RTP/AVP 0 8 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-16
+a=sendrecv
+`, rtpPort)
+
+	// ACK carrying the answer (same construction as sipgo's newAckRequestUAC)
+	ack := sip.NewRequest(sip.ACK, target)
+	ack.SipVersion = invite.SipVersion
+	ack.AppendHeader(sip.HeaderClone(invite.From()))
+	ack.AppendHeader(sip.HeaderClone(res200.To()))
+	ack.AppendHeader(sip.HeaderClone(invite.CallID()))
+	ack.AppendHeader(sip.HeaderClone(invite.CSeq()))
+	cseq := ack.CSeq()
+	cseq.MethodName = sip.ACK
+	maxFwd := sip.MaxForwardsHeader(70)
+	ack.AppendHeader(&maxFwd)
+	ack.AppendHeader(sip.HeaderClone(invite.Contact()))
+	ack.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	ack.SetBody([]byte(answerSDP))
+	ack.SetTransport(invite.Transport())
+	require.NoError(t, cli.WriteRequest(ack))
+
+	select {
+	case err := <-answerLateErr:
+		require.NoError(t, err, "AnswerLate must succeed once the ACK answer is applied")
+	case <-time.After(10 * time.Second):
+		t.Fatal("AnswerLate did not return")
+	}
+
+	// Media must be live: stream RTP toward the negotiated address and
+	// expect the audio reader to receive the payload.
+	pkt := rtp.Packet{
+		Header:  rtp.Header{Version: 2, PayloadType: 0, SSRC: 0x123456},
+		Payload: make([]byte, 160),
+	}
+	udpAddr := &net.UDPAddr{IP: offerCi.IP, Port: offerMd.Port}
+	for i := 0; i < 20; i++ {
+		pkt.Header.SequenceNumber = uint16(i + 1)
+		pkt.Header.Timestamp = uint32(i+1) * 160
+		data, err := pkt.Marshal()
+		require.NoError(t, err)
+		_, err = rtpSock.WriteToUDP(data, udpAddr)
+		require.NoError(t, err)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	select {
+	case n := <-audioGot:
+		require.Equal(t, 160, n, "audio reader must receive RTP payload")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no RTP payload received through audio reader")
+	}
+
+	// Terminate with BYE; the handler and the wrapper hangup unwind cleanly.
+	bye := sip.NewRequest(sip.BYE, target)
+	bye.AppendHeader(sip.HeaderClone(invite.From()))
+	bye.AppendHeader(sip.HeaderClone(res200.To()))
+	bye.AppendHeader(sip.HeaderClone(invite.CallID()))
+	byeCSeq := sip.CSeqHeader{SeqNo: invite.CSeq().SeqNo + 1, MethodName: sip.BYE}
+	bye.AppendHeader(&byeCSeq)
+	bye.SetTransport(invite.Transport())
+	require.NoError(t, cli.WriteRequest(bye))
 }
