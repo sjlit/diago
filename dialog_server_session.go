@@ -448,34 +448,35 @@ func (d *DialogServerSession) AnswerLate(opts ...SignalOption) error {
 }
 
 func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction) error {
-	// Check do we have some session
-	err := func() error {
+	// Apply the late-offer SDP under the lock, resolving the media session
+	// for Finalize which must run outside it: Finalize performs the DTLS
+	// handshake, a network operation that would block Answer/Hangup and SIP
+	// handling on d.mu for its duration. Ordering is preserved - Finalize
+	// completes before the dialog is confirmed below.
+	sess, err := func() (*media.MediaSession, error) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
+
 		sess := d.mediaSession
 		if sess == nil {
-			return nil
+			return nil, nil
 		}
 		contentType := req.ContentType()
 		if contentType == nil {
-			return nil
+			return nil, nil
 		}
 		body := req.Body()
-		if body != nil && contentType.Value() == "application/sdp" {
-			// This is Late offer response
-			if err := sess.RemoteSDP(body); err != nil {
-				return err
-			}
-			d.updateRemoteHeldUnsafe()
-
-			// Finalize session. A failed finalize (ex. DTLS handshake) must
-			// surface: proceeding with dead media is worse than hanging up.
-			if err := sess.Finalize(); err != nil {
-				return err
-			}
+		if body == nil || contentType.Value() != "application/sdp" {
+			return nil, nil
 		}
-		return nil
+		// This is Late offer response
+		return sess, sess.RemoteSDP(body)
 	}()
+	if err == nil && sess != nil {
+		// Finalize session. A failed finalize (ex. DTLS handshake) must
+		// surface: proceeding with dead media is worse than hanging up.
+		err = sess.Finalize()
+	}
 	if err != nil {
 		e := d.Hangup(d.Context())
 		return errors.Join(err, e)
