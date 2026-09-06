@@ -7,11 +7,11 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago"
 	"github.com/sjlit/diago/examples"
 	"github.com/sjlit/diago/media"
 	"github.com/sjlit/diago/testdata"
-	"github.com/emiago/sipgo"
 )
 
 func main() {

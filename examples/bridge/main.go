@@ -11,10 +11,10 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/sjlit/diago"
-	"github.com/sjlit/diago/examples"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago"
+	"github.com/sjlit/diago/examples"
 )
 
 // Have receiver running:

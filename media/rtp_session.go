@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sjlit/diago/media/sdp"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"github.com/sjlit/diago/media/sdp"
 )
 
 // u32Saturate converts to uint32 saturating at the largest value instead of truncating

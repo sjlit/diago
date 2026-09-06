@@ -10,12 +10,12 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago"
 	"github.com/sjlit/diago/audio"
 	"github.com/sjlit/diago/examples"
 	"github.com/sjlit/diago/media"
-	"github.com/emiago/sipgo"
-	"github.com/emiago/sipgo/sip"
 )
 
 func main() {

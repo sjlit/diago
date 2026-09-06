@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago"
 	"github.com/sjlit/diago/examples"
-	"github.com/emiago/sipgo"
 )
 
 // Have receiver running:

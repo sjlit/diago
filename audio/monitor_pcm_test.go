@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sjlit/diago/media"
 	"github.com/pion/rtp"
+	"github.com/sjlit/diago/media"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +61,7 @@ func TestMonitorPCMReaderWriter(t *testing.T) {
 		require.Greater(t, idx, 2*frameSize, "last two frames recorded after the gap")
 		require.GreaterOrEqual(t, idx-2*frameSize, frameSize, "gap filled with at least one silence frame")
 		require.Zero(t, (idx-2*frameSize)%frameSize, "silence must be whole frames")
-		for _, b := range got[2*frameSize:idx] {
+		for _, b := range got[2*frameSize : idx] {
 			require.Zero(t, b, "gap must be filled with silence")
 		}
 	}

@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/media"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

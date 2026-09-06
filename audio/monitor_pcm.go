@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sjlit/diago/media"
 	"github.com/google/uuid"
+	"github.com/sjlit/diago/media"
 )
 
 var (

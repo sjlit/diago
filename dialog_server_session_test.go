@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	"github.com/pion/rtp"
 	"github.com/sjlit/diago/media"
 	"github.com/sjlit/diago/media/sdp"
-	"github.com/emiago/sipgo"
-	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

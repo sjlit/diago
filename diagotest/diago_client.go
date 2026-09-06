@@ -1,9 +1,9 @@
 package diagotest
 
 import (
-	"github.com/sjlit/diago"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago"
 )
 
 func NewDiagoClientTest(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Response) *diago.Diago {

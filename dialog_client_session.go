@@ -13,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/media/sdp"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/media/sdp"
 )
 
 var (
