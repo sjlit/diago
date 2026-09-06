@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -226,7 +227,12 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		},
 	))
 
-	bridge := NewBridgeMix()
+	// The serve handler runs on SIP transaction goroutines and must resolve
+	// the CURRENT bridge at use time: SoundProxied installs a fresh one.
+	// (Reassigning a plain closure variable here raced with in-flight
+	// handlers.)
+	var bridgePtr atomic.Pointer[BridgeMix]
+	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
 	err := tu.ServeBackground(ctx, func(in *DialogServerSession) {
 		defer func() { dialogExit <- in.ID }()
@@ -237,13 +243,13 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 		// Add us in bridge
 		t.Log("Adding into bridge", in.ID)
-		if err := bridge.AddDialogSession(in); err != nil {
+		if err := bridgePtr.Load().AddDialogSession(in); err != nil {
 			t.Log("Adding dialog in bridge failed", err)
 			return
 		}
 		defer func() {
 			t.Log("Removing from bridge", in.ID)
-			bridge.RemoveDialogSession(in)
+			bridgePtr.Load().RemoveDialogSession(in)
 		}()
 
 		<-in.Context().Done()
@@ -276,8 +282,8 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		for range len(dialogs) {
 			<-dialogExit
 		}
-		assert.Equal(t, 0, len(bridge.dialogs))
-		assert.EqualValues(t, 0, bridge.stateRead())
+		assert.Empty(t, bridgePtr.Load().DialogSessionsList())
+		assert.EqualValues(t, 0, bridgePtr.Load().stateRead())
 	})
 
 	t.Run("CheckMixing", func(t *testing.T) {
@@ -303,8 +309,9 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 		// Make number of calls that will have audio mixed in bridge
 		// wg := sync.WaitGroup{}
-		bridge = NewBridgeMix()
+		bridge := NewBridgeMix()
 		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
+		bridgePtr.Store(bridge)
 
 		dialog1, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
