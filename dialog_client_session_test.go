@@ -115,8 +115,12 @@ func TestIntegrationDialogClient(t *testing.T) {
 		err := phone.ServeBackground(context.TODO(), func(d *DialogServerSession) {})
 		require.NoError(t, err)
 
-		ports := phone.server.TransportLayer().ListenPorts("udp")
-		require.Len(t, ports, 1)
+		// Transport registration completes asynchronously after
+		// ServeBackground returns
+		require.Eventually(t, func() bool {
+			ports := phone.server.TransportLayer().ListenPorts("udp")
+			return len(ports) == 1
+		}, 2*time.Second, time.Millisecond)
 		// Hanguped
 		dialog, err := phone.Invite(context.TODO(), sip.Uri{User: "hanguper", Host: "127.0.0.1", Port: 5060})
 		require.NoError(t, err)

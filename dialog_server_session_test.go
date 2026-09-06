@@ -230,10 +230,24 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	reinvite.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	reinvite.SetBody(prunedOffer)
 
-	reinviteCtx, cancelReinvite := context.WithTimeout(ctx, 3*time.Second)
+	reinviteCtx, cancelReinvite := context.WithTimeout(ctx, 6*time.Second)
 	defer cancelReinvite()
-	res, err := dialog.Do(reinviteCtx, reinvite)
-	require.NoError(t, err)
+	// Under load the UAS may still consider the initial INVITE transaction
+	// pending when the re-INVITE lands and correctly rejects it with 491
+	// (RFC 3261 section 14.2). Retry briefly instead of failing the test.
+	var res *sip.Response
+	for {
+		res, err = dialog.Do(reinviteCtx, reinvite.Clone())
+		require.NoError(t, err)
+		if res.StatusCode != sip.StatusRequestPending {
+			break
+		}
+		select {
+		case <-reinviteCtx.Done():
+			t.Fatal("re-INVITE kept being rejected as request pending")
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 	require.Equal(t, sip.StatusOK, res.StatusCode)
 	require.NotNil(t, res.Contact())
 	contentType := res.ContentType()
