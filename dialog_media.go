@@ -160,6 +160,7 @@ func (d *DialogMedia) Close() error {
 	d.onClose = nil
 	m := d.mediaSession
 	rtpSess := d.rtpSession
+	w := d.RTPPacketWriter
 
 	// Cancel the hold-music loop, never wait for it: the loop takes d.mu per
 	// frame, so waiting under the lock would deadlock (moh.go lock order).
@@ -171,7 +172,7 @@ func (d *DialogMedia) Close() error {
 
 	d.mu.Unlock()
 
-	var e1, e2, e3 error
+	var e1, e2, e3, e4 error
 	if onClose != nil {
 		e1 = onClose()
 	}
@@ -180,10 +181,18 @@ func (d *DialogMedia) Close() error {
 		e2 = rtpSess.MonitorClose()
 	}
 
+	// Release the media clock before closing the conns: a Write parked on
+	// the ticker wakes via the Close wakeup and exits with the closed-conn
+	// error instead of stranding on a tick that will never come (and the
+	// pacing timer no longer leaks per call).
+	if w != nil {
+		e4 = w.Close()
+	}
+
 	if m != nil {
 		e3 = m.Close()
 	}
-	return errors.Join(e1, e2, e3)
+	return errors.Join(e1, e2, e3, e4)
 }
 
 func (d *DialogMedia) OnClose(f func() error) {

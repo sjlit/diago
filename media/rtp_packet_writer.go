@@ -45,6 +45,10 @@ type RTPPacketWriter struct {
 	mu          sync.RWMutex
 	writer      RTPWriter
 	clockTicker *time.Ticker
+	// clockStop is closed by Close to wake Writes parked on the clock
+	// (ticker.Stop does not unblock receivers). Created with the ticker,
+	// both guarded by mu.
+	clockStop chan struct{}
 
 	// After each write packet header is saved for more reading
 	PacketHeader rtp.Header
@@ -110,21 +114,37 @@ func (w *RTPPacketWriter) clockReset() {
 		w.clockTicker.Reset(cod.SampleDur)
 	} else {
 		w.clockTicker = time.NewTicker(cod.SampleDur)
+		w.clockStop = make(chan struct{})
 	}
+}
+
+// Close stops the media clock ticker, releasing the pacing timer when the
+// write pipeline is torn down. Idempotent.
+//
+// Writes parked waiting for the next tick are woken through the stop channel
+// so they observe the teardown (their packet write fails on the closed conn)
+// instead of waiting for a tick that will never come.
+func (w *RTPPacketWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.clockTicker == nil {
+		return nil
+	}
+	w.clockTicker.Stop()
+	w.clockTicker = nil
+	if w.clockStop != nil {
+		close(w.clockStop)
+		w.clockStop = nil
+	}
+	return nil
 }
 
 // ClockDisable stops the internal media clock ticker.
 //
 // Deprecated: Not part of the stable-handle contract; the clock is owned and
-// managed by the write pipeline. It will be removed.
+// managed by the write pipeline. Use Close. It will be removed.
 func (w *RTPPacketWriter) ClockDisable() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.clockTicker == nil {
-		return
-	}
-	w.clockTicker.Stop()
-	w.clockTicker = nil
+	_ = w.Close()
 }
 
 // ClockEnable restarts the internal media clock ticker.
@@ -182,13 +202,18 @@ func (p *RTPPacketWriter) Write(b []byte) (int, error) {
 	}
 	p.mu.Lock()
 	ticker := p.clockTicker
+	stopCh := p.clockStop
 	n, err := p.writeSamplesUnsafe(p.writer, b, p.sampleRateTimestamp, p.nextTimestamp == p.initTimestamp, p.codec.PayloadType)
 	p.lastSampleTime = time.Now()
 	p.mu.Unlock()
 
 	if ticker != nil {
-		// Pace the stream with sample duration outside of the lock
-		<-ticker.C
+		// Pace the stream with sample duration outside of the lock. The
+		// stop channel (closed by Close) interrupts the wait on teardown.
+		select {
+		case <-ticker.C:
+		case <-stopCh:
+		}
 	}
 	return n, err
 }

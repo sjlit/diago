@@ -91,6 +91,62 @@ func TestRTPWriterConcurrent(t *testing.T) {
 		"sequence delta=%d, want %d", delta, goroutines*writes)
 }
 
+// Regression: Close must release the pacing timer (it used to fire forever
+// per call) and wake a Write parked on the clock instead of stranding it.
+func TestRTPPacketWriterCloseReleasesClock(t *testing.T) {
+	newWriter := func() *RTPPacketWriter {
+		sess := fakeMediaSessionWriter(0, 1234, bytes.NewBuffer([]byte{}))
+		rtpSess := NewRTPSession(sess)
+		return NewRTPPacketWriterSession(rtpSess)
+	}
+
+	t.Run("stops pacing", func(t *testing.T) {
+		w := newWriter()
+		payload := make([]byte, 160)
+
+		// Paced write: waits for the next tick (20ms default pacing)
+		start := time.Now()
+		_, err := w.Write(payload)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, time.Since(start), w.codec.SampleDur, "write must be paced while the clock runs")
+
+		require.NoError(t, w.Close())
+
+		// After Close the wait is interrupted - no pacing anymore
+		start = time.Now()
+		_, err = w.Write(payload)
+		require.NoError(t, err)
+		require.Less(t, time.Since(start), w.codec.SampleDur, "clock must be released after Close")
+	})
+
+	t.Run("wakes parked write", func(t *testing.T) {
+		w := newWriter()
+		payload := make([]byte, 160)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = w.Write(payload)
+		}()
+
+		// Let the Write park on the clock, then tear down
+		time.Sleep(2 * time.Millisecond)
+		require.NoError(t, w.Close())
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Write still parked on the clock after Close")
+		}
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		w := newWriter()
+		require.NoError(t, w.Close())
+		require.NoError(t, w.Close())
+	})
+}
+
 func BenchmarkRTPPacketWriter(b *testing.B) {
 	reader, writer := io.Pipe()
 	session := fakeMediaSessionWriter(0, 1234, writer)
