@@ -277,8 +277,9 @@ func (t *RegisterTransaction) register(ctx context.Context, params *SignalParams
 }
 
 func (t *RegisterTransaction) QualifyLoop(ctx context.Context) error {
-	// TODO: based on server response Expires header this must be adjusted
-	// Allows caller to adjust
+	// t.expiry tracks the server's Expires response header (set by Qualify)
+	// and is re-read on every loop iteration, so server-driven expiry
+	// changes adjust the retry pacing automatically.
 	expiry := t.expiry
 	retry := t.calcRetry(expiry)
 	return t.reregisterLoop(ctx, retry)

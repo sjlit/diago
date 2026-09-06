@@ -107,7 +107,8 @@ func (sd SessionDescription) mediaDescriptionIdx(mediaType string) (MediaDescrip
 	}
 
 	fields := strings.Fields(v)
-	// TODO: is this really a must
+	// RFC 4566 section 5.7: m=<media> <port> <proto> <fmt> - all four
+	// fields are mandatory
 	if len(fields) < 4 {
 		return md, idx, fmt.Errorf("Not enough fields in media description")
 	}
