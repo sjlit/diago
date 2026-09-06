@@ -58,3 +58,73 @@ a=rtcp-mux
 	require.Equal(t, net.ParseIP("192.168.100.11").String(), ci.IP.String())
 
 }
+
+// A video line must not break audio selection, and the audio section must use
+// its own media-level c= (video listed first).
+func TestMediaDescriptionMultiMediaLine(t *testing.T) {
+	body := `v=0
+o=- 3905350750 3905350750 IN IP4 192.168.100.11
+s=test
+t=0 0
+m=video 40000 RTP/AVP 96
+c=IN IP4 192.168.100.20
+a=rtpmap:96 H264/90000
+m=audio 57797 RTP/AVP 0 8 101
+c=IN IP4 192.168.100.21
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:101 telephone-event/8000
+a=sendrecv
+`
+	sd := SessionDescription{}
+	require.NoError(t, Unmarshal([]byte(body), &sd))
+
+	md, err := sd.MediaDescription("audio")
+	require.NoError(t, err)
+	require.Equal(t, 57797, md.Port)
+
+	ci, err := sd.ConnectionInformationFor("audio")
+	require.NoError(t, err)
+	require.Equal(t, net.ParseIP("192.168.100.21").String(), ci.IP.String())
+}
+
+// An SDP without session-level c= carries the connection per media section.
+func TestConnectionInformationMediaLevelOnly(t *testing.T) {
+	body := `v=0
+o=- 3905350750 3905350750 IN IP4 192.168.100.11
+s=test
+t=0 0
+m=audio 57797 RTP/AVP 0 8
+c=IN IP4 192.168.100.11
+a=rtpmap:0 PCMU/8000
+a=sendrecv
+`
+	sd := SessionDescription{}
+	require.NoError(t, Unmarshal([]byte(body), &sd))
+
+	ci, err := sd.ConnectionInformationFor("audio")
+	require.NoError(t, err)
+	require.Equal(t, net.ParseIP("192.168.100.11").String(), ci.IP.String())
+}
+
+// A video-only media c= must not shadow the session-level c= for audio.
+func TestConnectionInformationSessionFallback(t *testing.T) {
+	body := `v=0
+o=- 3905350750 3905350750 IN IP4 192.168.100.11
+s=test
+t=0 0
+c=IN IP4 192.168.100.11
+m=audio 57797 RTP/AVP 0 8
+a=rtpmap:0 PCMU/8000
+a=sendrecv
+m=video 40000 RTP/AVP 96
+c=IN IP4 192.168.100.20
+a=rtpmap:96 H264/90000
+`
+	sd := SessionDescription{}
+	require.NoError(t, Unmarshal([]byte(body), &sd))
+
+	ci, err := sd.ConnectionInformationFor("audio")
+	require.NoError(t, err)
+	require.Equal(t, net.ParseIP("192.168.100.11").String(), ci.IP.String())
+}

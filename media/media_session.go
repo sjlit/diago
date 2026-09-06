@@ -665,7 +665,9 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		return fmt.Errorf("no supported codecs found")
 	}
 
-	ci, err := sd.ConnectionInformation()
+	// The connection line may be session level or carried inside the audio
+	// media section itself (some peers send no session-level c= at all).
+	ci, err := sd.ConnectionInformationFor("audio")
 	if err != nil {
 		return err
 	}

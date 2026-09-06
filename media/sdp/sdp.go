@@ -30,6 +30,12 @@ const (
 	ModeInactive string = "inactive"
 )
 
+// cSectionKey records, for every parsed c= line, how many m= lines preceded
+// it. It is not a legal SDP type (types are single characters), so parsed
+// input can never collide with it. Descriptions built manually without it
+// fall back to session-level-only connection lookups.
+const cSectionKey = "c_sections"
+
 type SessionDescription map[string][]string
 
 func (sd SessionDescription) Values(key string) []string {
@@ -68,14 +74,22 @@ func (m *MediaDescription) String() string {
 }
 
 func (sd SessionDescription) MediaDescription(mediaType string) (MediaDescription, error) {
+	md, _, err := sd.mediaDescriptionIdx(mediaType)
+	return md, err
+}
+
+// mediaDescriptionIdx returns the first media description of the given type
+// together with its index among all m= lines (its section number). SDPs with
+// several m= lines (audio + video, audio + image, ...) are accepted: the
+// section of the requested type is selected and the rest ignored. Multiple
+// lines of the requested type select the first one.
+func (sd SessionDescription) mediaDescriptionIdx(mediaType string) (MediaDescription, int, error) {
 	values := sd.Values("m")
 	md := MediaDescription{}
-	if len(values) > 1 {
-		return md, fmt.Errorf("more than 1 media line for type %q", mediaType)
-	}
 
 	var v string
-	for _, val := range values {
+	idx := -1
+	for i, val := range values {
 		ind := strings.Index(val, " ")
 		if ind < 1 {
 			continue
@@ -83,18 +97,19 @@ func (sd SessionDescription) MediaDescription(mediaType string) (MediaDescriptio
 		media := val[:ind]
 		if media == mediaType {
 			v = val
+			idx = i
 			break
 		}
 	}
 
 	if v == "" {
-		return md, fmt.Errorf("Media not found for %q", mediaType)
+		return md, idx, fmt.Errorf("Media not found for %q", mediaType)
 	}
 
 	fields := strings.Fields(v)
 	// TODO: is this really a must
 	if len(fields) < 4 {
-		return md, fmt.Errorf("Not enough fields in media description")
+		return md, idx, fmt.Errorf("Not enough fields in media description")
 	}
 
 	md.MediaType = fields[0]
@@ -108,7 +123,7 @@ func (sd SessionDescription) MediaDescription(mediaType string) (MediaDescriptio
 	md.Proto = fields[2]
 
 	md.Formats = fields[3:]
-	return md, nil
+	return md, idx, nil
 }
 
 // c=<nettype> <addrtype> <connection-address>
@@ -126,7 +141,53 @@ func (sd SessionDescription) ConnectionInformation() (ci ConnectionInformation, 
 	if v == "" {
 		return ci, fmt.Errorf("Connection information does not exists")
 	}
+	return parseConnectionInformation(v)
+}
+
+// ConnectionInformationFor returns the connection information that applies to
+// the first media description of the given type: the media-level c= line of
+// that media section when present (RFC 4566 §5.7: it overrides the session
+// level), otherwise the session-level c=. It fails when neither exists - an
+// SDP without session-level c= must carry one per media section.
+func (sd SessionDescription) ConnectionInformationFor(mediaType string) (ci ConnectionInformation, err error) {
+	_, idx, err := sd.mediaDescriptionIdx(mediaType)
+	if err != nil {
+		return ci, err
+	}
+
+	sections := sd.Values(cSectionKey)
+	if len(sections) == 0 {
+		// Manually built description: only session-level lookup is possible.
+		return sd.ConnectionInformation()
+	}
+
+	values := sd.Values("c")
+	// Media-level c= of this section: recorded after idx+1 m= lines were seen.
+	for i, s := range sections {
+		if i >= len(values) {
+			break
+		}
+		if n, _ := strconv.Atoi(s); n == idx+1 {
+			return parseConnectionInformation(values[i])
+		}
+	}
+	// Session-level c=: recorded before any m= line.
+	for i, s := range sections {
+		if i >= len(values) {
+			break
+		}
+		if n, _ := strconv.Atoi(s); n == 0 {
+			return parseConnectionInformation(values[i])
+		}
+	}
+	return ci, fmt.Errorf("Connection information does not exists for media %q", mediaType)
+}
+
+func parseConnectionInformation(v string) (ci ConnectionInformation, err error) {
 	fields := strings.Fields(v)
+	if len(fields) < 3 {
+		return ci, fmt.Errorf("sdp - malformed connection line c=%s", v)
+	}
 	ci.NetworkType = fields[0]
 	ci.AddressType = fields[1]
 	addr := strings.Split(fields[2], "/")
@@ -215,6 +276,9 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 	reader.Write(data)
 
 	sd := *sdptr
+	// mCount is the number of m= lines seen so far; it is the section number
+	// of the line being processed (0 = session level, before any m= line).
+	mCount := 0
 	for {
 		line, err := nextLine(reader)
 		if err == io.EOF && len(line) == 0 {
@@ -230,6 +294,14 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 			value := line[ind+1:]
 
 			sd[key] = append(sd[key], value)
+			switch key {
+			case "m":
+				mCount++
+			case "c":
+				// Remember in which section this c= line appeared, so
+				// media-scoped connection lines can be resolved.
+				sd[cSectionKey] = append(sd[cSectionKey], strconv.Itoa(mCount))
+			}
 		}
 
 		if err != nil {
