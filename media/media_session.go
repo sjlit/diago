@@ -1105,25 +1105,6 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 	return n, err
 }
 
-// return parsed rtp
-func (m *MediaSession) readRTPParsed() (rtp.Packet, error) {
-	p := rtp.Packet{}
-
-	buf := make([]byte, 1600)
-
-	n, err := m.ReadRTPRaw(buf)
-	if err != nil {
-		return p, err
-	}
-
-	if err := p.Unmarshal(buf[:n]); err != nil {
-		return p, err
-	}
-
-	logRTPRead(m, &m.Raddr, &p)
-	return p, err
-}
-
 // Deprecated
 // Will be replaced with readRTPDeadlineNoAlloc in next releases
 // func (m *MediaSession) ReadRTPDeadline(t time.Time) (rtp.Packet, error) {

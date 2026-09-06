@@ -403,14 +403,3 @@ func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, p
 
 	return nil
 }
-
-func getResponse(ctx context.Context, tx sip.ClientTransaction) (*sip.Response, error) {
-	select {
-	case <-tx.Done():
-		return nil, fmt.Errorf("transaction died")
-	case res := <-tx.Responses():
-		return res, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}

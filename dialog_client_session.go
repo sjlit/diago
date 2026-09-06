@@ -548,11 +548,6 @@ func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) err
 	return nil
 }
 
-// AckLate sends ACK with media. Use this in combination with late(delay) offer
-// func (d *DialogClientSession) AckLate(ctx context.Context) error {
-// 	return d.ack(ctx, d.mediaSession.LocalSDP())
-// }
-
 func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, body []byte, params *SignalParams) error {
 	ackRequest := sip.NewRequest(
 		sip.ACK,

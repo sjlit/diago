@@ -86,10 +86,17 @@ func BenchmarkReadRTP(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
+		// Inlined former readRTPParsed: this leg exists to measure the
+		// "return the packet" pattern against the "pass" legs below.
 		b.RunParallel(func(p *testing.PB) {
 			for p.Next() {
-				pkt, err := session.readRTPParsed()
+				buf := make([]byte, 1600)
+				n, err := session.ReadRTPRaw(buf)
 				if err != nil {
+					b.Fatal(err)
+				}
+				pkt := rtp.Packet{}
+				if err := pkt.Unmarshal(buf[:n]); err != nil {
 					b.Fatal(err)
 				}
 				if len(pkt.Payload) != 160 {
