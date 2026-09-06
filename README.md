@@ -2,7 +2,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/sjlit/diago)](https://goreportcard.com/report/github.com/sjlit/diago)
 ![Coverage](https://img.shields.io/badge/coverage-61.1%25-blue)
-![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/emiago/diago)
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/sjlit/diago)
 
 Short of **dialog + GO**.  
 **Library for building VOIP solutions in GO!**
