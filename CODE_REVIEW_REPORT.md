@@ -147,3 +147,34 @@
 3. #21 Bridge Remove/Close、#18 mediaSession 竞态族余下实例——生产稳定性；
 4. #39 opus 能力门控、#40 Hold 方向校验——行为完善；
 5. #46/#50/#41 余量——API 决策，随下一个大版本。
+
+---
+
+## 八、第三轮复审（2026-09-08，基线 `a15da67..1dab3a1`）
+
+复审对象：`refactor(api)!: unify per-call options, factories and dialog identity`（单提交，35 文件，+484/-442）。方法：通读全部 diff，重点核查 `reInviteExchange` 共享驱动的 client/server 行为一致性、事务级 SignalOption 的实际消费路径、`Refer`/`dialogRefer` 参数化改造、工厂重命名与 option 错误传播；验证手段含 build/vet/全量测试/-race、sipgo v1.4.3 源码交叉核对（`Request.Clone` 的 Destination 保留、`ReadInvite` 状态时序、`headers.Contact()` nil 语义）与 stash 反向验证。**结论：重构方向正确、行为保持良好，发现 2 个 P2、2 个 P3，已随本轮全部修复。**
+
+### 本轮修复（随复审提交）
+
+| 编号 | 优先级 | 位置 | 问题与修复 |
+|---|---|---|---|
+| R1 | P2 | `dialog_server_session.go` / `dialog_client_session.go` `Refer` | **未应答 dialog 上 Refer 由友好报错回归为 panic**。状态检查移入 `dialogRefer` 后，实参 `d.InviteResponse.Contact().Address` 在调用点先求值；server dialog 在首个响应前 `InviteResponse == nil`（sipgo 于 `WriteResponse` 才赋值），nil 解引用崩溃。修复：两个 Refer 恢复早期 Confirmed 守卫；新增 `TestDialogServerSessionReferBeforeAnswer`（已用 stash 反向验证：修复前 panic、修复后通过） |
+| R2 | P2 | `register_transaction.go` | **事务级 `WithRequestMutator` 被静默丢弃**，与 `Diago.Register` godoc 及 contracts.md 声明矛盾（WithContact/WithHeaders/WithAuthCredentials 均生效，唯独 mutator 无人消费）。修复：事务保存 mutator，`cloneOrigin()` 在每次从 Origin 克隆（initial Register、Qualify、Unregister）时先于 per-call 选项应用——per-call mutator 保持 last-chance 语义。补 `TestDiagoRegisterTransactionOptions`（含每次尝试生效、per-call 后置两条断言） |
+| R3 | P3 | `dialog_client_session.go:637/665`、`dialog_server_session.go:570` | **畸形 2xx（无 Contact）把 `remoteContactTarget` 覆盖为 nil**，remote target 静默回落到初始 Contact——而 `reInviteExchange` 自己已为此场景做 ACK 回退。修复：三处改为仅非 nil 时赋值 |
+| R4 | P3 | `diago_test.go` | 新增选项缺直接单测。补 `TestRegisterOptionValidation`（`WithOnReferNotify`/`WithOnRegistered` nil、`WithRegisterProxyHost` 空串校验）与事务级选项落盘断言（Expires/Allow/Contact/ProxyHost/OnRegistered） |
+| R5 | P4 | `moh_test.go`、`moh_integration_test.go`、`examples/moh/main.go` | 预存 gofmt 问题（注释对齐、缺 EOF 换行），顺手清理 |
+
+### 已核实无问题（本轮重点怀疑项）
+
+- `reInviteExchange` 抽取：client 行为逐行等价；server `ReInvite` 借共享驱动补上本地 Contact（RFC 3261 target refresh）、491 重试、无 Contact 2xx 的 ACK 容错，属改善而非回归。
+- `ProxyHost` 路径：`SetDestination` 写入 Origin，sipgo `cloneRequest` 复制 Destination，事务级 ProxyHost 对每次尝试有效。
+- `ID()` 遮蔽：库内 4 处缓存读写均改为显式 `d.DialogXxxSession.ID`，无遗漏。
+- 并发：`Refer` 写 `onReferNotify` 与 `handleReferNotify` 读端同持 `DialogMedia.mu`，无竞态；`-race` 全量通过。
+- client `reInviteMediaSession` 删除的显式 `setSignalContact` 分支已由 `applyRequestSignal` 覆盖。
+
+### 遗留、决定不修
+
+| 编号 | 优先级 | 位置 | 说明 |
+|---|---|---|---|
+| R6 | P3 | `dialog_session.go` `reInviteExchange` | 491 重试无上限（2–4s 间隔直到 ctx 结束）。客户端语义本就如此（非回归），共享驱动现也覆盖 server 侧 Hold/Unhold/ReInvite。传 `context.Background()` 且对端持续 491 时会无限轮询；RFC 3261 §14.1 仅 SHOULD，维持现状，调用方需自带 ctx 超时 |
+| R7 | P3 | `reInviteMediaSession`（client/server） | R3 同源问题的另一面：2xx 无 Contact 时媒体仍按响应更新，但 remote target 保持旧值——语义上"ACK 位置"与"target 更新"本就可能不一致，暂不引入部分失败路径 |
