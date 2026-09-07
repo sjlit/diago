@@ -13,12 +13,34 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/emiago/sipgo/siptest"
 	"github.com/pion/rtp"
 	"github.com/sjlit/diago/media"
 	"github.com/sjlit/diago/media/sdp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestDialogServerSessionReferBeforeAnswer locks the nil-InviteResponse guard:
+// Refer on a dialog that has not sent any response must return an error, not
+// panic — the state check has to run before d.InviteResponse is dereferenced.
+func TestDialogServerSessionReferBeforeAnswer(t *testing.T) {
+	inviteReq, err := diagotestSafeNewRequest(sip.INVITE, sip.Uri{Scheme: "sip", Host: "127.0.0.1", Port: 5060, User: "bob"})
+	require.NoError(t, err)
+	inviteReq.AppendHeader(sip.NewHeader("Contact", "<sip:127.0.0.1:11111>"))
+
+	ua := sipgo.DialogUA{
+		Client:     &sipgo.Client{},
+		ContactHDR: sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "tester", Host: "127.0.0.1", Port: 5060}},
+	}
+	sess, err := ua.ReadInvite(inviteReq, siptest.NewServerTxRecorder(inviteReq))
+	require.NoError(t, err)
+	d := DialogServerSession{DialogServerSession: sess}
+
+	err = d.Refer(context.TODO(), sip.Uri{Scheme: "sip", Host: "127.0.0.1", Port: 5060})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "answered")
+}
 
 func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	skipShort(t)

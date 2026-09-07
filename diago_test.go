@@ -108,6 +108,127 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 	})
 }
 
+// registerTestCapture records a clone of every request seen by the fake
+// transaction layer; clientTxRequester invokes onRequest synchronously, so the
+// slice is complete once the call under test returns.
+func registerTestCapture(reqs *[]*sip.Request) func(req *sip.Request) *sip.Response {
+	return func(req *sip.Request) *sip.Response {
+		*reqs = append(*reqs, req.Clone())
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	}
+}
+
+func registerTestHeaderValue(t *testing.T, req *sip.Request, name string) string {
+	t.Helper()
+	h := req.GetHeader(name)
+	require.NotNil(t, h, "header %q missing", name)
+	return h.Value()
+}
+
+// TestDiagoRegisterTransactionOptions locks the transaction-level
+// SignalOption contract: WithRegister* options shape the Origin template, the
+// transaction-level WithRequestMutator runs on every REGISTER attempt
+// (initial + qualify) before per-call options, and OnRegistered fires after a
+// successful initial REGISTER.
+func TestDiagoRegisterTransactionOptions(t *testing.T) {
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	ctx := context.TODO()
+
+	t.Run("TransactionOptionsShapeEveryAttempt", func(t *testing.T) {
+		var reqs []*sip.Request
+		dg2 := testDiagoClient(t, registerTestCapture(&reqs))
+
+		rtx, err := dg2.RegisterTransaction(ctx, sip.Uri{User: "carol", Host: "localhost"},
+			WithRegisterExpiry(3600*time.Second),
+			WithRegisterAllowHeaders("INVITE", "ACK", "BYE"),
+			WithRequestMutator(func(req *sip.Request) error {
+				req.AppendHeader(sip.NewHeader("X-Transaction", "mutated"))
+				return nil
+			}),
+		)
+		require.NoError(t, err)
+
+		// The Origin template already carries the static option shape.
+		assert.Equal(t, "3600", registerTestHeaderValue(t, rtx.Origin, "Expires"))
+		assert.Contains(t, registerTestHeaderValue(t, rtx.Origin, "Allow"), "INVITE")
+
+		require.NoError(t, rtx.Register(ctx))
+		require.NoError(t, rtx.Qualify(ctx))
+
+		require.Len(t, reqs, 2)
+		for i, req := range reqs {
+			assert.Equal(t, "3600", registerTestHeaderValue(t, req, "Expires"), "attempt %d", i)
+			assert.Equal(t, "mutated", registerTestHeaderValue(t, req, "X-Transaction"), "attempt %d", i)
+		}
+	})
+
+	t.Run("PerCallMutatorRunsOnTopOfTransaction", func(t *testing.T) {
+		var reqs []*sip.Request
+		dg2 := testDiagoClient(t, registerTestCapture(&reqs))
+
+		rtx, err := dg2.RegisterTransaction(ctx, sip.Uri{User: "erin", Host: "localhost"},
+			WithRequestMutator(func(req *sip.Request) error {
+				req.AppendHeader(sip.NewHeader("X-Transaction", "mutated"))
+				return nil
+			}),
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, rtx.Register(ctx, WithRequestMutator(func(req *sip.Request) error {
+			// Last-chance hook: the transaction mutation is already present.
+			assert.Equal(t, "mutated", registerTestHeaderValue(t, req, "X-Transaction"))
+			req.AppendHeader(sip.NewHeader("X-PerCall", "last"))
+			return nil
+		})))
+
+		require.Len(t, reqs, 1)
+		assert.Equal(t, "mutated", registerTestHeaderValue(t, reqs[0], "X-Transaction"))
+		assert.Equal(t, "last", registerTestHeaderValue(t, reqs[0], "X-PerCall"))
+	})
+
+	t.Run("ContactOverride", func(t *testing.T) {
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "heidi", Host: "localhost"},
+			WithContact(&sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "heidi", Host: "example.com", Port: 5060}}))
+		require.NoError(t, err)
+		cont := rtx.Origin.Contact()
+		require.NotNil(t, cont)
+		assert.Equal(t, "example.com", cont.Address.Host)
+	})
+
+	t.Run("ProxyHostDestination", func(t *testing.T) {
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "grace", Host: "localhost"},
+			WithRegisterProxyHost("127.0.0.1:9999"))
+		require.NoError(t, err)
+		assert.Equal(t, "127.0.0.1:9999", rtx.Origin.Destination())
+	})
+
+	t.Run("OnRegisteredFiresOnce", func(t *testing.T) {
+		var registered atomic.Int32
+		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "frank", Host: "localhost"},
+			WithOnRegistered(func() { registered.Add(1) }))
+		require.NoError(t, err)
+
+		require.NoError(t, rtx.Register(ctx))
+		assert.Equal(t, 1, int(registered.Load()))
+	})
+}
+
+// TestRegisterOptionValidation locks the nil/empty validation of the options
+// introduced with the SignalOption unification.
+func TestRegisterOptionValidation(t *testing.T) {
+	p := &SignalParams{}
+	assert.Error(t, WithOnReferNotify(nil)(p))
+	assert.Error(t, WithOnRegistered(nil)(p))
+	assert.Error(t, WithRegisterProxyHost("")(p))
+
+	// Happy paths apply without error.
+	assert.NoError(t, WithRegisterExpiry(0)(p))
+	assert.NoError(t, WithRegisterProxyHost("127.0.0.1:5060")(p))
+}
+
 // TestDiagoInviteOptionsRunOnce locks the single-execution guarantee: a user
 // SignalOption func must run exactly once across Diago.Invite dialog creation
 // and Invite.

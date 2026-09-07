@@ -563,11 +563,15 @@ func (d *DialogServerSession) reInviteMediaSession(ctx context.Context, ms *medi
 		return err
 	}
 
-	// Save new remote target contact and update media
+	// Save new remote target contact and update media. A malformed 2xx
+	// without Contact was tolerated by reInviteExchange (ACK fallback) — keep
+	// the current target instead of clobbering it with nil.
 	return func() error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		d.remoteContactTarget = res.Contact()
+		if cont := res.Contact(); cont != nil {
+			d.remoteContactTarget = cont
+		}
 
 		remoteSDP := res.Body()
 		if err := ms.RemoteSDP(remoteSDP); err != nil {
@@ -637,6 +641,11 @@ func (d *DialogServerSession) Refer(ctx context.Context, referTo sip.Uri, opts .
 	params, err := newSignalParams(opts)
 	if err != nil {
 		return err
+	}
+	// Guard before dereferencing InviteResponse: it is nil until the first
+	// response is written (dialogRefer's own check would run too late).
+	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
+		return fmt.Errorf("can only be called on answered dialog")
 	}
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()

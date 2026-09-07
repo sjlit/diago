@@ -35,7 +35,10 @@ type RegisterTransaction struct {
 	register SignalRegisterParams
 	username string
 	password string
-	Origin   *sip.Request
+	// mutateRequest is the transaction-level WithRequestMutator hook. It runs
+	// on every request cloned from Origin, before per-call options.
+	mutateRequest func(*sip.Request) error
+	Origin        *sip.Request
 
 	client *sipgo.Client
 	log    *slog.Logger
@@ -81,15 +84,31 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 	}
 
 	t := &RegisterTransaction{
-		Origin:   req, // origin maybe updated after first register
-		register: reg,
-		username: username,
-		password: params.Dialog.Password,
-		client:   client,
-		log:      log.With("caller", "Register"),
+		Origin:        req, // origin maybe updated after first register
+		register:      reg,
+		username:      username,
+		password:      params.Dialog.Password,
+		mutateRequest: params.Msg.MutateRequest,
+		client:        client,
+		log:           log.With("caller", "Register"),
 	}
 
 	return t
+}
+
+// cloneOrigin clones the transaction request template, applying the
+// transaction-level WithRequestMutator hook so it shapes every REGISTER of
+// this transaction. Per-call options are applied afterwards and keep the last
+// word.
+func (t *RegisterTransaction) cloneOrigin() (*sip.Request, error) {
+	req := t.Origin.Clone()
+	if t.mutateRequest == nil {
+		return req, nil
+	}
+	if err := t.mutateRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // Register sends the initial REGISTER. Options allow customizing Contact,
@@ -130,7 +149,10 @@ func (t *RegisterTransaction) signalCredentials(params *SignalParams) (string, s
 func (t *RegisterTransaction) doRegister(ctx context.Context, params *SignalParams) error {
 	username, password := t.signalCredentials(params)
 	client := t.client
-	req := t.Origin.Clone()
+	req, err := t.cloneOrigin()
+	if err != nil {
+		return err
+	}
 	if err := applyRequestSignal(req, params); err != nil {
 		return err
 	}
@@ -298,7 +320,10 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOpti
 	if err != nil {
 		return err
 	}
-	req := t.Origin.Clone()
+	req, err := t.cloneOrigin()
+	if err != nil {
+		return err
+	}
 
 	req.RemoveHeader("Expires")
 	req.RemoveHeader("Contact")
@@ -318,7 +343,10 @@ func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption)
 	if err != nil {
 		return err
 	}
-	req := t.Origin.Clone()
+	req, err := t.cloneOrigin()
+	if err != nil {
+		return err
+	}
 	if err := applyRequestSignal(req, params); err != nil {
 		return err
 	}
