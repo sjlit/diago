@@ -232,6 +232,6 @@ func TestHoldAutoStartStopsOnUnhold(t *testing.T) {
 	pre := sink.count()
 	m.mohAutoStart(context.Background(), nil) // manual loop already active: skip
 	require.Equal(t, pre, sink.count(), "auto start must not stop an existing manual loop")
-	m.mohAutoStop()                           // manual is not auto: no-op
+	m.mohAutoStop() // manual is not auto: no-op
 	require.NoError(t, manual2.Stop())
 }
