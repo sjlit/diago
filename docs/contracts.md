@@ -533,3 +533,39 @@ reader/writer once at `AddDialogSession` and exits on the first
 loop with the music frames and is **not** supported in this revision. To
 hold a bridged call, stop the bridge or apply hold music before the legs
 are bridged.
+
+## 14. Secure media (SDES and DTLS-SRTP)
+
+`MediaConfig.SecureRTP` selects the profile: `0` plain RTP/AVP, `1` SDES
+(keys in SDP, RTP/SAVP), `2` DTLS-SRTP (UDP/TLS/RTP/SAVP). The offer/answer
+path owns profile and codec negotiation; applications only configure
+certificates and algorithm preferences (see §10 for config propagation).
+
+**SDES.** One `a=crypto` line is offered, algorithm taken from
+`MediaConfig.SRTPAlg` (default AES_CM_128_HMAC_SHA1_80). The answer must carry
+a matching crypto attribute; a missing one leaves the call plaintext by
+design (SDES offers no downgrade protection — use SIPS/TLS for signaling).
+
+**DTLS roles follow the SDP setup attribute.** We act as DTLS *client* when
+the remote offer says `actpass`/`passive` (the typical UAS answer path), and
+as DTLS *server* when the remote answers `setup:active` to our offer (the
+typical UAC path). The handshake runs in `Finalize`, which the dialog layer
+invokes outside `d.mu` but always before the dialog is confirmed.
+
+**Fingerprint verification is mandatory and fails closed.** Every
+`a=fingerprint` in the remote SDP is checked against the DTLS peer
+certificate (RFC 5763 §5.10). All RFC 8122 hash algorithms are supported
+(sha-1/224/256/384/512), compared case- and colon-insensitively. If none
+matches — or only unsupported algorithms were offered — the handshake aborts.
+Behavior change (v0.9.x): mismatches were previously accepted.
+
+**Known limitation: DTLS server role requires client certificate
+request.** When diago is the DTLS server, the peer presents a certificate
+only if we request one. With the default
+`DTLSConfig.ServerClientAuth = ServerClientAuthNoCert` the peer certificate
+is absent and fingerprint verification aborts the handshake, so *diago as
+the offering UAC with DTLS is not usable with default config*. Set
+`ServerClientAuth: media.ServerClientAuthRequireCert` on the offering side
+until this is fixed (the constant requests — not yet requires — the
+certificate; see CODE_REVIEW_REPORT.md N6/N8). Remote SDP without any
+`a=fingerprint` skips verification entirely (documented downgrade, see N7).

@@ -37,6 +37,23 @@ See [WEBRTC_PION_CHANGES.md](https://github.com/sjlit/diago/blob/webrtc-pion/WEB
 for the API migration details. WebRTC is not the primary focus yet; this work
 will also bring the Pion media stack into Diago.
 
+## Media security (SDES / DTLS-SRTP)
+
+`MediaConfig.SecureRTP` selects plain RTP (`0`), SDES (`1`) or DTLS-SRTP (`2`).
+DTLS-SRTP verifies the peer certificate against every `a=fingerprint` in the
+remote SDP (RFC 5763) and **fails closed** on mismatch: since v0.9.x an
+offer/answer that does not match the presented certificate aborts the media
+instead of being silently accepted.
+
+Known limitation: when diago acts as the DTLS **server** (it sent the offer
+and the remote answered `setup:active` — the usual UAC path), the default
+`ServerClientAuth: ServerClientAuthNoCert` never receives the peer
+certificate, so the handshake cannot verify fingerprints and fails. Configure
+`media.ServerClientAuthRequireCert` on the offering side, or track
+[CODE_REVIEW_REPORT.md](CODE_REVIEW_REPORT.md) (N6/N7) for the fix.
+The secure-media contract is documented in
+[docs/contracts.md §13](docs/contracts.md).
+
 *If you find this project useful and you want to support/sponzor or need help with your projects, you can contact me more on*
 [mail](mailto:emirfreelance91@gmail.com).
 
