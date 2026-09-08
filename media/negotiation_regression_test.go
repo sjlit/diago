@@ -40,11 +40,18 @@ a=sendrecv`
 	require.NoError(t, m.Init())
 	require.NoError(t, m.RemoteSDP([]byte(sd)))
 
-	require.Len(t, m.filterCodecs, 2)
-	assert.Equal(t, uint8(111), m.filterCodecs[0].PayloadType)
-	assert.Equal(t, "opus", m.filterCodecs[0].Name)
-	assert.Equal(t, uint8(100), m.filterCodecs[1].PayloadType)
-	assert.Equal(t, "telephone-event", m.filterCodecs[1].Name)
+	if OpusSupportedForNegotiation() {
+		require.Len(t, m.filterCodecs, 2)
+		assert.Equal(t, uint8(111), m.filterCodecs[0].PayloadType)
+		assert.Equal(t, "opus", m.filterCodecs[0].Name)
+		assert.Equal(t, uint8(100), m.filterCodecs[1].PayloadType)
+		assert.Equal(t, "telephone-event", m.filterCodecs[1].Name)
+	} else {
+		// #39: opus filtered without with_opus_c; telephone-event remains.
+		require.Len(t, m.filterCodecs, 1)
+		assert.Equal(t, uint8(100), m.filterCodecs[0].PayloadType)
+		assert.Equal(t, "telephone-event", m.filterCodecs[0].Name)
+	}
 
 	// DTMF must resolve to the negotiated payload type, not the PT 101 default
 	assert.Equal(t, uint8(100), m.DTMFCodec().PayloadType)
@@ -53,8 +60,12 @@ a=sendrecv`
 	// Generated answer must carry rtpmap/fmtp for the negotiated payload types
 	lsd := sdp.SessionDescription{}
 	require.NoError(t, sdp.Unmarshal(m.LocalSDP(), &lsd))
-	assert.Equal(t, "audio 1345 RTP/AVP 111 100", lsd.Value("m"))
-	assert.Contains(t, lsd.Values("a"), "rtpmap:111 opus/48000/2")
+	if OpusSupportedForNegotiation() {
+		assert.Equal(t, "audio 1345 RTP/AVP 111 100", lsd.Value("m"))
+		assert.Contains(t, lsd.Values("a"), "rtpmap:111 opus/48000/2")
+	} else {
+		assert.Equal(t, "audio 1345 RTP/AVP 100", lsd.Value("m"))
+	}
 	assert.Contains(t, lsd.Values("a"), "rtpmap:100 telephone-event/8000")
 	assert.Contains(t, lsd.Values("a"), "fmtp:100 0-16")
 }

@@ -28,7 +28,11 @@ var (
 
 const (
 	ServerClientAuthNoCert      = int(dtls.NoClientCert)
-	ServerClientAuthRequireCert = int(dtls.RequestClientCert)
+	ServerClientAuthRequireCert = int(dtls.RequireAnyClientCert)
+	// ServerClientAuthRequestCert keeps the previous (misleading) mapping
+	// of ServerClientAuthRequireCert for compatibility: request but not require.
+	// Deprecated: use ServerClientAuthRequireCert.
+	ServerClientAuthRequestCert = int(dtls.RequestClientCert)
 
 	EllipticCurveP256   uint16 = uint16(elliptic.P256)
 	EllipticCurveP384   uint16 = uint16(elliptic.P384)
@@ -62,6 +66,18 @@ type DTLSConfig struct {
 }
 
 func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
+	// RFC 5763 §5 requires both endpoints to present a certificate when
+	// DTLS-SRTP is negotiated with fingerprints. With the default
+	// ServerClientAuthNoCert the server never sends CertificateRequest,
+	// the peer sends no certificate, and fingerprint verification
+	// (always invoked by emiago/dtls flight4/flight5) fails with
+	// BadCertificate. Upgrade automatically when fingerprints are present;
+	// client side ignores ClientAuth so this only affects server role.
+	auth := dtls.ClientAuthType(conf.ServerClientAuth)
+	if len(fingerprints) > 0 && auth == dtls.NoClientCert {
+		auth = dtls.RequireAnyClientCert
+		DefaultLogger().Debug("forcing RequireAnyClientCert, SDP fingerprints present")
+	}
 
 	config := &dtls.Config{
 		// Use appropriate certificate or generate self-signed
@@ -84,13 +100,16 @@ func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
 		// If you're acting as the server
 		// We are verifying Connection fingerprints so we require client cert
 		// use dtls.NoClientCert without verfication
-		ClientAuth:           dtls.ClientAuthType(conf.ServerClientAuth),
+		ClientAuth:           auth,
 		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 
 		InsecureSkipVerify: conf.ServerName == "", // Accept self-signed certs (for dev)
 		ServerName:         conf.ServerName,       // If insecure is false
 
 		// IT IS STILL UNCLEAR WHY WE CAN NOT READ CERTIFICATE HERE
+		// Empty fingerprints only happens for test-only raw helpers
+		// (dtlsServer/dtlsClient). SDP paths reject missing fingerprints
+		// earlier in RemoteSDP (N7); direct calls fail closed (RFC 5763).
 		VerifyConnection: func(state *dtls.State) error {
 			if len(fingerprints) == 0 {
 				return nil
@@ -143,10 +162,11 @@ func dtlsClient(conn net.PacketConn, raddr net.Addr, certificates []tls.Certific
 // fingerprints offered in the remote SDP. RFC 5763 section 5.10 makes this
 // verification mandatory - without it a MITM who can tamper with the SDP can
 // present its own certificate. It fails closed: when none of the offered
-// fingerprints matches, the handshake is aborted.
+// fingerprints matches, the handshake is aborted. Empty fingerprints also
+// fail (N7): a peer stripping a=fingerprint must not downgrade to unverified.
 func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints) error {
 	if len(fingerprints) == 0 {
-		return nil
+		return fmt.Errorf("dtls: no SDP fingerprints offered, refusing (RFC 5763)")
 	}
 	if len(state.PeerCertificates) == 0 {
 		return fmt.Errorf("no certificate found in dtls")

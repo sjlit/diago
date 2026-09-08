@@ -22,6 +22,9 @@ func (enc *OpusEncoder) EncodeTo(data []byte, lpcm []byte) (int, error) {
 	return 0, fmt.Errorf("not supported")
 }
 
+// Close mirrors the with_opus_c build so callers can always release.
+func (enc *OpusEncoder) Close() error { return nil }
+
 type OpusDecoder struct {
 }
 
@@ -32,3 +35,6 @@ func (enc *OpusDecoder) Init(sampleRate int, numChannels int, samplesSize int) e
 func (dec *OpusDecoder) DecodeTo(lpcm []byte, data []byte) (int, error) {
 	return 0, fmt.Errorf("not supported")
 }
+
+// Close mirrors the with_opus_c build so callers can always release.
+func (dec *OpusDecoder) Close() error { return nil }

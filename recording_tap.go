@@ -125,6 +125,10 @@ func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOp
 	}
 	d.audioReader = mon
 	d.audioWriter = mon
+	// #23: guarantee spool FD/files are reclaimed on BYE even when the
+	// caller forgets rec.Close. StereoRecording.Close is idempotent, so an
+	// explicit Close followed by DialogMedia.Close is a no-op.
+	d.onCloseUnsafe(func() error { return rec.Close() })
 	return rec, nil
 }
 

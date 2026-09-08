@@ -123,6 +123,23 @@ func mapSupportedCodec(f string) Codec {
 	}
 }
 
+// filterUnsupportedCodecs drops codecs that cannot be used in this build.
+// Currently only opus is gated by the with_opus_c tag (#39): without it an
+// opus offer would negotiate successfully and fail mid-call on first use.
+func filterUnsupportedCodecs(in []Codec) []Codec {
+	if opusSupported {
+		return in
+	}
+	out := make([]Codec, 0, len(in))
+	for _, c := range in {
+		if strings.EqualFold(c.Name, CodecAudioOpus.Name) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // func CodecsFromSDP(log *slog.Logger, sd sdp.SessionDescription, codecsAudio []Codec) error {
 // 	md, err := sd.MediaDescription("audio")
 // 	if err != nil {

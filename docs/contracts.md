@@ -585,13 +585,11 @@ certificate (RFC 5763 §5.10). All RFC 8122 hash algorithms are supported
 matches — or only unsupported algorithms were offered — the handshake aborts.
 Behavior change (v0.9.x): mismatches were previously accepted.
 
-**Known limitation: DTLS server role requires client certificate
-request.** When diago is the DTLS server, the peer presents a certificate
-only if we request one. With the default
-`DTLSConfig.ServerClientAuth = ServerClientAuthNoCert` the peer certificate
-is absent and fingerprint verification aborts the handshake, so *diago as
-the offering UAC with DTLS is not usable with default config*. Set
-`ServerClientAuth: media.ServerClientAuthRequireCert` on the offering side
-until this is fixed (the constant requests — not yet requires — the
-certificate; see CODE_REVIEW_REPORT.md N6/N8). Remote SDP without any
-`a=fingerprint` skips verification entirely (documented downgrade, see N7).
+**DTLS server role requests a client certificate automatically.** When diago
+is the DTLS server, the peer only presents a certificate if requested.
+If the remote SDP carries `a=fingerprint`, `ToLibConf` upgrades the default
+`ServerClientAuthNoCert` to `RequireAnyClientCert` (RFC 5763 §5, no chain
+verification for self-signed). `ServerClientAuthRequireCert` now maps to
+`RequireAnyClientCert`; the old request-only value stays available as
+`ServerClientAuthRequestCert` (deprecated). Remote SDP without any
+`a=fingerprint` is rejected for DTLS-SRTP instead of skipping verification.

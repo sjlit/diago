@@ -43,6 +43,15 @@ func (enc *OpusEncoder) EncodeTo(data []byte, lpcm []byte) (int, error) {
 
 }
 
+// Close releases Go-side buffers so long-lived owners (DialogMedia, Bridge)
+// do not pin opus state past the call. Idempotent. Upstream opus.v2 keeps
+// encoder state in Go memory (get_size+init), so GC reclaims it.
+func (enc *OpusEncoder) Close() error {
+	enc.pcmInt16 = nil
+	enc.numChannels = 0
+	return nil
+}
+
 type OpusDecoder struct {
 	opus.Decoder
 	pcmInt16    []int16
@@ -74,4 +83,11 @@ func (dec *OpusDecoder) DecodeTo(lpcm []byte, data []byte) (int, error) {
 	pcm := dec.pcmInt16[:pcmN]
 	n, err := samplesInt16ToBytes(pcm, lpcm)
 	return n, err
+}
+
+// Close releases Go-side buffers. Idempotent, see OpusEncoder.Close.
+func (dec *OpusDecoder) Close() error {
+	dec.pcmInt16 = nil
+	dec.numChannels = 0
+	return nil
 }

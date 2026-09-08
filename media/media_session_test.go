@@ -184,18 +184,30 @@ a=sendrecv`
 	err := m.RemoteSDP([]byte(sd))
 	require.NoError(t, err)
 
-	require.Len(t, m.filterCodecs, 4)
-	assert.Equal(t, CodecAudioUlaw, m.filterCodecs[0])
-	assert.Equal(t, CodecAudioAlaw, m.filterCodecs[1])
-	assert.Equal(t, CodecAudioOpus, m.filterCodecs[2])
-	assert.Equal(t, CodecTelephoneEvent8000, m.filterCodecs[3])
+	if OpusSupportedForNegotiation() {
+		require.Len(t, m.filterCodecs, 4)
+		assert.Equal(t, CodecAudioUlaw, m.filterCodecs[0])
+		assert.Equal(t, CodecAudioAlaw, m.filterCodecs[1])
+		assert.Equal(t, CodecAudioOpus, m.filterCodecs[2])
+		assert.Equal(t, CodecTelephoneEvent8000, m.filterCodecs[3])
+	} else {
+		// #39: without with_opus_c opus is filtered from negotiation.
+		require.Len(t, m.filterCodecs, 3)
+		assert.Equal(t, CodecAudioUlaw, m.filterCodecs[0])
+		assert.Equal(t, CodecAudioAlaw, m.filterCodecs[1])
+		assert.Equal(t, CodecTelephoneEvent8000, m.filterCodecs[2])
+	}
 
 	lsdp := m.LocalSDP()
 	lsd := sdp.SessionDescription{}
 	sdp.Unmarshal(lsdp, &lsd)
 
 	// Check that order is preserved from offerrer
-	assert.Equal(t, "audio 1234 RTP/AVP 0 8 96 101", lsd.Value("m"))
+	if OpusSupportedForNegotiation() {
+		assert.Equal(t, "audio 1234 RTP/AVP 0 8 96 101", lsd.Value("m"))
+	} else {
+		assert.Equal(t, "audio 1234 RTP/AVP 0 8 101", lsd.Value("m"))
+	}
 
 	// Test forking
 	{
@@ -217,10 +229,16 @@ a=sendrecv`
 		err = m.RemoteSDP([]byte(sd))
 		require.NoError(t, err)
 
-		require.Len(t, m.filterCodecs, 3)
-		assert.Equal(t, CodecAudioUlaw, m.filterCodecs[0])
-		assert.Equal(t, CodecAudioOpus, m.filterCodecs[1])
-		assert.Equal(t, CodecTelephoneEvent8000, m.filterCodecs[2])
+		if OpusSupportedForNegotiation() {
+			require.Len(t, m.filterCodecs, 3)
+			assert.Equal(t, CodecAudioUlaw, m.filterCodecs[0])
+			assert.Equal(t, CodecAudioOpus, m.filterCodecs[1])
+			assert.Equal(t, CodecTelephoneEvent8000, m.filterCodecs[2])
+		} else {
+			require.Len(t, m.filterCodecs, 2)
+			assert.Equal(t, CodecAudioUlaw, m.filterCodecs[0])
+			assert.Equal(t, CodecTelephoneEvent8000, m.filterCodecs[1])
+		}
 	}
 }
 

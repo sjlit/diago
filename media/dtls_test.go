@@ -110,10 +110,11 @@ func TestDTLSVerifyConnection(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("noFingerprintsSkipsValidation", func(t *testing.T) {
+	t.Run("noFingerprintsFailsClosed", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
 		err := dtlsVerifyConnection(state, nil)
-		require.NoError(t, err)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no SDP fingerprints")
 	})
 }
 

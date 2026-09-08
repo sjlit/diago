@@ -226,6 +226,10 @@ type MediaSession struct {
 
 	// DTLS
 	dtlsConn *dtls.Conn
+	// dtlsEstablished is set after the first successful DTLS handshake.
+	// Carried through Fork so re-INVITE answers emit a=connection:existing
+	// when reusing the transport instead of always :new.
+	dtlsEstablished bool
 
 	onFinalize func() error
 
@@ -389,6 +393,8 @@ func (s *MediaSession) Fork() *MediaSession {
 		remoteProto:   s.remoteProto,
 		srtpRemoteTag: s.srtpRemoteTag,
 		DTLSConf:      s.DTLSConf,
+		// Reuse marker so re-INVITE keeps :existing.
+		dtlsEstablished: s.dtlsEstablished,
 
 		// Carry creation-time config so re-INVITE forks keep the same
 		// port range and negotiation policy.
@@ -448,6 +454,8 @@ func (s *MediaSession) LocalSDP() []byte {
 	if len(s.filterCodecs) > 0 {
 		codecs = s.filterCodecs
 	}
+	// #39: never advertise opus without with_opus_c support.
+	codecs = filterUnsupportedCodecs(codecs)
 
 	var localSDES sdesInline
 	rtpProfile := "RTP/AVP"
@@ -502,6 +510,7 @@ func (s *MediaSession) LocalSDP() []byte {
 		dtlsSet = &dtlsSetup{
 			setup:        "active",
 			fingerprints: make([]sdpFingerprints, len(s.DTLSConf.Certificates)),
+			established:  s.dtlsEstablished,
 		}
 		if s.Raddr.IP != nil {
 			// We do have remote IP, so probably we are server
@@ -628,13 +637,24 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	case "RTP/AVP":
 	case "RTP/SAVP":
 		secureRequest = true
-	case "UDP/TLS/RTP/SAVP":
-	case "UDP/TLS/RTP/SAVPF":
-		// secureRequest = true
+	case "UDP/TLS/RTP/SAVP", "UDP/TLS/RTP/SAVPF":
+		// SAVPF (RTCP feedback) is accepted as DTLS like SAVP; the answer
+		// stays SAVP (feedback optional). Do not break browsers offering SAVPF.
 	default:
 		return fmt.Errorf("unsupported media description protocol proto=%s", md.Proto)
 	}
 	s.remoteProto = md.Proto
+
+	// #34 (RFC 3264 §6): answer proto must match offer semantics.
+	// Do not silently answer RTP/AVP to a DTLS offer or vice versa;
+	// callers map these errors to 488.
+	isDTLSRemote := md.Proto == "UDP/TLS/RTP/SAVP" || md.Proto == "UDP/TLS/RTP/SAVPF"
+	if s.SecureRTP == 2 && !isDTLSRemote {
+		return fmt.Errorf("sdp: proto mismatch: DTLS-SRTP configured but remote offered proto=%s", md.Proto)
+	}
+	if s.SecureRTP != 2 && isDTLSRemote {
+		return fmt.Errorf("sdp: proto mismatch: remote offered DTLS-SRTP but local SecureRTP=%d", s.SecureRTP)
+	}
 
 	codecs := make([]Codec, len(md.Formats))
 	attrs := sd.Values("a")
@@ -757,6 +777,13 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 			return fmt.Errorf("Empty a=setup value attribute for dtls")
 		}
 
+		// N7 (RFC 5763): DTLS-SRTP without any a=fingerprint must be
+		// rejected. Otherwise stripping fingerprints downgrades to
+		// unverified transport and bypasses N1 protection.
+		if len(fingerprints) == 0 {
+			return fmt.Errorf("sdp: missing a=fingerprint for DTLS-SRTP")
+		}
+
 		// THIS may need external or after SIP ACK establishment
 		dtlsConf := s.DTLSConf.ToLibConf(fingerprints)
 		role := "client"
@@ -845,6 +872,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 				panic("no context setup")
 			}
 
+			s.dtlsEstablished = true
 			DefaultLogger().Debug("DTLS SRTP setuped")
 			return nil
 		}
@@ -882,8 +910,13 @@ func codecsMatch(a, b Codec) bool {
 }
 
 func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
-	if len(s.Codecs) == 0 {
-		s.Codecs = codecs
+	// #39: intersect against usable codecs only, so an opus-only offer
+	// fails here with 488 instead of mid-call. Do not mutate s.Codecs:
+	// it stays the configured preference; LocalSDP filters on advertise.
+	local := filterUnsupportedCodecs(s.Codecs)
+	codecs = filterUnsupportedCodecs(codecs)
+	if len(local) == 0 {
+		s.filterCodecs = codecs
 		return len(codecs)
 	}
 
@@ -897,7 +930,7 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 	}
 	if preferLocalOrder > 0 && answerer {
 		filter := make([]Codec, 0, len(codecs))
-		for _, lc := range s.Codecs {
+		for _, lc := range local {
 			for _, c := range codecs {
 				// Match by media properties, not payload type. Remote payload type
 				// is adopted so that the answer mirrors the offer (RFC 3264)
@@ -913,7 +946,7 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 
 	filter := codecs[:0] // reuse buffer
 	for _, rc := range codecs {
-		for _, c := range s.Codecs {
+		for _, c := range local {
 			if codecsMatch(rc, c) {
 				filter = append(filter, rc)
 				break
@@ -1380,6 +1413,9 @@ type sdpFingerprints struct {
 type dtlsSetup struct {
 	setup        string
 	fingerprints []sdpFingerprints
+	// established reuses the transport on re-INVITE (RFC 4145):
+	// initial offer/answer uses :new, established session reuses :existing.
+	established bool
 }
 
 func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string) []byte {
@@ -1436,7 +1472,13 @@ func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile str
 		dtlsSetup := dtlsSet.setup
 
 		s = append(s, "a=setup:"+dtlsSetup)
-		s = append(s, "a=connection:new") // Cane be new or existing. Marks it needs new transport
+		// RFC 4145: initial offer/answer negotiates a new transport,
+		// re-INVITE reusing the same 5-tuple keeps the existing one.
+		connAttr := "a=connection:new"
+		if dtlsSet.established {
+			connAttr = "a=connection:existing"
+		}
+		s = append(s, connAttr)
 		for _, d := range fingerprints {
 			if d.fingerprint == "" {
 				continue

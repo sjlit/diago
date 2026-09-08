@@ -660,8 +660,10 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				BindHost:  "127.0.0.1",
 				BindPort:  16441,
 				MediaSRTP: 2, // USE DTLS
-				// We do not need any Certificate verification
-				MediaDTLSConf: media.DTLSConfig{},
+				// DTLS-SRTP requires both sides to present certificates (RFC 5763 §5).
+				MediaDTLSConf: media.DTLSConfig{
+					Certificates: []tls.Certificate{testdata.ClientCertificate()},
+				},
 			},
 		),
 		WithMediaConfig(

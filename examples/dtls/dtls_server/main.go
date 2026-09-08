@@ -33,7 +33,7 @@ func main() {
 				MediaSRTP: 2, // This enables SRTP DTLS
 				MediaDTLSConf: media.DTLSConfig{
 					Certificates:     []tls.Certificate{testdata.ServerCertificate()},
-					ServerClientAuth: media.ServerClientAuthNoCert,
+					ServerClientAuth: media.ServerClientAuthRequireCert,
 				},
 			},
 		),

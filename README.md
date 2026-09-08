@@ -45,14 +45,14 @@ remote SDP (RFC 5763) and **fails closed** on mismatch: since v0.9.x an
 offer/answer that does not match the presented certificate aborts the media
 instead of being silently accepted.
 
-Known limitation: when diago acts as the DTLS **server** (it sent the offer
-and the remote answered `setup:active` — the usual UAC path), the default
-`ServerClientAuth: ServerClientAuthNoCert` never receives the peer
-certificate, so the handshake cannot verify fingerprints and fails. Configure
-`media.ServerClientAuthRequireCert` on the offering side, or track
-[CODE_REVIEW_REPORT.md](CODE_REVIEW_REPORT.md) (N6/N7) for the fix.
+When diago acts as the DTLS **server** (it sent the offer
+and the remote answered `setup:active` — the usual UAC path), client
+certificates are requested automatically whenever the remote SDP carries
+`a=fingerprint` (RFC 5763 §5). `media.ServerClientAuthRequireCert` maps to
+`RequireAnyClientCert`. SDP without any `a=fingerprint` is rejected for
+DTLS-SRTP instead of skipping verification.
 The secure-media contract is documented in
-[docs/contracts.md §13](docs/contracts.md).
+[docs/contracts.md §14](docs/contracts.md).
 
 *If you find this project useful and you want to support/sponzor or need help with your projects, you can contact me more on*
 [mail](mailto:emirfreelance91@gmail.com).

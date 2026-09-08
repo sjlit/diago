@@ -192,6 +192,14 @@ func (d *DialogMedia) Close() error {
 	if m != nil {
 		e3 = m.Close()
 	}
+
+	// Drop audio chains (may pin opus state via closures) so Close releases
+	// promptly instead of waiting for Dialog GC (#20).
+	d.mu.Lock()
+	d.audioReader = nil
+	d.audioWriter = nil
+	d.mu.Unlock()
+
 	return errors.Join(e1, e2, e3, e4)
 }
 
@@ -324,7 +332,7 @@ func (d *DialogMedia) handleMediaUpdate(req *sip.Request, tx sip.ServerTransacti
 	// Still offer needs to be responded
 	if req.Body() != nil {
 		if err := d.sdpReInviteUnsafe(req.Body()); err != nil {
-			return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusRequestTerminated, "Request Terminated - "+err.Error(), nil))
+			return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptableHere, "Not Acceptable Here - "+err.Error(), nil))
 		}
 
 		if d.onMediaUpdate != nil {

@@ -79,6 +79,13 @@ func (dec *PCMDecoder) Init(codec media.Codec) error {
 	return nil
 }
 
+// Close drops decoder closures (e.g. opus state) so owners do not pin them.
+// Idempotent.
+func (dec *PCMDecoder) Close() error {
+	dec.DecoderTo = nil
+	return nil
+}
+
 type PCMDecoderReader struct {
 	PCMDecoder
 	Source  io.Reader
@@ -101,6 +108,12 @@ func (d *PCMDecoderReader) Init(codec media.Codec, reader io.Reader) error {
 		d.BufSize = media.RTPBufSize
 	}
 	return d.PCMDecoder.Init(codec)
+}
+
+// Close releases decoder state and read buffers.
+func (d *PCMDecoderReader) Close() error {
+	d.buf = nil
+	return d.PCMDecoder.Close()
 }
 
 // Read decodes and return PCM
@@ -150,6 +163,12 @@ func (d *PCMDecoderWriter) Init(codec media.Codec, writer io.Writer) error {
 	return d.PCMDecoder.Init(codec)
 }
 
+// Close releases decoder state and buffers.
+func (d *PCMDecoderWriter) Close() error {
+	d.buf = nil
+	return d.PCMDecoder.Close()
+}
+
 func (d *PCMDecoderWriter) Write(b []byte) (n int, err error) {
 	if d.buf == nil {
 		d.buf = make([]byte, d.DecodeBuf)
@@ -182,6 +201,11 @@ type PCMDecoderBuffer struct {
 func (d *PCMDecoderBuffer) Init(codec media.Codec) error {
 	d.buf = bytes.NewBuffer(make([]byte, 0, codec.Samples16()))
 	return d.PCMDecoderWriter.Init(codec, d.buf)
+}
+
+// Close releases decoder state and buffers.
+func (d *PCMDecoderBuffer) Close() error {
+	return d.PCMDecoderWriter.Close()
 }
 
 func (d *PCMDecoderBuffer) ReadFull() []byte {
@@ -235,6 +259,12 @@ func (enc *PCMEncoder) Init(codec media.Codec) error {
 	return nil
 }
 
+// Close drops encoder closures (e.g. opus state). Idempotent.
+func (enc *PCMEncoder) Close() error {
+	enc.EncoderTo = nil
+	return nil
+}
+
 type PCMEncoderWriter struct {
 	PCMEncoder
 	Writer  io.Writer
@@ -267,6 +297,12 @@ func (d *PCMEncoderWriter) Init(codec media.Codec, writer io.Writer) error {
 		d.BufSize = media.RTPBufSize
 	}
 	return d.PCMEncoder.Init(codec)
+}
+
+// Close releases encoder state and buffers.
+func (d *PCMEncoderWriter) Close() error {
+	d.buf = nil
+	return d.PCMEncoder.Close()
 }
 
 func (d *PCMEncoderWriter) Write(lpcm []byte) (int, error) {

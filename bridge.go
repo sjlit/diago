@@ -48,7 +48,15 @@ type Bridge struct {
 
 	// minDialogs is just helper flag when to start proxy
 	WaitDialogsNum int
+
+	// Lifecycle (#21): closed rejects Add; proxyRunning/proxyDone track the
+	// current proxyMedia generation so Remove/Close can interrupt and wait.
+	closed       bool
+	proxyRunning bool
+	proxyDone    chan struct{}
 }
+
+var ErrBridgeClosed = errors.New("bridge closed")
 
 var bridgeReadPool = sync.Pool{
 	New: func() any {
@@ -75,6 +83,11 @@ func (b *Bridge) Init(log *slog.Logger) {
 	if b.WaitDialogsNum == 0 {
 		b.WaitDialogsNum = 2
 	}
+	if b.proxyDone == nil {
+		// Idle state is done (closed chan) so waiters never block.
+		b.proxyDone = make(chan struct{})
+		close(b.proxyDone)
+	}
 }
 
 // GetDialogs returns the list of dialogs added to the bridge.
@@ -91,6 +104,15 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Check can this dialog be added to bridge. NO TRANSCODING
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.closed {
+		return ErrBridgeClosed
+	}
+	// Bridge only supports 2 parties: reject before appending so a failed
+	// third Add does not leave a stale dialog behind (#21 atomicity).
+	if len(b.dialogs) >= 2 {
+		return fmt.Errorf("currently bridge only support 2 party")
+	}
 
 	if b.Originator != nil {
 		// This may look ugly but it is safe way of reading
@@ -126,20 +148,43 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 		return nil
 	}
 
-	if len(b.dialogs) > 2 {
-		return fmt.Errorf("currently bridge only support 2 party")
-	}
-	// Check are both answered
-	for _, d := range b.dialogs {
-		if err := d.Media().checkMediaUsable(); err != nil {
-			return fmt.Errorf("dialog session not answered %q: %w", d.ID(), err)
+	// Check are both answered. On failure roll back the append so the
+	// bridge does not keep a stale half-ready dialog.
+	for _, dd := range b.dialogs {
+		if err := dd.Media().checkMediaUsable(); err != nil {
+			b.dialogs = b.dialogs[:len(b.dialogs)-1]
+			if b.Originator != nil && b.Originator.ID() == d.ID() {
+				if len(b.dialogs) > 0 {
+					b.Originator = b.dialogs[0]
+				} else {
+					b.Originator = nil
+				}
+			}
+			return fmt.Errorf("dialog session not answered %q: %w", dd.ID(), err)
 		}
 	}
 
+	if b.proxyRunning {
+		return fmt.Errorf("proxy media already running")
+	}
+	b.proxyRunning = true
+	b.proxyDone = make(chan struct{})
+	done := b.proxyDone
 	go func() {
 		defer func(start time.Time) {
 			b.log.Debug("Proxy media setup", "dur", time.Since(start).String())
 		}(time.Now())
+		defer func() {
+			b.mu.Lock()
+			b.proxyRunning = false
+			// done is the generation channel; close exactly once here.
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
+			b.mu.Unlock()
+		}()
 		if err := b.proxyMedia(); err != nil {
 			if errors.Is(err, io.EOF) {
 				return
@@ -149,6 +194,106 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 		}
 	}()
 	return nil
+}
+
+// RemoveDialogSession removes a dialog by ID. Missing IDs are a no-op nil.
+// If a proxy is running it is interrupted through the write gate; removal
+// still succeeds on pause errors (e.g. already hung up). Originator falls
+// back to the first remaining dialog.
+func (b *Bridge) RemoveDialogSession(d DialogSession) error {
+	id := d.ID()
+	b.mu.Lock()
+	idx := -1
+	for i, dd := range b.dialogs {
+		if dd.ID() == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		b.mu.Unlock()
+		return nil
+	}
+	running := b.proxyRunning
+	done := b.proxyDone
+	snapshot := slices.Clone(b.dialogs)
+	b.mu.Unlock()
+
+	var releases []func()
+	if running {
+		releases = interruptBridgeProxy(snapshot)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		for _, release := range releases {
+			release()
+		}
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, dd := range b.dialogs {
+		if dd.ID() == id {
+			b.dialogs = slices.Delete(b.dialogs, i, i+1)
+			break
+		}
+	}
+	if b.Originator != nil && b.Originator.ID() == id {
+		if len(b.dialogs) > 0 {
+			b.Originator = b.dialogs[0]
+		} else {
+			b.Originator = nil
+		}
+	}
+	return nil
+}
+
+// Close stops any running proxy and clears the bridge. Idempotent; Add after
+// Close returns ErrBridgeClosed.
+func (b *Bridge) Close() error {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil
+	}
+	b.closed = true
+	running := b.proxyRunning
+	done := b.proxyDone
+	snapshot := slices.Clone(b.dialogs)
+	b.mu.Unlock()
+
+	if running {
+		releases := interruptBridgeProxy(snapshot)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		for _, release := range releases {
+			release()
+		}
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.dialogs = nil
+	b.Originator = nil
+	return nil
+}
+
+// interruptBridgeProxy pauses writers to surface media.ErrWritePaused in the
+// proxy copy loop. Callers must call the returned releases after the proxy
+// exits (or times out) to restore writers.
+func interruptBridgeProxy(dialogs []DialogSession) []func() {
+	var releases []func()
+	for _, d := range dialogs {
+		release, err := d.Media().PauseAudioWrite()
+		if err != nil {
+			continue
+		}
+		releases = append(releases, release)
+	}
+	return releases
 }
 
 // ProxyMedia is explicit starting proxy media.
@@ -184,9 +329,20 @@ func (b *Bridge) ProxyMedia() error {
 // Experimental
 func (b *Bridge) ProxyMediaControl() (func() error, error) {
 	// Same precondition as ProxyMedia, proxyMedia indexes dialogs [0] and [1]
+	b.mu.Lock()
 	if len(b.dialogs) < 2 {
+		b.mu.Unlock()
 		return nil, fmt.Errorf("number of dialogs must equal to 2")
 	}
+	if b.closed {
+		b.mu.Unlock()
+		return nil, ErrBridgeClosed
+	}
+	if b.proxyRunning {
+		b.mu.Unlock()
+		return nil, fmt.Errorf("proxy media already running")
+	}
+	b.mu.Unlock()
 
 	proxyErr := make(chan error, 1)
 	go func() {
@@ -332,6 +488,10 @@ func (b *Bridge) proxyMediaWithDTMF(m1 *DialogMedia, m2 *DialogMedia) error {
 	log.Debug("Starting proxy media routine")
 	written, err := copyWithBuf(r, w, buf.([]byte))
 	log.Debug("Bridge proxy stream finished", "bytes", written)
+	if errors.Is(err, media.ErrWritePaused) {
+		// Stopped through the write gate (Remove/Close/stopF).
+		return nil
+	}
 	return err
 }
 
