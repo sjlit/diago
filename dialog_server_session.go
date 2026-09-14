@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -30,6 +32,37 @@ type DialogServerSession struct {
 
 	mediaConf MediaConfig
 	closed    atomic.Uint32
+
+	// ackCh is closed by diago's OnAck handler when the matching ACK
+	// arrives. respondSignal selects on it as a defense against the
+	// sipgo v1.4.3 WriteResponse "No ACK received" race: even when
+	// sipgo's wait loop races past the state notification, the ACK has
+	// been delivered to diago's OnAck path (which then calls ReadAck)
+	// and we can rely on this channel as ground truth.
+	ackCh chan struct{}
+}
+
+// ackChannel lazily allocates and returns the per-dialog ACK channel.
+// It is closed by diago's OnAck handler when the matching ACK arrives.
+func (d *DialogServerSession) ackChannel() <-chan struct{} {
+	if d.ackCh == nil {
+		d.ackCh = make(chan struct{})
+	}
+	return d.ackCh
+}
+
+// notifyAck closes the dialog's ack channel, signaling any pending
+// respondSignal waiters that the ACK has been delivered. It is safe to
+// call multiple times (subsequent calls are no-ops).
+func (d *DialogServerSession) notifyAck() {
+	if d.ackCh != nil {
+		select {
+		case <-d.ackCh:
+			// already closed
+		default:
+			close(d.ackCh)
+		}
+	}
 }
 
 func (d *DialogServerSession) ID() string {
@@ -91,6 +124,13 @@ func (d *DialogServerSession) Transport() string {
 // provided, it defaults to "application/sdp". Methods that do not send a
 // body (Trying, Ringing) pass body=nil and therefore never receive a
 // Content-Type header.
+//
+// For final 2xx, this defends against a known sipgo v1.4.3 race: sipgo's
+// WaitForAck loop can exit with "No ACK received" even though the ACK was
+// delivered and processed by diago's OnAck/ReadAck path. We rely on a
+// diago-managed ackCh closed by the OnAck handler as ground truth: if
+// sipgo's loop races past the state notification, we treat the call as
+// successful because the peer has acknowledged.
 func (d *DialogServerSession) respondSignal(statusCode int, reason string, body []byte, params *SignalParams) error {
 	res := sip.NewResponseFromRequest(d.InviteRequest, statusCode, reason, body)
 	if params != nil {
@@ -107,7 +147,52 @@ func (d *DialogServerSession) respondSignal(statusCode int, reason string, body 
 			}
 		}
 	}
-	return d.DialogServerSession.WriteResponse(res)
+
+	// Only 2xx waits for ACK and is affected by the race.
+	if !res.IsSuccess() {
+		return d.DialogServerSession.WriteResponse(res)
+	}
+
+	ackCh := d.ackChannel()
+	err := d.DialogServerSession.WriteResponse(res)
+	if err == nil {
+		return nil
+	}
+
+	// Race defense: if sipgo's WaitForAck loop exited with "No ACK
+	// received" but diago's OnAck handler already closed ackCh, the peer
+	// really did acknowledge — the failure is purely a sipgo internal
+	// race, not a real transport problem.
+	if isAckWaitRaceError(err) {
+		select {
+		case <-ackCh:
+			// Diago saw the ACK; sipgo raced. Treat as success.
+			return nil
+		default:
+		}
+		// Belt-and-suspenders: the OnAck handler can trail sipgo's loop
+		// exit by a few microseconds. Give it a small grace window before
+		// declaring the failure real. UDP RTT to the loopback client is
+		// already on the order of tens of microseconds, so 100ms is
+		// plenty of slack without inflating any honest timeout.
+		select {
+		case <-ackCh:
+			return nil
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return err
+}
+
+// isAckWaitRaceError reports whether err matches the known sipgo v1.4.3
+// "No ACK received" message raised from DialogServerSession.WriteResponse.
+// We deliberately do NOT swallow every other error — transport errors,
+// parser errors, and caller-side misuse must surface unchanged.
+func isAckWaitRaceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "No ACK received")
 }
 
 // byeSignal sends BYE applying signaling options (extra headers, request mutator).
@@ -384,8 +469,18 @@ func (d *DialogServerSession) answerSession(rtpSess *media.RTPSession, params *S
 	}
 	// fmt.Println("--------SErver finalized")
 
-	// Must be called after media and reader writer is setup
-	return rtpSess.MonitorBackground()
+	// Must be called after media and reader writer is setup. MonitorBackground
+	// can fail with "rtp session is closed" if a sibling server handler (most
+	// commonly OnBye) closes the underlying media while Answer is still
+	// returning. Treat that race as benign: the dialog is tearing down anyway
+	// and the caller will be unblocked by the surrounding close path.
+	if err := rtpSess.MonitorBackground(); err != nil {
+		if errors.Is(err, media.ErrRTPSessionClosed) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {

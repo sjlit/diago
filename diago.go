@@ -382,6 +382,10 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 			return cd.handleReInviteACK(req, tx)
 		}
 
+		// Race defense: notify the per-dialog ACK channel BEFORE calling
+		// ReadAck so any pending respondSignal waiter can treat a sipgo
+		// WaitForAck loop exit as success.
+		sd.notifyAck()
 		return sd.ReadAck(req, tx)
 	}))
 
