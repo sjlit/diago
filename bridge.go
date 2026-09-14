@@ -49,6 +49,16 @@ type Bridge struct {
 	// minDialogs is just helper flag when to start proxy
 	WaitDialogsNum int
 
+	// DiscardQueuedOnStart drops RTP already queued on each leg's socket right
+	// before the proxy loop starts, so bridging begins from live media instead
+	// of replaying a pre-bridge backlog at the line rate - which otherwise
+	// turns into permanent one-way latency (docs/contracts.md §15).
+	//
+	// Opt-in (default false). Enable it for answer-before-bridge B2BUAs,
+	// where the peer starts sending media before the second leg joins and
+	// nothing consumes the socket in between.
+	DiscardQueuedOnStart bool
+
 	// Lifecycle (#21): closed rejects Add; proxyRunning/proxyDone track the
 	// current proxyMedia generation so Remove/Close can interrupt and wait.
 	closed       bool
@@ -389,9 +399,17 @@ func (b *Bridge) proxyMedia() error {
 	// "only support 2 party") while proxying is already running.
 	b.mu.Lock()
 	dialogs := slices.Clone(b.dialogs)
+	discardQueued := b.DiscardQueuedOnStart
 	b.mu.Unlock()
 	if len(dialogs) < 2 {
 		return fmt.Errorf("number of dialogs must equal to 2")
+	}
+
+	// Start from live media: anything queued before this point is stale by
+	// definition (the proxy is the first consumer) and replaying it at the
+	// line rate would add permanent delay. Fail-open on errors.
+	if discardQueued {
+		b.discardQueuedRTP(dialogs)
 	}
 
 	m1 := dialogs[0].Media()
@@ -446,6 +464,24 @@ func (b *Bridge) proxyMedia() error {
 		err = errors.Join(err, <-errCh)
 	}
 	return err
+}
+
+// discardQueuedRTP drops RTP that queued on each leg's socket before the proxy
+// loop could read it. Errors are fail-open: the bridge proceeds and forwards
+// whatever remains queued, which is the pre-existing behavior.
+func (b *Bridge) discardQueuedRTP(dialogs []DialogSession) {
+	for _, d := range dialogs {
+		n, err := d.Media().DiscardQueuedRTP()
+		if err != nil {
+			b.log.Warn("discarding queued RTP before proxy failed",
+				"dialog", d.ID(), "packets", n, "error", err)
+			continue
+		}
+		if n > 0 {
+			b.log.Debug("discarded queued RTP before proxy",
+				"dialog", d.ID(), "packets", n)
+		}
+	}
 }
 
 func proxyMediaBackground(log *slog.Logger, reader io.Reader, writer io.Writer, ch chan error) {

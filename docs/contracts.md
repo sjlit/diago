@@ -593,3 +593,39 @@ verification for self-signed). `ServerClientAuthRequireCert` now maps to
 `RequireAnyClientCert`; the old request-only value stays available as
 `ServerClientAuthRequestCert` (deprecated). Remote SDP without any
 `a=fingerprint` is rejected for DTLS-SRTP instead of skipping verification.
+
+## 15. Bridge startup and queued media
+
+A `Bridge` resolves each leg's reader/writer when its proxy loop starts,
+which can be later than the moment media begins arriving. In an
+answer-before-bridge B2BUA the peer's RTP piles up on the socket while the
+second leg is dialed; replaying that backlog at the line rate converts the
+pre-bridge wait into permanent one-way latency, because the writer's media
+clock never runs faster than real time and the queue therefore never drains.
+
+`Bridge.DiscardQueuedOnStart` (opt-in, default false) makes the bridge drop
+whatever is queued on each leg's socket right before the proxy loop starts,
+so forwarding begins from live media. The drop's contract:
+
+- **Precondition.** No other component may be reading the leg at that moment:
+  the drop consumes datagrams directly from the RTP socket, so a concurrent
+  reader would race it for packets.
+- **What is dropped.** Raw RTP datagrams. No SRTP decryption, RTP/RTCP
+  statistics, RTPNAT source learning or reader-chain taps observe them. A
+  recording tap keeps wall-clock alignment through its silence padding.
+- **DTLS guard.** On a DTLS-SRTP leg the drain is a no-op until the handshake
+  completes (`Finalize` returns): DTLS flights share the RTP socket with
+  SRTP, so dropping them before the handshake would break secure media.
+- **Fail-open.** A drain error (ex. socket already closed) is logged at warn
+  and the bridge proceeds, forwarding whatever remains queued.
+- **Best effort at the cutover.** Packets arriving between the drain and the
+  proxy's first read are dropped with the backlog; media resumes on the next
+  live packet.
+
+The underlying primitive is `DialogMedia.DiscardQueuedRTP` (backed by
+`media.MediaSession.DiscardQueuedRTP`). Applications with their own consumer
+startup — a custom relay loop, or answering only after the second leg
+connects — can call it directly. Enable `DiscardQueuedOnStart` for
+answer-before-bridge relays; leave it off when queued media is intentional.
+`BridgeMix` is not covered by this option (its realtime reader handles
+lateness differently).

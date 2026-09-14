@@ -1165,6 +1165,71 @@ func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) 
 	return m.ReadRTPRaw(buf)
 }
 
+// DiscardQueuedRTP drains datagrams already queued on the RTP socket and
+// returns how many were discarded. It exists for the moment a media consumer
+// starts (ex. a Bridge about to proxy): without it, whatever arrived while
+// nobody was reading is replayed at the line rate and becomes permanent
+// one-way latency (see docs/contracts.md §15).
+//
+// The caller must guarantee that no other component is reading this session
+// concurrently - the drain consumes datagrams from the same socket. Packets
+// are dropped raw: no SRTP decryption, RTP/RTCP statistics, RTPNAT source
+// learning or reader-chain taps observe them. Any read deadline is cleared
+// before returning, so normal blocking reads keep working. A nil conn
+// (media never initialized) is a no-op.
+//
+// On a DTLS-SRTP session the drain is a no-op until the handshake completes
+// (Finalize returns): DTLS flights share the RTP socket with SRTP, so draining
+// before then would eat handshake records. Afterwards the socket carries SRTP
+// only.
+func (m *MediaSession) DiscardQueuedRTP() (int, error) {
+	if m.rtpConn == nil {
+		return 0, nil
+	}
+	if m.SecureRTP == 2 && !m.dtlsEstablished {
+		DefaultLogger().Debug("DiscardQueuedRTP skipped: DTLS handshake not established")
+		return 0, nil
+	}
+	defer func() {
+		_ = m.rtpConn.SetReadDeadline(time.Time{})
+	}()
+
+	// A short deadline before every read makes queued datagrams return
+	// immediately (the syscall succeeds) while an empty socket fails fast
+	// with a timeout. The deadline is refreshed per iteration because an
+	// already-expired deadline would reject even queued data. The overall cap
+	// keeps a peer flooding media from extending the drain indefinitely.
+	buf := make([]byte, RTPBufSize)
+	discarded := 0
+	start := time.Now()
+	for {
+		if time.Since(start) > rtpDiscardMaxWait {
+			return discarded, nil
+		}
+		if err := m.rtpConn.SetReadDeadline(time.Now().Add(rtpDiscardReadWait)); err != nil {
+			return discarded, err
+		}
+		if _, _, err := m.rtpConn.ReadFrom(buf); err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return discarded, nil
+			}
+			return discarded, err
+		}
+		discarded++
+	}
+}
+
+const (
+	// rtpDiscardReadWait bounds the blocking wait for the next queued datagram
+	// while DiscardQueuedRTP drains a socket. It is only paid once per empty
+	// socket, so it stays small.
+	rtpDiscardReadWait = 5 * time.Millisecond
+	// rtpDiscardMaxWait caps the total drain time against a flooding peer.
+	// The kernel receive buffer alone drains orders of magnitude faster.
+	rtpDiscardMaxWait = 50 * time.Millisecond
+)
+
 // ReadRTCP is optimized reads and unmarshals RTCP packets. Buffers is only used for unmarshaling.
 // Caller needs to be aware of size this buffer and allign with MTU
 func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error) {

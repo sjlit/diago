@@ -95,6 +95,10 @@ func TestDialogMediaGuardsNotAnswered(t *testing.T) {
 		_, err = d.AudioStereoRecordingCreate(f)
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
+	t.Run("DiscardQueuedRTP", func(t *testing.T) {
+		_, err := d.DiscardQueuedRTP()
+		assert.ErrorIs(t, err, ErrDialogNotAnswered)
+	})
 }
 
 func TestDialogMediaGuardsClosed(t *testing.T) {
@@ -151,6 +155,10 @@ func TestDialogMediaGuardsClosed(t *testing.T) {
 		require.NoError(t, err)
 		defer f.Close()
 		_, err = d.AudioStereoRecordingCreate(f)
+		assert.ErrorIs(t, err, ErrDialogClosed)
+	})
+	t.Run("DiscardQueuedRTP", func(t *testing.T) {
+		_, err := d.DiscardQueuedRTP()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("CloseIsIdempotent", func(t *testing.T) {

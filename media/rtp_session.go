@@ -49,12 +49,12 @@ var (
 	// RTPSourceLock enables source locking after IP changes
 	RTPSourceLock bool
 
-	errRTPSessionClosed         = errors.New("rtp session is closed")
+	errRTPSessionClosed = errors.New("rtp session is closed")
 
 	// ErrRTPSessionClosed is the exported counterpart of errRTPSessionClosed.
 	// Exposed so callers can detect the "media already torn down" condition
 	// without depending on internal state.
-	ErrRTPSessionClosed = errRTPSessionClosed
+	ErrRTPSessionClosed         = errRTPSessionClosed
 	errRTPSessionMonitorStarted = errors.New("rtp session monitor already started")
 )
 

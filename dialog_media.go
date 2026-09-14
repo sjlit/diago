@@ -868,6 +868,31 @@ func (d *DialogMedia) PauseAudioWrite() (func(), error) {
 	return d.RTPPacketWriter.PauseWrite(), nil
 }
 
+// DiscardQueuedRTP drops any RTP datagrams already queued on the dialog's
+// socket and returns how many were discarded. A media consumer calls it at
+// the moment it starts - Bridge does so before its proxy loop (see
+// Bridge.DiscardQueuedOnStart) - so forwarding begins from live media instead
+// of replaying a backlog that piled up while nobody was reading. Replaying
+// that backlog at the line rate is a common source of permanent one-way delay
+// for answer-before-bridge B2BUAs (see docs/contracts.md §15).
+//
+// Precondition: no other component is reading this dialog's audio at the same
+// time. The drain reads the socket directly, bypassing the audio chain, so
+// installed taps/interceptors, RTP statistics and SRTP state do not observe
+// the dropped packets.
+//
+// A DTLS-SRTP dialog whose handshake has not completed is a no-op: DTLS
+// flights share the socket with SRTP and dropping them would break the
+// handshake.
+func (d *DialogMedia) DiscardQueuedRTP() (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.mediaGuard(); err != nil {
+		return 0, err
+	}
+	return d.mediaSession.DiscardQueuedRTP()
+}
+
 // armReadInterrupt arms a context-driven interrupt on the dialog's stable
 // audio read handle. The returned disarm joins the watcher and restores the
 // reader when the interrupt was delivered.
