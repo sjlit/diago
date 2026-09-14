@@ -260,6 +260,23 @@ func (d *DialogMedia) updateRemoteHeldUnsafe() {
 	d.remoteHeld = dir == sdp.ModeRecvonly || dir == sdp.ModeInactive
 }
 
+// applyLateOfferAnswerUnsafe applies the SDP answer carried by a late-offer
+// ACK and refreshes the remote-held flag, like the other offer/answer install
+// paths do. Caller must hold d.mu. Returns the session to Finalize, or nil
+// when there is nothing to apply.
+func (d *DialogMedia) applyLateOfferAnswerUnsafe(body []byte) (*media.MediaSession, error) {
+	sess := d.mediaSession
+	if sess == nil {
+		return nil, nil
+	}
+	if err := sess.RemoteSDP(body); err != nil {
+		return nil, err
+	}
+	// The ACK answer can hold us (sendonly/inactive).
+	d.updateRemoteHeldUnsafe()
+	return sess, nil
+}
+
 func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	// Callers run in the single-threaded setup phase and must not hold d.mu,
 	// but ProgressMedia/Answer can race with a concurrent BYE closing media.

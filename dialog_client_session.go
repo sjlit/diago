@@ -694,11 +694,33 @@ func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, opts .
 	}
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()
+	var localContact *sip.ContactHeader
+	if d.InviteResponse != nil {
+		localContact = d.InviteResponse.Contact()
+	}
 	if params.Dialog.OnReferNotify != nil {
 		d.onReferNotify = params.Dialog.OnReferNotify
 	}
 	d.mu.Unlock()
-	return dialogRefer(ctx, d, cont.Address, referTo, d.InviteResponse.Contact().Address, params)
+	return d.referWithContacts(ctx, cont, localContact, referTo, params)
+}
+
+// referWithContacts validates the REFER targets and starts the exchange. A
+// malformed 2xx without Contact leaves the remote target empty (R3 keeps the
+// previous target only when one was seen); dereferencing it used to panic.
+// Referred-By falls back to the Contact of our own INVITE when the answer
+// carried none.
+func (d *DialogClientSession) referWithContacts(ctx context.Context, cont, localContact *sip.ContactHeader, referTo sip.Uri, params *SignalParams) error {
+	if cont == nil {
+		return fmt.Errorf("can not refer: remote contact is missing")
+	}
+	if localContact == nil && d.InviteRequest != nil {
+		localContact = d.InviteRequest.Contact()
+	}
+	if localContact == nil {
+		return fmt.Errorf("can not refer: local contact is missing")
+	}
+	return dialogRefer(ctx, d, cont.Address, referTo, localContact.Address, params)
 }
 
 func (d *DialogClientSession) handleReferNotify(req *sip.Request, tx sip.ServerTransaction) {

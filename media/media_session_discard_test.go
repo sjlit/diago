@@ -6,7 +6,6 @@ package media
 import (
 	"net"
 	"testing"
-	"time"
 
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
@@ -58,9 +57,6 @@ func TestMediaSessionDiscardQueuedRTP(t *testing.T) {
 	assert.Zero(t, n)
 
 	send(3)
-	// Loopback UDP enqueues on send, but give the receiver a moment so the
-	// assertion is deterministic under load.
-	time.Sleep(20 * time.Millisecond)
 
 	n, err = sess.DiscardQueuedRTP()
 	require.NoError(t, err)
@@ -95,9 +91,6 @@ func TestMediaSessionDiscardQueuedRTPDTLSPendingHandshake(t *testing.T) {
 	sess.SecureRTP = 2
 
 	send(3)
-	// Loopback UDP enqueues on send, but give the receiver a moment so the
-	// assertion is deterministic under load.
-	time.Sleep(20 * time.Millisecond)
 
 	n, err := sess.DiscardQueuedRTP()
 	require.NoError(t, err)

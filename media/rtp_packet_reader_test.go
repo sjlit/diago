@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/emiago/sipgo/fakes"
 	"github.com/pion/rtp"
@@ -93,4 +94,33 @@ func BenchmarkRTPPacketReader(b *testing.B) {
 		require.NoError(b, err)
 	}
 	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "reads/s")
+}
+
+// Regression: UpdateRTPSession replaced the whole reader with the bare
+// RTPSession, silently dropping wrappers installed by the user (ex. the
+// jitter buffer) on every media update.
+func TestRTPPacketReaderUpdateRTPSessionKeepsJitterBuffer(t *testing.T) {
+	oldSess := &MediaSession{Codecs: []Codec{CodecAudioUlaw}}
+	oldRTPSess := NewRTPSession(oldSess)
+	newSess := &MediaSession{Codecs: []Codec{CodecAudioUlaw}}
+	newRTPSess := NewRTPSession(newSess)
+
+	reader := NewRTPPacketReaderSession(oldRTPSess)
+	jitter := NewRTPJitterBuffer(oldRTPSess, 20*time.Millisecond, RTPJitterBufferOptions{})
+	t.Cleanup(func() { _ = jitter.Close() })
+	reader.UpdateReader(jitter)
+
+	reader.UpdateRTPSession(newRTPSess)
+
+	jitterReader, ok := reader.Reader().(*RTPJitterBuffer)
+	require.True(t, ok, "jitter buffer must stay in the reader chain")
+	require.NotNil(t, jitterReader.reader.Load())
+	inner, ok := (*jitterReader.reader.Load()).(*RTPSession)
+	require.True(t, ok)
+	require.Same(t, newRTPSess, inner)
+
+	// The bare session path still swaps the reader.
+	plain := NewRTPPacketReaderSession(oldRTPSess)
+	plain.UpdateRTPSession(newRTPSess)
+	require.Same(t, newRTPSess, plain.Reader())
 }

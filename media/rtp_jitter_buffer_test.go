@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -578,5 +579,67 @@ func TestRTPJitterBufferDefaults(t *testing.T) {
 	// voice-quality hazard (a 20-packet default once shipped as 400ms).
 	if jb.delayPackets != 3 || jb.maxPackets != 10 {
 		t.Fatalf("unexpected jitter buffer defaults: delay=%d max=%d", jb.delayPackets, jb.maxPackets)
+	}
+}
+
+// Regression: on a media update RTPPacketReader retargets the session inside
+// the jitter buffer and pokes the old conn. The poke must not terminate the
+// jitter pump - it has to retry on the new session and keep delivering.
+func TestRTPJitterBufferSurvivesMediaUpdate(t *testing.T) {
+	oldSess, err := NewMediaSession(net.ParseIP("127.0.0.1"), 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = oldSess.Close() })
+
+	newSess, err := NewMediaSession(net.ParseIP("127.0.0.1"), 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = newSess.Close() })
+
+	oldRTPSess := NewRTPSession(oldSess)
+	newRTPSess := NewRTPSession(newSess)
+
+	jitter := NewRTPJitterBuffer(oldRTPSess, 20*time.Millisecond, RTPJitterBufferOptions{
+		DelayPackets: 1,
+		MaxPackets:   8,
+	})
+	t.Cleanup(func() { _ = jitter.Close() })
+
+	type result struct {
+		pkt rtp.Packet
+		err error
+	}
+	got := make(chan result, 1)
+	go func() {
+		pkt := rtp.Packet{}
+		_, err := jitter.ReadRTP(make([]byte, RTPBufSize), &pkt)
+		got <- result{pkt: pkt, err: err}
+	}()
+
+	// Let the pump block on the old session's socket.
+	time.Sleep(50 * time.Millisecond)
+
+	// Media update: retarget and poke the old conn (different socket).
+	jitter.updateRTPSession(newRTPSess)
+	time.Sleep(50 * time.Millisecond)
+
+	sender, err := net.DialUDP("udp", nil, &newSess.Laddr)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sender.Close() })
+
+	pkt := &rtp.Packet{
+		Header:  rtp.Header{Version: 2, PayloadType: 0, SSRC: 0xAA, SequenceNumber: 1, Timestamp: 160},
+		Payload: make([]byte, 160),
+	}
+	data, err := pkt.Marshal()
+	require.NoError(t, err)
+	_, err = sender.Write(data)
+	require.NoError(t, err)
+
+	select {
+	case res := <-got:
+		require.NoError(t, res.err, "jitter pump must survive the media update")
+		require.Equal(t, uint16(1), res.pkt.SequenceNumber)
+		require.Equal(t, uint32(0xAA), res.pkt.SSRC)
+	case <-time.After(3 * time.Second):
+		t.Fatal("jitter buffer did not deliver the packet from the new session")
 	}
 }

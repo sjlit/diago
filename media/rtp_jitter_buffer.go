@@ -71,8 +71,9 @@ type rtpJitterInput struct {
 // It sits after RTPSession and before RTPPacketReader, so RTPSession observes
 // true network arrival while downstream readers get reordered packets.
 type RTPJitterBuffer struct {
-	// reader is the upstream network-facing RTP source.
-	reader RTPReader
+	// reader is the upstream network-facing RTP source. Atomic so a media
+	// update can retarget it (updateRTPSession) without stopping the pump.
+	reader atomic.Pointer[RTPReader]
 
 	// packetDuration controls the interval between playout decisions.
 	packetDuration time.Duration
@@ -175,8 +176,7 @@ func NewRTPJitterBuffer(reader RTPReader, packetDuration time.Duration, opts RTP
 	playoutTimer := time.NewTimer(time.Hour)
 	playoutTimer.Stop()
 
-	return &RTPJitterBuffer{
-		reader:         reader,
+	j := &RTPJitterBuffer{
 		packetDuration: packetDuration,
 		delayPackets:   opts.DelayPackets,
 		maxPackets:     opts.MaxPackets,
@@ -187,6 +187,27 @@ func NewRTPJitterBuffer(reader RTPReader, packetDuration time.Duration, opts RTP
 		sequence:       sequence,
 		initialTimer:   initialTimer,
 		playoutTimer:   playoutTimer,
+	}
+	j.reader.Store(&reader)
+	return j
+}
+
+// updateRTPSession retargets the upstream session when the owning dialog
+// installs a new media session (re-INVITE/hold). It implements the updater
+// consumed by RTPPacketReader.UpdateRTPSession, which keeps the jitter buffer
+// in the reader chain instead of replacing it with the bare session.
+func (j *RTPJitterBuffer) updateRTPSession(rtpSess *RTPSession) {
+	old := j.reader.Load()
+	var reader RTPReader = rtpSess
+	j.reader.Store(&reader)
+
+	if old == nil {
+		return
+	}
+	// Wake an in-flight read on the abandoned session when the socket
+	// changed; a fork sharing the parent conn does not need the poke.
+	if s, ok := (*old).(*RTPSession); ok && s.Sess.rtpConn != rtpSess.Sess.rtpConn {
+		s.Sess.rtpConn.SetReadDeadline(time.Now())
 	}
 }
 
@@ -306,8 +327,17 @@ func (j *RTPJitterBuffer) readLoop() {
 		}
 
 		slot := &j.slots[slotIndex]
-		n, err := j.reader.ReadRTP(slot.raw, &slot.packet)
+		reader := *j.reader.Load()
+		n, err := reader.ReadRTP(slot.raw, &slot.packet)
 		if err != nil {
+			// A media update swaps the upstream session and pokes the old
+			// conn to unblock this read; the timeout (or a key change that
+			// fails decryption on the old session) must retry on the new
+			// reader instead of terminating the pump.
+			if current := *j.reader.Load(); current != reader {
+				j.recycleSlot(slotIndex)
+				continue
+			}
 			j.sendInput(rtpJitterInput{err: err})
 			return
 		}

@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,12 +40,19 @@ type DialogServerSession struct {
 	// sipgo's wait loop races past the state notification, the ACK has
 	// been delivered to diago's OnAck path (which then calls ReadAck)
 	// and we can rely on this channel as ground truth.
+	//
+	// ackMu guards the lazy creation and the one-shot close: ACK retransmits
+	// can be dispatched concurrently and a bare check-then-close would panic
+	// with "close of closed channel".
+	ackMu sync.Mutex
 	ackCh chan struct{}
 }
 
 // ackChannel lazily allocates and returns the per-dialog ACK channel.
 // It is closed by diago's OnAck handler when the matching ACK arrives.
 func (d *DialogServerSession) ackChannel() <-chan struct{} {
+	d.ackMu.Lock()
+	defer d.ackMu.Unlock()
 	if d.ackCh == nil {
 		d.ackCh = make(chan struct{})
 	}
@@ -55,14 +63,32 @@ func (d *DialogServerSession) ackChannel() <-chan struct{} {
 // respondSignal waiters that the ACK has been delivered. It is safe to
 // call multiple times (subsequent calls are no-ops).
 func (d *DialogServerSession) notifyAck() {
-	if d.ackCh != nil {
-		select {
-		case <-d.ackCh:
-			// already closed
-		default:
-			close(d.ackCh)
-		}
+	d.ackMu.Lock()
+	defer d.ackMu.Unlock()
+	if d.ackCh == nil {
+		d.ackCh = make(chan struct{})
 	}
+	select {
+	case <-d.ackCh:
+		// already closed
+	default:
+		close(d.ackCh)
+	}
+}
+
+// matchesInviteAck reports whether req acks the dialog's INVITE transaction
+// (same CSeq number). Only such an ACK may close ackCh: a stray or forged ACK
+// with another CSeq must not let a pending respondSignal treat the sipgo
+// wait-loop timeout as success.
+func (d *DialogServerSession) matchesInviteAck(req *sip.Request) bool {
+	if req == nil || d.InviteRequest == nil {
+		return false
+	}
+	reqCSeq, inviteCSeq := req.CSeq(), d.InviteRequest.CSeq()
+	if reqCSeq == nil || inviteCSeq == nil {
+		return false
+	}
+	return reqCSeq.SeqNo == inviteCSeq.SeqNo
 }
 
 func (d *DialogServerSession) ID() string {
@@ -551,8 +577,7 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 		d.mu.Lock()
 		defer d.mu.Unlock()
 
-		sess := d.mediaSession
-		if sess == nil {
+		if d.mediaSession == nil {
 			return nil, nil
 		}
 		contentType := req.ContentType()
@@ -564,7 +589,7 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 			return nil, nil
 		}
 		// This is Late offer response
-		return sess, sess.RemoteSDP(body)
+		return d.applyLateOfferAnswerUnsafe(body)
 	}()
 	if err == nil && sess != nil {
 		// Finalize session. A failed finalize (ex. DTLS handshake) must

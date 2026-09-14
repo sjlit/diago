@@ -25,6 +25,13 @@ type RTPReader interface {
 	ReadRTP(buf []byte, p *rtp.Packet) (int, error)
 }
 
+// rtpSessionUpdater is implemented by reader wrappers that own an inner
+// RTPSession (ex. RTPJitterBuffer). UpdateRTPSession keeps such a wrapper in
+// the chain and retargets its upstream session instead of replacing it.
+type rtpSessionUpdater interface {
+	updateRTPSession(*RTPSession)
+}
+
 // RTPReaderRaw is a raw byte-level RTP reader abstraction.
 //
 // Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
@@ -256,6 +263,20 @@ func (r *RTPPacketReader) Reader() RTPReader {
 }
 
 func (r *RTPPacketReader) UpdateRTPSession(rtpSess *RTPSession) {
+	r.mu.RLock()
+	reader := r.reader
+	r.mu.RUnlock()
+
+	if u, ok := reader.(rtpSessionUpdater); ok {
+		// A wrapper (ex. jitter buffer) owns the session: retarget it and keep
+		// the wrapper. Replacing the reader with the bare session here used to
+		// silently drop the wrapper from the chain on every media update. The
+		// poke target stays nil: wrapper readers are interrupted through the
+		// readPauser signal, not conn deadline pokes.
+		u.updateRTPSession(rtpSess)
+		return
+	}
+
 	// The old session may be abandoned by this update: an in-flight read
 	// blocks on its underlying RTP conn and would never observe the swap.
 	// Poke it with an immediate deadline AFTER the swap, so a woken Read()
@@ -265,7 +286,7 @@ func (r *RTPPacketReader) UpdateRTPSession(rtpSess *RTPSession) {
 	// would break all reads on the shared socket. Generic UpdateReader
 	// callers (e.g. jitter buffer) may reuse the same session, so only
 	// UpdateRTPSession pokes.
-	old := r.Reader()
+	old := reader
 	r.UpdateReader(rtpSess)
 	if s, ok := old.(*RTPSession); ok {
 		if s.Sess.rtpConn != rtpSess.Sess.rtpConn {

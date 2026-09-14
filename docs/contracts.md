@@ -590,7 +590,7 @@ invokes outside `d.mu` but always before the dialog is confirmed.
 certificate (RFC 5763 §5.10). All RFC 8122 hash algorithms are supported
 (sha-1/224/256/384/512), compared case- and colon-insensitively. If none
 matches — or only unsupported algorithms were offered — the handshake aborts.
-Behavior change (v0.9.x): mismatches were previously accepted.
+Behavior change (after v0.0.5): mismatches were previously accepted.
 
 **DTLS server role requests a client certificate automatically.** When diago
 is the DTLS server, the peer only presents a certificate if requested.

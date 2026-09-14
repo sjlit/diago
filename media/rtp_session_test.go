@@ -491,3 +491,22 @@ func TestRTPSessionCloseKeepsRTCPWriteUsable(t *testing.T) {
 		t.Fatal("WriteRTCP blocked after Close")
 	}
 }
+
+// Regression: the direction gate silently dropped writes but RTPSession still
+// counted them, so a later RTCP sender report described media never sent.
+func TestRTPSessionWriteBlockedByDirectionSkipsStats(t *testing.T) {
+	sess := &MediaSession{
+		Codecs: []Codec{CodecAudioUlaw},
+		Mode:   sdp.ModeSendrecv,
+	}
+	sess.mode = sdp.ModeRecvonly // remote holds us
+	rtpSess := NewRTPSession(sess)
+
+	pkt := &rtp.Packet{
+		Header:  rtp.Header{Version: 2, PayloadType: 0, SSRC: 0x55, SequenceNumber: 1, Timestamp: 160},
+		Payload: make([]byte, 160),
+	}
+	require.NoError(t, rtpSess.WriteRTP(pkt))
+	require.Zero(t, rtpSess.WriteStats().SSRC)
+	require.Zero(t, rtpSess.WriteStats().PacketsCount)
+}

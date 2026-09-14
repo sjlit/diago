@@ -31,10 +31,14 @@ const (
 )
 
 // cSectionKey records, for every parsed c= line, how many m= lines preceded
-// it. It is not a legal SDP type (types are single characters), so parsed
-// input can never collide with it. Descriptions built manually without it
-// fall back to session-level-only connection lookups.
+// it. SDP types are a single character and Unmarshal enforces that, so parsed
+// input can never collide with this key. Descriptions built manually without
+// it fall back to session-level-only connection lookups.
 const cSectionKey = "c_sections"
+
+// aSectionKey does the same for a= lines so direction attributes can be
+// resolved against the media section they belong to (session level is 0).
+const aSectionKey = "a_sections"
 
 type SessionDescription map[string][]string
 
@@ -259,12 +263,65 @@ func (sd SessionDescription) MediaDirection() string {
 	}
 	mode := ModeSendrecv
 	for _, v := range attrs {
-		switch v {
-		case ModeSendrecv, ModeSendonly, ModeRecvonly, ModeInactive:
-			mode = v
+		if m := directionAttr(v); m != "" {
+			mode = m
 		}
 	}
 	return mode
+}
+
+// MediaDirectionFor returns the direction that applies to the first media
+// description of the given type. A session-level direction applies to every
+// section; a media-level direction overrides it (RFC 4566 §6). Descriptions
+// built manually (no section bookkeeping) fall back to MediaDirection, whose
+// last-wins scan cannot distinguish sections.
+func (sd SessionDescription) MediaDirectionFor(mediaType string) string {
+	_, idx, err := sd.mediaDescriptionIdx(mediaType)
+	if err != nil {
+		return sd.MediaDirection()
+	}
+
+	sections := sd.Values(aSectionKey)
+	attrs := sd.Values("a")
+	if len(sections) == 0 || len(sections) != len(attrs) {
+		return sd.MediaDirection()
+	}
+
+	sessionMode, mediaMode := "", ""
+	for i, section := range sections {
+		sectionNum, err := strconv.Atoi(section)
+		if err != nil {
+			continue
+		}
+		if sectionNum != 0 && sectionNum != idx+1 {
+			continue
+		}
+		mode := directionAttr(attrs[i])
+		if mode == "" {
+			continue
+		}
+		if sectionNum == 0 {
+			sessionMode = mode
+		} else {
+			mediaMode = mode
+		}
+	}
+
+	if mediaMode != "" {
+		return mediaMode
+	}
+	if sessionMode != "" {
+		return sessionMode
+	}
+	return ModeSendrecv
+}
+
+func directionAttr(v string) string {
+	switch v {
+	case ModeSendrecv, ModeSendonly, ModeRecvonly, ModeInactive:
+		return v
+	}
+	return ""
 }
 
 // Unmarshal is non validate version of sdp parsing
@@ -293,6 +350,12 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 			}
 			key := line[:ind]
 			value := line[ind+1:]
+			// RFC 4566: <type>=<value>, type is a single character. Enforcing
+			// it also keeps parsed input from forging the internal
+			// section-tracking keys (c_sections/a_sections).
+			if len(key) != 1 {
+				return fmt.Errorf("sdp: type must be a single character, got %q", key)
+			}
 
 			sd[key] = append(sd[key], value)
 			switch key {
@@ -302,6 +365,10 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 				// Remember in which section this c= line appeared, so
 				// media-scoped connection lines can be resolved.
 				sd[cSectionKey] = append(sd[cSectionKey], strconv.Itoa(mCount))
+			case "a":
+				// Same bookkeeping for direction attributes: a media update
+				// must not let another section's a=sendonly/recvonly leak in.
+				sd[aSectionKey] = append(sd[aSectionKey], strconv.Itoa(mCount))
 			}
 		}
 

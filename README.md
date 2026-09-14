@@ -41,9 +41,9 @@ will also bring the Pion media stack into Diago.
 
 `MediaConfig.SecureRTP` selects plain RTP (`0`), SDES (`1`) or DTLS-SRTP (`2`).
 DTLS-SRTP verifies the peer certificate against every `a=fingerprint` in the
-remote SDP (RFC 5763) and **fails closed** on mismatch: since v0.9.x an
-offer/answer that does not match the presented certificate aborts the media
-instead of being silently accepted.
+remote SDP (RFC 5763) and **fails closed** on mismatch: an offer/answer that
+does not match the presented certificate aborts the media instead of being
+silently accepted (behavior change after v0.0.5).
 
 When diago acts as the DTLS **server** (it sent the offer
 and the remote answered `setup:active` — the usual UAC path), client

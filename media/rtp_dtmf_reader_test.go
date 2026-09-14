@@ -1,11 +1,14 @@
 package media
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func testDTMFLoopSequence(r *RTPDtmfReader, sequence []DTMFEvent) string {
@@ -157,4 +160,64 @@ func TestDTMFReaderIgnoresLineEvents(t *testing.T) {
 	r.processDTMFEvent(DTMFEvent{Event: 16, EndOfEvent: true, Volume: 10, Duration: 320}, false)
 	_, set = r.ReadDTMF()
 	assert.False(t, set)
+}
+
+// Regression: a single-packet DTMF event (M=1,E=1) that is retransmitted must
+// be reported once, not once per copy - the retransmission keeps marker and
+// timestamp, so the old mbit check completed the event again.
+func TestDTMFReaderSinglePacketRetransmission(t *testing.T) {
+	payload := []byte{0x01, 0x8A, 0x03, 0xE8} // event 1, E bit, volume 10, 1000ms
+	src := bytes.NewReader(append(append([]byte{}, payload...), payload...))
+
+	packetReader := &RTPPacketReader{}
+	packetReader.PacketHeader = rtp.Header{
+		PayloadType: CodecTelephoneEvent8000.PayloadType,
+		Marker:      true,
+		Timestamp:   1600,
+	}
+	r := NewRTPDTMFReader(CodecTelephoneEvent8000, packetReader, src)
+	buf := make([]byte, len(payload))
+
+	n, err := r.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+	digit, ok := r.ReadDTMF()
+	require.True(t, ok)
+	require.Equal(t, '1', digit)
+
+	// Retransmission of the same packet/timestamp: no second digit.
+	n, err = r.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+	_, ok = r.ReadDTMF()
+	require.False(t, ok, "retransmitted end packet must not repeat the digit")
+}
+
+// A distinct single-packet event with a new timestamp must still be reported.
+func TestDTMFReaderSinglePacketNewTimestamp(t *testing.T) {
+	ev1 := []byte{0x01, 0x8A, 0x03, 0xE8} // '1'
+	ev2 := []byte{0x02, 0x8A, 0x03, 0xE8} // '2'
+	src := bytes.NewReader(append(append([]byte{}, ev1...), ev2...))
+
+	packetReader := &RTPPacketReader{}
+	packetReader.PacketHeader = rtp.Header{
+		PayloadType: CodecTelephoneEvent8000.PayloadType,
+		Marker:      true,
+		Timestamp:   1600,
+	}
+	r := NewRTPDTMFReader(CodecTelephoneEvent8000, packetReader, src)
+	buf := make([]byte, len(ev1))
+
+	_, err := r.Read(buf)
+	require.NoError(t, err)
+	digit, ok := r.ReadDTMF()
+	require.True(t, ok)
+	require.Equal(t, '1', digit)
+
+	packetReader.PacketHeader.Timestamp = 3200
+	_, err = r.Read(buf)
+	require.NoError(t, err)
+	digit, ok = r.ReadDTMF()
+	require.True(t, ok)
+	require.Equal(t, '2', digit)
 }

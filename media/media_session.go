@@ -598,6 +598,13 @@ func (s *MediaSession) NegotiatedDirection() string {
 	return s.mode
 }
 
+// writeBlockedByDirection reports whether the negotiated direction forbids
+// sending (the remote holds us, or the stream is inactive). WriteRTP drops
+// silently in that case; callers can use this to keep statistics honest.
+func (m *MediaSession) writeBlockedByDirection() bool {
+	return m.mode == sdp.ModeRecvonly || m.mode == sdp.ModeInactive
+}
+
 // ValidateSDPSessionName rejects session names that could break out of the
 // "s=" line: SDP line breaks are CR or LF, so a name carrying them would
 // inject additional SDP attributes. Empty keeps the library default and is
@@ -704,8 +711,9 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	}
 	s.SetRemoteAddr(&net.UDPAddr{IP: ci.IP, Port: md.Port})
 
-	// Check mode for media direction
-	mode := sd.MediaDirection()
+	// Check mode for media direction. Resolve against the audio section only:
+	// a video section's direction must not enable/disable audio (RFC 4566 §6).
+	mode := sd.MediaDirectionFor("audio")
 	s.mode = negotiateMediaDirection(mode, s.Mode)
 
 	// Check for SDES
@@ -937,8 +945,12 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 	local := filterUnsupportedCodecs(s.Codecs)
 	codecs = filterUnsupportedCodecs(codecs)
 	if len(local) == 0 {
-		s.filterCodecs = codecs
-		return len(codecs)
+		// No usable local codec (ex. opus-only config without with_opus_c).
+		// Accepting the remote list wholesale would negotiate codecs this
+		// build cannot run and fail mid-call; reject instead (callers map this
+		// to 488).
+		s.filterCodecs = nil
+		return 0
 	}
 
 	DefaultLogger().Debug("Remote Codecs Update", "local", s.Codecs, "remote", codecs)
@@ -1324,7 +1336,7 @@ func (m *MediaSession) ReadRTCPRawDeadline(buf []byte, t time.Time) (int, error)
 }
 
 func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
-	if m.mode == sdp.ModeRecvonly || m.mode == sdp.ModeInactive {
+	if m.writeBlockedByDirection() {
 		// We block here as we would violate our media direction
 		return nil
 	}
@@ -1503,6 +1515,14 @@ type dtlsSetup struct {
 
 func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string) []byte {
 	// ntpTime := GetCurrentNTPTimestamp()
+	if len(codecs) == 0 {
+		// Nothing usable to advertise (ex. opus-only configuration without
+		// with_opus_c). RFC 4566 requires at least one fmt; emit a rejected
+		// m= line (port 0) instead of "m=audio <port> RTP/AVP " with none.
+		DefaultLogger().Error("no usable codecs to advertise; SDP marks the media stream as rejected")
+		rtpPort = 0
+		codecs = []Codec{CodecAudioUlaw}
+	}
 
 	fmts := make([]string, len(codecs))
 	formatsMap := []string{}

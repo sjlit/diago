@@ -154,6 +154,19 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 		b.Originator = d
 	}
 
+	// Remove the just-appended dialog: a failed Add must not leave a stale
+	// entry in the bridge (#21 atomicity).
+	rollbackLast := func() {
+		b.dialogs = b.dialogs[:len(b.dialogs)-1]
+		if b.Originator != nil && b.Originator.ID() == d.ID() {
+			if len(b.dialogs) > 0 {
+				b.Originator = b.dialogs[0]
+			} else {
+				b.Originator = nil
+			}
+		}
+	}
+
 	if len(b.dialogs) < b.WaitDialogsNum {
 		return nil
 	}
@@ -162,39 +175,22 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// bridge does not keep a stale half-ready dialog.
 	for _, dd := range b.dialogs {
 		if err := dd.Media().checkMediaUsable(); err != nil {
-			b.dialogs = b.dialogs[:len(b.dialogs)-1]
-			if b.Originator != nil && b.Originator.ID() == d.ID() {
-				if len(b.dialogs) > 0 {
-					b.Originator = b.dialogs[0]
-				} else {
-					b.Originator = nil
-				}
-			}
+			rollbackLast()
 			return fmt.Errorf("dialog session not answered %q: %w", dd.ID(), err)
 		}
 	}
 
-	if b.proxyRunning {
-		return fmt.Errorf("proxy media already running")
+	done, err := b.claimProxyUnsafe()
+	if err != nil {
+		rollbackLast()
+		return err
 	}
-	b.proxyRunning = true
-	b.proxyDone = make(chan struct{})
-	done := b.proxyDone
 	go func() {
 		defer func(start time.Time) {
 			b.log.Debug("Proxy media setup", "dur", time.Since(start).String())
 		}(time.Now())
-		defer func() {
-			b.mu.Lock()
-			b.proxyRunning = false
-			// done is the generation channel; close exactly once here.
-			select {
-			case <-done:
-			default:
-				close(done)
-			}
-			b.mu.Unlock()
-		}()
+		// done is the generation channel; releaseProxy closes it exactly once.
+		defer b.releaseProxy(done)
 		if err := b.proxyMedia(); err != nil {
 			if errors.Is(err, io.EOF) {
 				return
@@ -204,6 +200,34 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 		}
 	}()
 	return nil
+}
+
+// claimProxyUnsafe marks a proxy generation as running so Close/Remove can
+// interrupt and wait for it. Caller must hold b.mu. Fails when the bridge is
+// closed or a proxy is already running, which makes double-start impossible
+// from every entry point (auto-start, ProxyMedia, ProxyMediaControl).
+func (b *Bridge) claimProxyUnsafe() (chan struct{}, error) {
+	if b.closed {
+		return nil, ErrBridgeClosed
+	}
+	if b.proxyRunning {
+		return nil, fmt.Errorf("proxy media already running")
+	}
+	b.proxyRunning = true
+	b.proxyDone = make(chan struct{})
+	return b.proxyDone, nil
+}
+
+// releaseProxy ends the claimed generation and wakes Close/Remove waiters.
+func (b *Bridge) releaseProxy(done chan struct{}) {
+	b.mu.Lock()
+	b.proxyRunning = false
+	select {
+	case <-done:
+	default:
+		close(done)
+	}
+	b.mu.Unlock()
 }
 
 // RemoveDialogSession removes a dialog by ID. Missing IDs are a no-op nil.
@@ -318,14 +342,24 @@ func interruptBridgeProxy(dialogs []DialogSession) []func() {
 func (b *Bridge) ProxyMedia() error {
 	b.mu.Lock()
 	n := len(b.dialogs)
-	b.mu.Unlock()
 	if n < 2 {
+		b.mu.Unlock()
 		return fmt.Errorf("number of dialogs must equal to 2")
 	}
 
 	if b.WaitDialogsNum < 3 {
+		b.mu.Unlock()
 		return fmt.Errorf("you are already running proxy media. Increase WaitDialogsNum")
 	}
+
+	done, err := b.claimProxyUnsafe()
+	b.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Claimed like the background paths so Close/Remove can interrupt and
+	// wait for this proxy too.
+	defer b.releaseProxy(done)
 
 	return b.proxyMedia()
 }
@@ -344,19 +378,19 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 		b.mu.Unlock()
 		return nil, fmt.Errorf("number of dialogs must equal to 2")
 	}
-	if b.closed {
-		b.mu.Unlock()
-		return nil, ErrBridgeClosed
-	}
-	if b.proxyRunning {
-		b.mu.Unlock()
-		return nil, fmt.Errorf("proxy media already running")
-	}
+	done, err := b.claimProxyUnsafe()
 	b.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
 	proxyErr := make(chan error, 1)
 	go func() {
-		proxyErr <- b.proxyMedia()
+		err := b.proxyMedia()
+		// Release before signaling: a stopF caller can immediately start a new
+		// proxy generation without racing the flag.
+		b.releaseProxy(done)
+		proxyErr <- err
 	}()
 
 	stopF := func() error {
@@ -538,6 +572,12 @@ type BridgeMix struct {
 	mu      sync.Mutex
 	dialogs []DialogSession
 
+	// mixMutateMu serializes Add/Remove across the stop-wait-restart cycle.
+	// mixStopWait releases b.mu while waiting for the mix to drain, so without
+	// it two mutators would wait on the same generation and both restart the
+	// mix (double loop over the same streams). Never held by the mix loop.
+	mixMutateMu sync.Mutex
+
 	// mixWG and mixDone track the CURRENT mix generation. A fresh WaitGroup
 	// is created per mix (re)start, so a stopper waiting on a drained
 	// generation can never be wedged by a later mix reusing the same
@@ -607,6 +647,9 @@ func (b *BridgeMix) DialogSessionsList() []DialogSession {
 }
 
 func (b *BridgeMix) AddDialogSession(d DialogSession) error {
+	b.mixMutateMu.Lock()
+	defer b.mixMutateMu.Unlock()
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -639,6 +682,9 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 }
 
 func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
+	b.mixMutateMu.Lock()
+	defer b.mixMutateMu.Unlock()
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	dialogID := d.ID()
@@ -751,9 +797,10 @@ func (b *BridgeMix) mixStop() (bool, error) {
 }
 
 func (b *BridgeMix) mixStart() error {
-	if b.mixState == 2 {
-		// A stop is in progress (another goroutine is in mixStopWait).
-		// Don't start a new mix to avoid WaitGroup Add/Wait race.
+	if b.mixState != 0 {
+		// 1: a mix is already running (another mutator restarted it while
+		// this one was waiting) - starting a second loop would have two
+		// generations reading the same streams. 2: a stop is in progress.
 		return nil
 	}
 	if len(b.dialogs) < 1 {

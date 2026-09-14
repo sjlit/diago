@@ -106,10 +106,10 @@ func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
 		InsecureSkipVerify: conf.ServerName == "", // Accept self-signed certs (for dev)
 		ServerName:         conf.ServerName,       // If insecure is false
 
-		// IT IS STILL UNCLEAR WHY WE CAN NOT READ CERTIFICATE HERE
-		// Empty fingerprints only happens for test-only raw helpers
-		// (dtlsServer/dtlsClient). SDP paths reject missing fingerprints
-		// earlier in RemoteSDP (N7); direct calls fail closed (RFC 5763).
+		// Empty fingerprints means the caller is not on the SDP path (raw
+		// dtlsServer/dtlsClient test helpers): verification is skipped there.
+		// RemoteSDP rejects DTLS-SRTP without a=fingerprint before any session
+		// is built (N7), so negotiated calls always verify.
 		VerifyConnection: func(state *dtls.State) error {
 			if len(fingerprints) == 0 {
 				return nil

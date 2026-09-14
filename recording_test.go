@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sjlit/diago/audio"
@@ -57,7 +58,7 @@ func TestIntegrationRecordingStereoWav(t *testing.T) {
 		},
 	}
 
-	recordFile, err := os.OpenFile("/tmp/diago_test_record_stereo.wav", os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
+	recordFile, err := os.OpenFile(filepath.Join(t.TempDir(), "diago_test_record_stereo.wav"), os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
 	require.NoError(t, err)
 	defer recordFile.Close()
 

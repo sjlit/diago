@@ -128,3 +128,76 @@ a=rtpmap:96 H264/90000
 	require.NoError(t, err)
 	require.Equal(t, net.ParseIP("192.168.100.11").String(), ci.IP.String())
 }
+
+// Regression: MediaDirection scanned every a= line, so a later video section
+// could override the audio direction (and vice versa).
+func TestMediaDirectionForMultiMedia(t *testing.T) {
+	body := `v=0
+o=- 3905350750 3905350750 IN IP4 192.168.100.11
+s=test
+t=0 0
+c=IN IP4 192.168.100.11
+m=audio 57797 RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+a=sendrecv
+m=video 40000 RTP/AVP 96
+a=rtpmap:96 H264/90000
+a=recvonly
+`
+	sd := SessionDescription{}
+	require.NoError(t, Unmarshal([]byte(body), &sd))
+	require.Equal(t, ModeSendrecv, sd.MediaDirectionFor("audio"))
+	require.Equal(t, ModeRecvonly, sd.MediaDirectionFor("video"))
+	// The legacy last-wins scan still sees the video attribute: this is the
+	// behavior MediaDirectionFor exists to avoid.
+	require.Equal(t, ModeRecvonly, sd.MediaDirection())
+
+	// A session-level direction is overridden by the media section.
+	body2 := `v=0
+o=- 1 1 IN IP4 192.168.100.11
+s=test
+t=0 0
+c=IN IP4 192.168.100.11
+a=sendonly
+m=audio 57797 RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+a=sendrecv
+`
+	sd2 := SessionDescription{}
+	require.NoError(t, Unmarshal([]byte(body2), &sd2))
+	require.Equal(t, ModeSendrecv, sd2.MediaDirectionFor("audio"))
+
+	// No direction attributes at all defaults to sendrecv.
+	body3 := `v=0
+o=- 1 1 IN IP4 192.168.100.11
+s=test
+t=0 0
+c=IN IP4 192.168.100.11
+m=audio 57797 RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+`
+	sd3 := SessionDescription{}
+	require.NoError(t, Unmarshal([]byte(body3), &sd3))
+	require.Equal(t, ModeSendrecv, sd3.MediaDirectionFor("audio"))
+}
+
+// Regression: the parser accepted arbitrary key lengths, so a line like
+// "c_sections=7" forged the internal section-tracking key and broke the
+// media-level c= mapping. SDP types are single characters (RFC 4566).
+func TestUnmarshalRejectsMultiCharacterType(t *testing.T) {
+	body := `v=0
+o=- 1 1 IN IP4 10.0.0.1
+s=-
+c=IN IP4 10.0.0.1
+c_sections=7
+t=0 0
+m=audio 5004 RTP/AVP 0
+`
+	sd := SessionDescription{}
+	err := Unmarshal([]byte(body), &sd)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "single character")
+	// Only the legitimate session-level c= is tracked; the forged line was
+	// rejected before it could append to the internal key.
+	require.Equal(t, []string{"0"}, sd.Values("c_sections"))
+}

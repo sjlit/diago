@@ -15,6 +15,13 @@ type RTPDtmfReader struct {
 	packetReader *RTPPacketReader
 
 	lastTimestamp uint32
+	// completedTimestamp is the RTP timestamp of the last completed event and
+	// hasCompleted reports whether one was seen. RFC 4733 allows the end
+	// packet of an event to be retransmitted; a single-packet event (M=1,E=1)
+	// retransmission carries the same timestamp and M bit, so without this it
+	// would be reported as a second key press.
+	completedTimestamp uint32
+	hasCompleted       bool
 
 	lastEv  DTMFEvent
 	dtmf    rune
@@ -52,7 +59,20 @@ func (w *RTPDtmfReader) Read(b []byte) (int, error) {
 	if err := DTMFDecode(b, &ev); err != nil {
 		slog.Error("Failed to decode DTMF event", "error", err)
 	}
+
+	// A retransmitted end packet keeps the event timestamp. Suppress it so the
+	// same digit is not surfaced twice (single-packet events carry M=1 too, so
+	// the mbit check below cannot distinguish the retransmission).
+	if ev.EndOfEvent && w.hasCompleted && w.completedTimestamp == hdr.Timestamp {
+		w.lastTimestamp = hdr.Timestamp
+		return n, nil
+	}
+
 	w.processDTMFEvent(ev, hdr.Marker || w.lastTimestamp != hdr.Timestamp)
+	if ev.EndOfEvent {
+		w.completedTimestamp = hdr.Timestamp
+		w.hasCompleted = true
+	}
 	w.lastTimestamp = hdr.Timestamp
 	return n, nil
 }

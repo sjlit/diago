@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/pion/rtp"
@@ -87,9 +86,6 @@ func TestBridgeDiscardQueuedRTPOnStart(t *testing.T) {
 			require.NoError(t, b.AddDialogSession(outgoing))
 
 			sendIncoming(3)
-			// Loopback UDP enqueues on send, but give the receiver a moment
-			// so the assertion is deterministic under load.
-			time.Sleep(20 * time.Millisecond)
 
 			err := b.proxyMedia()
 			require.ErrorIs(t, err, io.EOF) // in-memory readers are empty

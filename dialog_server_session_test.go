@@ -652,3 +652,82 @@ a=sendrecv
 	bye.SetTransport(invite.Transport())
 	require.NoError(t, cli.WriteRequest(bye))
 }
+
+// A replayed ACK can be dispatched concurrently; notifyAck must not panic with
+// "close of closed channel" and must leave the channel closed.
+func TestDialogServerSessionNotifyAckConcurrent(t *testing.T) {
+	d := &DialogServerSession{}
+	d.ackChannel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.notifyAck()
+		}()
+	}
+	wg.Wait()
+
+	select {
+	case <-d.ackChannel():
+	default:
+		t.Fatal("ack channel must be closed")
+	}
+}
+
+// Only an ACK matching the INVITE CSeq may close ackCh: a stray ACK must not
+// turn a real sipgo wait-loop timeout into a successful Answer.
+func TestDialogServerSessionMatchesInviteAck(t *testing.T) {
+	inviteReq, err := diagotestSafeNewRequest(sip.INVITE, sip.Uri{Scheme: "sip", Host: "127.0.0.1"})
+	require.NoError(t, err)
+	inviteReq.AppendHeader(&sip.CSeqHeader{SeqNo: 10, MethodName: sip.INVITE})
+
+	d := &DialogServerSession{
+		DialogServerSession: &sipgo.DialogServerSession{
+			Dialog: sipgo.Dialog{InviteRequest: inviteReq},
+		},
+	}
+
+	ack, err := diagotestSafeNewRequest(sip.ACK, sip.Uri{Scheme: "sip", Host: "127.0.0.1"})
+	require.NoError(t, err)
+	ack.AppendHeader(&sip.CSeqHeader{SeqNo: 10, MethodName: sip.ACK})
+	assert.True(t, d.matchesInviteAck(ack))
+
+	stray, err := diagotestSafeNewRequest(sip.ACK, sip.Uri{Scheme: "sip", Host: "127.0.0.1"})
+	require.NoError(t, err)
+	stray.AppendHeader(&sip.CSeqHeader{SeqNo: 11, MethodName: sip.ACK})
+	assert.False(t, d.matchesInviteAck(stray))
+	assert.False(t, d.matchesInviteAck(nil))
+}
+
+// Regression: the late-offer ACK install path stopped refreshing the
+// dialog-level remote-held flag, so IsRemoteHeld() stayed false after a peer
+// answered our offer with sendonly (and stayed true after it unheld).
+func TestDialogMediaLateOfferAnswerUpdatesRemoteHeld(t *testing.T) {
+	sess := &media.MediaSession{
+		Codecs: []media.Codec{media.CodecAudioUlaw},
+		Mode:   sdp.ModeSendrecv,
+	}
+	d := &DialogMedia{mediaSession: sess}
+
+	answer := func(mode string) []byte {
+		return []byte(`v=0
+o=- 1 1 IN IP4 127.0.0.1
+s=-
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 4000 RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+a=` + mode)
+	}
+
+	got, err := d.applyLateOfferAnswerUnsafe(answer("sendonly"))
+	require.NoError(t, err)
+	require.Same(t, sess, got)
+	require.True(t, d.IsRemoteHeld(), "sendonly answer means the remote holds us")
+
+	_, err = d.applyLateOfferAnswerUnsafe(answer("sendrecv"))
+	require.NoError(t, err)
+	require.False(t, d.IsRemoteHeld(), "sendrecv answer must clear the flag")
+}

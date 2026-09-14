@@ -414,6 +414,11 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	if err := sess.WriteRTP(pkt); err != nil {
 		return err
 	}
+	if sess.writeBlockedByDirection() {
+		// The direction gate dropped the packet: do not count it, otherwise
+		// the next RTCP sender report would describe media never sent.
+		return nil
+	}
 
 	s.rtcpMU.Lock()
 	writeStats := &s.writeStats
@@ -641,10 +646,15 @@ func (s *RTPSession) writeRTCP(now time.Time) error {
 
 	var pkt rtcp.Packet
 
-	// If there is no writer in session (a=recvonly) then generate only receiver report
-	// otherwise always go with sender report with reception reports
+	// If there is no writer in session (remote holds us) then generate only
+	// receiver report, otherwise always go with sender report with reception
+	// reports. Use the negotiated direction, not the configured preference.
 	s.rtcpMU.Lock()
-	if sess.Mode == sdp.ModeRecvonly {
+	mode := sess.mode
+	if mode == "" {
+		mode = sess.Mode
+	}
+	if mode == sdp.ModeRecvonly || mode == sdp.ModeInactive {
 		if s.readStats.SSRC == 0 {
 			s.rtcpMU.Unlock()
 			return nil

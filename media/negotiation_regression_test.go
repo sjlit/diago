@@ -232,3 +232,36 @@ a=fingerprint:SHA-256 AA:BB:CC:DD`
 	// RFC 5763 §5 forbids the RFC 4145 connection attribute.
 	assert.NotContains(t, string(fork.LocalSDP()), "a=connection:")
 }
+
+// Regression: with an opus-only local configuration in a build without
+// with_opus_c, updateRemoteCodecs accepted the remote codec list wholesale
+// (negotiating codecs this build cannot run) and LocalSDP emitted an invalid
+// m= line with no formats.
+func TestMediaSession_OpusOnlyLocalConfiguration(t *testing.T) {
+	m := &MediaSession{
+		Codecs: []Codec{CodecAudioOpus},
+		Mode:   sdp.ModeSendrecv,
+		Laddr:  net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 4000},
+	}
+
+	sd := `v=0
+o=- 1 1 IN IP4 127.0.0.1
+s=-
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 4000 RTP/AVP 0
+a=rtpmap:0 PCMU/8000`
+	err := m.RemoteSDP([]byte(sd))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no supported codecs")
+	require.Empty(t, m.filterCodecs)
+
+	// The offer must remain well-formed regardless of build tag.
+	out := string(m.LocalSDP())
+	if OpusSupportedForNegotiation() {
+		require.Contains(t, out, "opus/48000/2")
+	} else {
+		require.Contains(t, out, "m=audio 0 RTP/AVP 0")
+		require.NotContains(t, out, "opus")
+	}
+}

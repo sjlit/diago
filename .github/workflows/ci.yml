@@ -30,3 +30,24 @@ jobs:
 
       - name: Test (race)
         run: go test -race -count=1 -timeout 15m ./...
+
+  opus-c:
+    name: Build with_opus_c
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install libopus
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopus-dev libopusfile-dev pkg-config
+
+      - name: Vet (with_opus_c)
+        run: go vet -tags with_opus_c ./...
+
+      - name: Test audio (with_opus_c)
+        run: go test -tags with_opus_c -count=1 -timeout 5m ./audio

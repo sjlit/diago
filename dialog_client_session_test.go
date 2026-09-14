@@ -831,3 +831,34 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		assert.Equal(t, sip.StatusBusyHere, <-referState)
 	})
 }
+
+// A malformed 2xx without Contact must not panic Refer: the missing remote
+// target is reported as an error and Referred-By falls back to the Contact of
+// our own INVITE.
+func TestDialogClientSessionReferMissingContact(t *testing.T) {
+	inviteReq, err := diagotestSafeNewRequest(sip.INVITE, sip.Uri{Scheme: "sip", Host: "127.0.0.1", User: "bob"})
+	require.NoError(t, err)
+	inviteReq.AppendHeader(sip.NewHeader("Contact", "<sip:me@127.0.0.1:5060>"))
+
+	d := &DialogClientSession{
+		DialogClientSession: &sipgo.DialogClientSession{
+			Dialog: sipgo.Dialog{
+				InviteRequest:  inviteReq,
+				InviteResponse: &sip.Response{},
+			},
+		},
+	}
+
+	// No remote contact: fail cleanly, never dereference nil.
+	err = d.referWithContacts(context.Background(), nil, nil, sip.Uri{Host: "127.0.0.1"}, &SignalParams{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote contact")
+
+	// Remote contact present, response Contact absent: falls back to our
+	// INVITE Contact and proceeds to dialogRefer's own state guard.
+	remote := &sip.ContactHeader{Address: sip.Uri{Scheme: "sip", Host: "127.0.0.1", Port: 5090}}
+	err = d.referWithContacts(context.Background(), remote, nil, sip.Uri{Host: "127.0.0.1"}, &SignalParams{})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "contact is missing")
+	assert.Contains(t, err.Error(), "answered")
+}
