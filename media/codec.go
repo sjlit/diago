@@ -70,6 +70,25 @@ func CodecAudioFromList(codecs []Codec) (Codec, bool) {
 	return Codec{}, false
 }
 
+// CodecForPayloadType resolves a codec by payload type. The negotiated list
+// (filterCodecs) is searched first so remote-assigned dynamic payload types
+// (ex. opus at PT 111, telephone-event at PT 100) resolve to the negotiated
+// codec instead of failing against locally configured defaults. Falls back to
+// the configured codecs before/without negotiation.
+func (s *MediaSession) CodecForPayloadType(payloadType uint8) (Codec, bool) {
+	for _, c := range s.filterCodecs {
+		if c.PayloadType == payloadType {
+			return c, true
+		}
+	}
+	for _, c := range s.Codecs {
+		if c.PayloadType == payloadType {
+			return c, true
+		}
+	}
+	return Codec{}, false
+}
+
 // Deprecated: Use CodecAudioFromSession
 func CodecFromSession(s *MediaSession) Codec {
 	return CodecAudioFromSession(s)
@@ -162,6 +181,12 @@ func CodecsFromSDPRead(formats []string, attrs []string, codecsAudio []Codec) (i
 	n := 0
 	var rerr error
 	for _, f := range formats {
+		if n >= len(codecsAudio) {
+			// Defensive: a malformed offer with more formats than the caller
+			// allocated (duplicate rtpmap lines, repeated formats) must not
+			// index past the slice. Parse what fits and stop.
+			break
+		}
 		if f == "0" {
 			codecsAudio[n] = CodecAudioUlaw
 			n++
@@ -221,6 +246,10 @@ func CodecsFromSDPRead(formats []string, attrs []string, codecsAudio []Codec) (i
 				}
 				codecsAudio[n] = codec
 				n++
+				// A payload type has exactly one rtpmap. Duplicate lines (or a
+				// second m= section reusing the PT) must not write twice: the
+				// output slice is sized by len(formats).
+				break
 			}
 		}
 	}

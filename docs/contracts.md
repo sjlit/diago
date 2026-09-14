@@ -80,10 +80,17 @@ Exact field semantics of `Fork()`:
 
 | Category | Fields |
 |---|---|
-| **Copied** | `Laddr` (struct copy), `ExternalIP`, `Codecs` (slice clone), `Mode` (configured preference), `RTPNAT`, `sdp` (only set by `InitWithSDP`), `sessionID`, `sessionVersion`, `SecureRTP`, `SRTPAlg`, `remoteProto`, `srtpRemoteTag`, `DTLSConf` |
+| **Copied** | `Laddr` (struct copy), `ExternalIP`, `Codecs` (slice clone), `Mode` (configured preference), `RTPNAT`, `sdp` (only set by `InitWithSDP`), `sessionID`, `sessionVersion`, `SecureRTP`, `SRTPAlg`, `remoteProto`, `srtpRemoteTag`, `DTLSConf`, `dtlsEstablished` |
 | **Shared with parent** | `rtpConn`, `rtcpConn` (same UDP sockets) |
-| **Reset / empty** | `Raddr`, `rtcpRaddr` (set again by `RemoteSDP`), negotiated `mode`, `filterCodecs`, `localCtxSRTP`, `remoteCtxSRTP`, `dtlsConn`, `onFinalize`, `writeRTPBuf`, `ReadRTPFromAddr` |
+| **Reset / empty** | `Raddr`, `rtcpRaddr` (set again by `RemoteSDP`), negotiated `mode`, `filterCodecs`, `localCtxSRTP`, `remoteCtxSRTP` (SDES re-creates them from `a=crypto`), `dtlsConn`, `onFinalize`, `writeRTPBuf`, `ReadRTPFromAddr` |
 | **Reset — known behavior** | `learnedRTPFrom`, `learnedRTCPFrom` (NAT-learned source addresses). After a re-INVITE the session re-learns the source; until the first packet arrives, writes go to the SDP address. |
+
+An **established DTLS-SRTP** association is carried over (`dtlsEstablished` +
+the SRTP contexts): its keys cannot be re-derived without re-running the
+handshake, which is impossible while media is flowing on the shared socket.
+`RemoteSDP` on such a fork reuses the association instead of arming
+`onFinalize` (RFC 5763 §6.6), so `Hold`/`Unhold`/re-INVITE keep encrypting.
+Per RFC 5763 §5 the RFC 4145 `a=connection` attribute is never emitted.
 
 Rules:
 

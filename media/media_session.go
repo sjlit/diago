@@ -227,8 +227,8 @@ type MediaSession struct {
 	// DTLS
 	dtlsConn *dtls.Conn
 	// dtlsEstablished is set after the first successful DTLS handshake.
-	// Carried through Fork so re-INVITE answers emit a=connection:existing
-	// when reusing the transport instead of always :new.
+	// Carried through Fork so a re-INVITE reuses the established association
+	// and its SRTP contexts instead of downgrading to plain RTP.
 	dtlsEstablished bool
 
 	onFinalize func() error
@@ -373,6 +373,11 @@ func (s *MediaSession) StartRTP(rw int8) error {
 // addresses) is reset and must be re-established via RemoteSDP on the draft.
 // The draft becomes active only when installed through diago's DialogMedia
 // (docs/contracts.md §3); mutating the active session in place is forbidden.
+//
+// An established DTLS-SRTP association is the exception: its keys cannot be
+// re-derived without re-running the handshake (which is impossible while media
+// is flowing on the shared socket), so the SRTP contexts are carried over and
+// the fork keeps encrypting with the existing association (RFC 5763 §6.6).
 func (s *MediaSession) Fork() *MediaSession {
 	cp := MediaSession{
 		Laddr:          s.Laddr, // TODO clone it although it is read only
@@ -386,14 +391,14 @@ func (s *MediaSession) Fork() *MediaSession {
 		sessionID:      s.sessionID,
 		sessionVersion: s.sessionVersion,
 		// Preserve negotiated security state, otherwise re-INVITE would downgrade
-		// secured calls to plain RTP. SRTP contexts and DTLS connection are
-		// re-established by the offer/answer path itself.
+		// secured calls to plain RTP. SDES contexts are re-established by the
+		// offer/answer path from a=crypto; DTLS keys are carried over below.
 		SecureRTP:     s.SecureRTP,
 		SRTPAlg:       s.SRTPAlg,
 		remoteProto:   s.remoteProto,
 		srtpRemoteTag: s.srtpRemoteTag,
 		DTLSConf:      s.DTLSConf,
-		// Reuse marker so re-INVITE keeps :existing.
+		// Established association is reused (see the context carry-over below).
 		dtlsEstablished: s.dtlsEstablished,
 
 		// Carry creation-time config so re-INVITE forks keep the same
@@ -402,6 +407,13 @@ func (s *MediaSession) Fork() *MediaSession {
 		RTPPortEnd:               s.RTPPortEnd,
 		SDPCodecPreferLocalOrder: s.SDPCodecPreferLocalOrder,
 		SDPSessionName:           s.SDPSessionName,
+	}
+
+	if cp.SecureRTP == 2 && cp.dtlsEstablished {
+		// The DTLS association is reused, not renegotiated: RemoteSDP detects
+		// the carried contexts and does not re-arm the handshake.
+		cp.localCtxSRTP = s.localCtxSRTP
+		cp.remoteCtxSRTP = s.remoteCtxSRTP
 	}
 	return &cp
 }
@@ -510,7 +522,6 @@ func (s *MediaSession) LocalSDP() []byte {
 		dtlsSet = &dtlsSetup{
 			setup:        "active",
 			fingerprints: make([]sdpFingerprints, len(s.DTLSConf.Certificates)),
-			established:  s.dtlsEstablished,
 		}
 		if s.Raddr.IP != nil {
 			// We do have remote IP, so probably we are server
@@ -782,6 +793,16 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		// unverified transport and bypasses N1 protection.
 		if len(fingerprints) == 0 {
 			return fmt.Errorf("sdp: missing a=fingerprint for DTLS-SRTP")
+		}
+
+		// Reuse path: a fork carried the established SRTP contexts over
+		// (RFC 5763 §6.6). Re-running the handshake mid-call would race the
+		// RTP reader on the shared socket, and the existing association keys
+		// stay in effect. setup/fingerprint were parsed and validated above,
+		// so a malformed re-offer is still rejected.
+		if s.dtlsEstablished && s.localCtxSRTP != nil && s.remoteCtxSRTP != nil {
+			DefaultLogger().Debug("DTLS association reused for media update")
+			return nil
 		}
 
 		// THIS may need external or after SIP ACK establishment
@@ -1478,9 +1499,6 @@ type sdpFingerprints struct {
 type dtlsSetup struct {
 	setup        string
 	fingerprints []sdpFingerprints
-	// established reuses the transport on re-INVITE (RFC 4145):
-	// initial offer/answer uses :new, established session reuses :existing.
-	established bool
 }
 
 func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string) []byte {
@@ -1537,13 +1555,9 @@ func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile str
 		dtlsSetup := dtlsSet.setup
 
 		s = append(s, "a=setup:"+dtlsSetup)
-		// RFC 4145: initial offer/answer negotiates a new transport,
-		// re-INVITE reusing the same 5-tuple keeps the existing one.
-		connAttr := "a=connection:new"
-		if dtlsSet.established {
-			connAttr = "a=connection:existing"
-		}
-		s = append(s, connAttr)
+		// NOTE: RFC 5763 §5 forbids the RFC 4145 "a=connection" attribute for
+		// DTLS-SRTP (an association is reused based on the fingerprints, not
+		// signalled as existing), so it is deliberately not emitted here.
 		for _, d := range fingerprints {
 			if d.fingerprint == "" {
 				continue

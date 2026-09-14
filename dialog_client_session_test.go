@@ -668,6 +668,30 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 
 	lock.Lock()
 	defer lock.Unlock()
+
+	// The peer can send its own in-dialog request (a BYE race) and the server
+	// may retransmit the 200 OK when the ACK is processed late (RFC 3261
+	// §13.3.1.4). Keep only one final response per method so the assertion is
+	// deterministic under load; the client's own exchange is covered by
+	// requests[] (INVITE, ACK, BYE).
+	unique := responses[:0]
+	seen := map[sip.RequestMethod]bool{}
+	for _, msg := range responses {
+		res, ok := msg.(*sip.Response)
+		if !ok {
+			continue
+		}
+		if res.StatusCode == 200 {
+			method := res.CSeq().MethodName
+			if seen[method] {
+				continue
+			}
+			seen[method] = true
+		}
+		unique = append(unique, msg)
+	}
+	responses = unique
+
 	require.Len(t, requests, 3)
 	require.Len(t, responses, 2)
 

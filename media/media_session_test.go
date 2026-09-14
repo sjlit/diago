@@ -18,6 +18,8 @@ import (
 )
 
 func TestMediaPortRange(t *testing.T) {
+	oldStart, oldEnd := RTPPortStart, RTPPortEnd
+	t.Cleanup(func() { RTPPortStart, RTPPortEnd = oldStart, oldEnd })
 	RTPPortStart = 5000
 	RTPPortEnd = 5010
 

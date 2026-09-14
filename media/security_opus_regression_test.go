@@ -62,6 +62,29 @@ a=sendrecv`
 	require.Contains(t, err.Error(), "fingerprint")
 }
 
+// A DTLS session that has not completed the handshake must still arm Finalize:
+// the reuse shortcut in RemoteSDP only applies to established associations,
+// otherwise media would silently fall back to plain RTP.
+func TestMediaSession_RemoteSDP_ArmsFinalizeWhenNotEstablished(t *testing.T) {
+	m := newDTLSTestSessionOnPort(t, 2, 23118)
+	require.False(t, m.dtlsEstablished)
+	fp, err := dtlsSHA256Fingerprint(testdata.ServerCertificate())
+	require.NoError(t, err)
+	sd := `v=0
+o=- 1 1 IN IP4 127.0.0.1
+s=Sip Go Media
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 5004 UDP/TLS/RTP/SAVP 0
+a=rtpmap:0 PCMU/8000
+a=setup:active
+a=fingerprint:SHA-256 ` + fp + `
+a=sendrecv`
+	require.NoError(t, m.RemoteSDP([]byte(sd)))
+	require.NotNil(t, m.onFinalize, "non-established DTLS must still handshake")
+	// Do not call Finalize: it would block on a handshake with no peer.
+}
+
 func TestMediaSession_RemoteSDP_ProtoMismatch(t *testing.T) {
 	// Local DTLS vs remote AVP.
 	m := newDTLSTestSessionOnPort(t, 2, 23110)
@@ -102,13 +125,17 @@ a=sendrecv`
 	require.Contains(t, err.Error(), "proto mismatch")
 }
 
-func TestMediaSession_LocalSDP_ConnectionReuse(t *testing.T) {
+// RFC 5763 §5 forbids the RFC 4145 a=connection attribute for DTLS-SRTP:
+// reuse of an established association is determined by the fingerprints, not
+// signalled. The SDP must not emit it, before or after the handshake.
+func TestMediaSession_LocalSDP_NoConnectionAttribute(t *testing.T) {
 	m := newDTLSTestSession(t, 2)
 	first := string(m.LocalSDP())
-	require.Contains(t, first, "a=connection:new")
+	require.NotContains(t, first, "a=connection:")
+
 	m.dtlsEstablished = true
 	second := string(m.LocalSDP())
-	require.Contains(t, second, "a=connection:existing")
+	require.NotContains(t, second, "a=connection:")
 }
 
 func TestMediaSession_OpusGating(t *testing.T) {

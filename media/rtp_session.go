@@ -227,7 +227,12 @@ func (s *RTPSession) close(wait bool) error {
 	rtcpConn := s.Sess.rtcpConn
 	s.rtcpMU.Unlock()
 
-	err := rtcpConn.SetDeadline(time.Now())
+	// Only the read direction is poked to wake a blocked RTCP reader. A full
+	// SetDeadline would also expire the write deadline, and the RTCP conn is
+	// handed to the replacement session (Fork) on a media update - its writer
+	// would then fail every send with i/o timeout. The writer goroutine exits
+	// via rtcpClosed, not via the deadline.
+	err := rtcpConn.SetReadDeadline(time.Now())
 	if wait {
 		s.monitorWG.Wait()
 	}
@@ -314,19 +319,10 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 		// We expect that SSRC only changed but MULTI RTP stream per one session is not supported
 		// NOTE: Reading codecs may be in a race while establishing session but it is expected
 		// that caller should not run reading while session is established
-		codec := sess.Codecs[0]
-		if codec.PayloadType != readPkt.PayloadType {
-			for _, c := range sess.Codecs {
-				if c.PayloadType == readPkt.PayloadType {
-					codec = c
-					break
-				}
-			}
-
-			if codec.PayloadType != readPkt.PayloadType {
-				DefaultLogger().Warn("Received RTP with unsupported payload_type", "pt", readPkt.PayloadType)
-				return 0, nil
-			}
+		codec, ok := sess.CodecForPayloadType(readPkt.PayloadType)
+		if !ok {
+			DefaultLogger().Warn("Received RTP with unsupported payload_type", "pt", readPkt.PayloadType)
+			return 0, nil
 		}
 
 		*stats = RTPReadStats{
@@ -423,17 +419,11 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	writeStats := &s.writeStats
 	// For now we only track latest SSRC
 	if writeStats.SSRC != pkt.SSRC {
-		codec, err := func() (Codec, error) {
-			// Find codec from promoted list of codecs
-			for _, c := range sess.Codecs {
-				if c.PayloadType == pkt.PayloadType {
-					return c, nil
-				}
-			}
-			return Codec{}, fmt.Errorf("unknown media codec used for payload type=%d", pkt.PayloadType)
-		}()
-		if err != nil {
-			return err
+		// Prefer the negotiated codec: a remote-assigned dynamic payload type
+		// (ex. opus at 111) is not present in the locally configured Codecs.
+		codec, ok := sess.CodecForPayloadType(pkt.PayloadType)
+		if !ok {
+			return fmt.Errorf("unknown media codec used for payload type=%d", pkt.PayloadType)
 		}
 
 		*writeStats = RTPWriteStats{

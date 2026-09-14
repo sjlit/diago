@@ -461,3 +461,33 @@ func TestRTPSessionSourceLockProtection(t *testing.T) {
 	// swapping global RTPDebug/tracer hooks
 	writerDone.Wait()
 }
+
+// Regression: Close used SetDeadline(time.Now()) on the shared RTCP conn, but
+// the replacement session created by a media update (Fork) only clears the
+// read deadline. Its RTCP writer then failed every send with i/o timeout and
+// silently stopped sending reports. Close must poke only the read direction.
+func TestRTPSessionCloseKeepsRTCPWriteUsable(t *testing.T) {
+	sess, err := NewMediaSession(net.ParseIP("127.0.0.1"), 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sess.Close() })
+
+	peer, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = peer.Close() })
+	peerAddr := peer.LocalAddr().(*net.UDPAddr)
+	sess.Raddr = *peerAddr
+	sess.rtcpRaddr = *peerAddr
+
+	rtpSess := NewRTPSession(sess)
+	require.NoError(t, rtpSess.Close())
+
+	done := make(chan error, 1)
+	go func() { done <- sess.WriteRTCP(&rtcp.SenderReport{SSRC: 1}) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "RTCP write inherited an expired deadline")
+	case <-time.After(time.Second):
+		t.Fatal("WriteRTCP blocked after Close")
+	}
+}
