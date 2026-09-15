@@ -332,6 +332,25 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 	return retry
 }
 
+// shouldRetryRegister reports whether a final (non-200) REGISTER response is
+// transient and the re-registration loop should schedule another attempt.
+//
+// Retryable: 408 Request Timeout, 491 Request Pending, and 5xx except
+// 501/505. Terminal: 3xx, every other 4xx (401/407 in particular: credentials
+// are transaction-scoped, so retrying only repeats the same failure), 6xx and
+// anything outside the SIP error space. `Retry-After` is honored on every
+// retryable response by the caller.
+func shouldRetryRegister(code int) bool {
+	switch {
+	case code == sip.StatusRequestTimeout || code == sip.StatusRequestPending:
+		return true
+	case code >= 500 && code <= 599:
+		return code != sip.StatusNotImplemented && code != sip.StatusVersionNotSupported
+	default:
+		return false
+	}
+}
+
 // Unregister unregisters the contact. Options allow customizing the request.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
 func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOption) error {

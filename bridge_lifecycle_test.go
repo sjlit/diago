@@ -110,7 +110,7 @@ func newBridgePausableDialog(t *testing.T, id string) DialogSession {
 	msess.SetRemoteAddr(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9})
 
 	writer := media.NewRTPPacketWriterSession(media.NewRTPSession(msess))
-	writer.ClockDisable() // no 20ms pacing: the test only needs the pause gate
+	_ = writer.Close() // no 20ms pacing: the test only needs the pause gate
 
 	dm := &DialogMedia{
 		mediaSession:    msess,
@@ -164,4 +164,34 @@ func TestBridgeMixStartRequiresIdleState(t *testing.T) {
 	require.NoError(t, b.mixStart())
 	require.Equal(t, 2, b.mixState)
 	require.Nil(t, b.mixWG)
+}
+
+// TestBridgeZeroValueUsable guards the zero-value contract: a Bridge built as
+// a literal must lazily initialize instead of panicking on a nil logger or
+// proxy channel.
+func TestBridgeZeroValueUsable(t *testing.T) {
+	b := &Bridge{}
+	require.Error(t, b.ProxyMedia(), "empty bridge must report the precondition, not panic")
+	require.NotNil(t, b.log)
+	require.NotNil(t, b.proxyDone)
+	require.Equal(t, 2, b.WaitDialogsNum)
+
+	require.Error(t, b.AddDialogSession(nil))
+	require.Error(t, b.RemoveDialogSession(nil))
+
+	// A single dialog must not start the proxy (WaitDialogsNum defaults to 2).
+	d := &fakeBridgeDialog{id: "zero-value", dm: &DialogMedia{}}
+	require.NoError(t, b.AddDialogSession(d))
+
+	require.NoError(t, b.Close())
+}
+
+// TestBridgeMixZeroValueUsable is the BridgeMix counterpart.
+func TestBridgeMixZeroValueUsable(t *testing.T) {
+	b := &BridgeMix{}
+	require.NotPanics(t, func() { _ = b.String() })
+	require.NotNil(t, b.log)
+	require.Error(t, b.AddDialogSession(nil))
+	require.Error(t, b.RemoveDialogSession(nil))
+	require.NoError(t, b.mixStart())
 }

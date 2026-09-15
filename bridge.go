@@ -67,6 +67,10 @@ type Bridge struct {
 	closed       bool
 	proxyRunning bool
 	proxyDone    chan struct{}
+
+	// initOnce makes Init idempotent and lets ensureInit prepare the zero
+	// value lazily, so a Bridge built as a literal is usable too.
+	initOnce sync.Once
 }
 
 var ErrBridgeClosed = errors.New("bridge closed")
@@ -87,23 +91,37 @@ func NewBridge() *Bridge {
 	return &b
 }
 
+// Init installs the bridge defaults (logger, WaitDialogsNum, idle proxy
+// channel). It is idempotent: subsequent calls are no-ops, so the zero value
+// is usable even when the caller never calls Init.
 func (b *Bridge) Init(log *slog.Logger) {
-	b.log = log
-	if b.log == nil {
-		b.log = media.DefaultLogger()
-	}
+	b.initOnce.Do(func() {
+		b.log = log
+		if b.log == nil {
+			b.log = media.DefaultLogger()
+		}
 
-	if b.WaitDialogsNum == 0 {
-		b.WaitDialogsNum = 2
-	}
-	if b.proxyDone == nil {
-		// Idle state is done (closed chan) so waiters never block.
-		b.proxyDone = make(chan struct{})
-		close(b.proxyDone)
-	}
+		if b.WaitDialogsNum == 0 {
+			b.WaitDialogsNum = 2
+		}
+		if b.proxyDone == nil {
+			// Idle state is done (closed chan) so waiters never block.
+			b.proxyDone = make(chan struct{})
+			close(b.proxyDone)
+		}
+	})
+}
+
+// ensureInit prepares the zero value on first use.
+func (b *Bridge) ensureInit() {
+	b.Init(media.DefaultLogger())
 }
 
 func (b *Bridge) AddDialogSession(d DialogSession) error {
+	if d == nil {
+		return fmt.Errorf("bridge: dialog session is nil")
+	}
+	b.ensureInit()
 	// Check can this dialog be added to bridge. NO TRANSCODING
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -228,6 +246,10 @@ func (b *Bridge) releaseProxy(done chan struct{}) {
 // still succeeds on pause errors (e.g. already hung up). Originator falls
 // back to the first remaining dialog.
 func (b *Bridge) RemoveDialogSession(d DialogSession) error {
+	if d == nil {
+		return fmt.Errorf("bridge: dialog session is nil")
+	}
+	b.ensureInit()
 	id := d.ID()
 	b.mu.Lock()
 	idx := -1
@@ -279,6 +301,7 @@ func (b *Bridge) RemoveDialogSession(d DialogSession) error {
 // Close stops any running proxy and clears the bridge. Idempotent; Add after
 // Close returns ErrBridgeClosed.
 func (b *Bridge) Close() error {
+	b.ensureInit()
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -333,6 +356,7 @@ func interruptBridgeProxy(dialogs []DialogSession) []StopFunc {
 //
 // Experimental
 func (b *Bridge) ProxyMedia() error {
+	b.ensureInit()
 	b.mu.Lock()
 	n := len(b.dialogs)
 	if n < 2 {
@@ -365,6 +389,7 @@ func (b *Bridge) ProxyMedia() error {
 //
 // Experimental
 func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
+	b.ensureInit()
 	// Same precondition as ProxyMedia, proxyMedia indexes dialogs [0] and [1]
 	b.mu.Lock()
 	if len(b.dialogs) < 2 {
@@ -587,6 +612,9 @@ type BridgeMix struct {
 	RealtimeReader bool
 	Poll           bool
 	log            *slog.Logger
+
+	// initOnce makes Init idempotent and lets the zero value be used directly.
+	initOnce sync.Once
 }
 
 var (
@@ -610,12 +638,21 @@ func NewBridgeMix() *BridgeMix {
 }
 
 // Init initializes bridge struct. Use only if construct bridge with struct
-// or use NewBridgeMix
+// or use NewBridgeMix. It is idempotent and the zero value is usable without
+// calling it.
 func (b *BridgeMix) Init() {
-	b.log = media.DefaultLogger().With("caller", "bridge_mix")
+	b.initOnce.Do(func() {
+		b.log = media.DefaultLogger().With("caller", "bridge_mix")
+	})
+}
+
+// ensureInit prepares the zero value on first use.
+func (b *BridgeMix) ensureInit() {
+	b.Init()
 }
 
 func (b *BridgeMix) String() string {
+	b.ensureInit()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -633,12 +670,17 @@ func (b *BridgeMix) String() string {
 //
 // Deprecated: Not used by the library; keep track of the sessions you added yourself.
 func (b *BridgeMix) DialogSessionsList() []DialogSession {
+	b.ensureInit()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Clone(b.dialogs)
 }
 
 func (b *BridgeMix) AddDialogSession(d DialogSession) error {
+	if d == nil {
+		return fmt.Errorf("bridge mix: dialog session is nil")
+	}
+	b.ensureInit()
 	b.mixMutateMu.Lock()
 	defer b.mixMutateMu.Unlock()
 
@@ -674,6 +716,10 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 }
 
 func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
+	if d == nil {
+		return fmt.Errorf("bridge mix: dialog session is nil")
+	}
+	b.ensureInit()
 	b.mixMutateMu.Lock()
 	defer b.mixMutateMu.Unlock()
 
@@ -965,7 +1011,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 		}
 
 		rtr := media.NewRTPRealTimeReader(r, m.rtpPacketReader, p.Codec)
-		m.SetAudioReader(rtr)
+		m.setAudioReader(rtr)
 		return rtr
 	}()
 

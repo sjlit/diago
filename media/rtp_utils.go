@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"sync"
 	"time"
 )
@@ -50,18 +49,6 @@ func NTPToTime(ntpTimestamp uint64) time.Time {
 
 	// Create a time.Time object
 	return time.Unix(unixSeconds, nsec)
-}
-
-// Function to generate a silent audio frame
-func generateSilentAudioFrame() []byte {
-	frame := make([]byte, 160) // 160 bytes for a 20ms frame at 8kHz
-
-	// Fill the frame with silence (zero values)
-	for i := 0; i < len(frame); i++ {
-		frame[i] = 0
-	}
-
-	return frame
 }
 
 func ReadAll(reader io.Reader, sampleSize int) ([]byte, error) {
@@ -112,7 +99,7 @@ func CopyWithBuf(reader io.Reader, writer io.Writer, payloadBuf []byte) (int64, 
 			return totalWritten, err
 		}
 		totalWritten += int64(nn)
-		if n < nn {
+		if nn != n {
 			return totalWritten, io.ErrShortWrite
 		}
 	}
@@ -148,13 +135,8 @@ func CopyWithBufContext(ctx context.Context, reader io.Reader, writer io.Writer,
 			return totalWritten, err
 		}
 		totalWritten += int64(nn)
-		if n < nn {
+		if nn != n {
 			return totalWritten, io.ErrShortWrite
 		}
 	}
-}
-
-func ErrorIsTimeout(err error) bool {
-	e, ok := err.(net.Error)
-	return ok && e.Timeout()
 }

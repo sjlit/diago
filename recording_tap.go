@@ -60,10 +60,10 @@ type StereoRecording struct {
 
 // StartStereoRecording installs a stereo WAV recording tap into the dialog's
 // audio pipeline and returns a handle to drive it. Both directions are
-// decoded and interleaved into w at Close. Unlike the deprecated
-// SetAudioReader/SetAudioWriter dance, the tap wraps the current reader and
+// decoded and interleaved into w at Close. Unlike a manual reader/writer
+// replacement, the tap wraps the current reader and
 // writer heads atomically under the media lock, so there is no half-wired
-// window and no deprecated setter is touched.
+// window and no manual pipeline surgery is needed.
 //
 // It must be called before the dialog joins a Bridge: BridgeMix resolves each
 // leg's reader/writer exactly once at AddDialogSession, so a tap installed

@@ -338,7 +338,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		}(dialog1)
 
 		r, _ := dialog2.AudioReader()
-		dialog2.StopRTP(1, 1*time.Second)
+		dialog2.MediaSession().StopRTP(1, 1*time.Second)
 
 		buf := make([]byte, media.RTPBufSize)
 		for i := 0; i < 10; i++ {

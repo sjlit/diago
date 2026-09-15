@@ -10,20 +10,6 @@ import (
 	"time"
 )
 
-func GetCurrentNTPTimestamp() uint64 {
-	var ntpEpochOffset int64 = 2208988800 // Offset from Unix epoch (January 1, 1970) to NTP epoch (January 1, 1900)
-	currentTime := time.Now().Unix() + int64(ntpEpochOffset)
-
-	return uint64(currentTime)
-}
-
-func NTPTimestamp(now time.Time) uint64 {
-	var ntpEpochOffset int64 = 2208988800 // Offset from Unix epoch (January 1, 1970) to NTP epoch (January 1, 1900)
-	currentTime := now.Unix() + ntpEpochOffset
-
-	return uint64(currentTime)
-}
-
 // GenerateForAudio is minimal AUDIO SDP setup
 // mode -> consts like ModeRecvOnly, ModeSendrecv
 // sessionName populates the SDP "s=" line. Empty defaults to "Sip Go Media".
@@ -34,7 +20,8 @@ func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode st
 	if sessionName == "" || strings.ContainsAny(sessionName, "\r\n") {
 		sessionName = "Sip Go Media"
 	}
-	ntpTime := GetCurrentNTPTimestamp()
+	const ntpEpochOffset int64 = 2208988800 // Unix epoch -> NTP epoch (1900)
+	ntpTime := uint64(time.Now().Unix() + ntpEpochOffset)
 
 	formatsMap := []string{}
 	for _, f := range fmts {

@@ -9,33 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 )
 
 type RTPWriter interface {
 	WriteRTP(p *rtp.Packet) error
-}
-
-// RTPWriterRaw is a raw byte-level RTP writer abstraction.
-//
-// Deprecated: No use; use RTPPacketWriter instead. It will be removed.
-type RTPWriterRaw interface {
-	WriteRTPRaw(buf []byte) (int, error) // -> io.Writer
-}
-
-// RTCPWriter is an RTCP writer abstraction.
-//
-// Deprecated: No use; use RTPPacketWriter instead. It will be removed.
-type RTCPWriter interface {
-	WriteRTCP(p rtcp.Packet) error
-}
-
-// RTCPWriterRaw is a raw byte-level RTCP writer abstraction.
-//
-// Deprecated: No use; use RTPPacketWriter instead. It will be removed.
-type RTCPWriterRaw interface {
-	WriteRTCPRaw(buf []byte) (int, error) // -> io.Writer
 }
 
 // RTPPacketWriter packetize any payload before pushing to active media session
@@ -140,24 +118,6 @@ func (w *RTPPacketWriter) Close() error {
 	return nil
 }
 
-// ClockDisable stops the internal media clock ticker.
-//
-// Deprecated: Not part of the stable-handle contract; the clock is owned and
-// managed by the write pipeline. Use Close. It will be removed.
-func (w *RTPPacketWriter) ClockDisable() {
-	_ = w.Close()
-}
-
-// ClockEnable restarts the internal media clock ticker.
-//
-// Deprecated: Not part of the stable-handle contract; the clock is owned and
-// managed by the write pipeline. It will be removed.
-func (w *RTPPacketWriter) ClockEnable() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.clockReset()
-}
-
 // ResetTimestamp can mark new stream comming. If stream is continuous it will add timestamp difference
 // MUST Not be called during stream Write
 func (p *RTPPacketWriter) ResetTimestamp() {
@@ -181,15 +141,6 @@ func (p *RTPPacketWriter) InitTimestamp() uint32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.initTimestamp
-}
-
-// DelayTimestamp shifts next RTP timestamp by an offset.
-//
-// Deprecated: Not part of the stable-handle contract. It will be removed.
-func (p *RTPPacketWriter) DelayTimestamp(ofsset uint32) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.nextTimestamp += ofsset
 }
 
 // Write implements io.Writer and does payload RTP packetization
@@ -255,16 +206,6 @@ func (p *RTPPacketWriter) writeSamplesUnsafe(writer RTPWriter, payload []byte, s
 	// store header for reading. NOTE: in case pointers in header, do nil first
 	p.PacketHeader = pkt.Header
 	return len(pkt.Payload), err
-}
-
-// Writer returns the raw writer chain element behind the handle.
-//
-// Deprecated: Bypasses the stable-handle pipeline (pause gates, hot swap);
-// write through RTPPacketWriter itself. It will be removed.
-func (w *RTPPacketWriter) Writer() RTPWriter {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.writer
 }
 
 // UpdateRTPSession updates the RTP writer when a new RTP session is created.

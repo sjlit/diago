@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"slices"
 	"strconv"
@@ -34,14 +35,6 @@ type RTPTracer interface {
 }
 
 var (
-	// RTPPortStart and RTPPortEnd allows defining rtp port range for media.
-	//
-	// Deprecated: configure diago.MediaConfig.Network.RTPPortStart/RTPPortEnd
-	// (or MediaSession.RTPPortStart/RTPPortEnd) instead. These globals are
-	// only a process-wide fallback for sessions that leave the per-session
-	// value at zero.
-	RTPPortStart  = 0
-	RTPPortEnd    = 0
 	rtpPortOffset = atomic.Int32{}
 
 	// RTPBufSize is the minimum size of buffers used on RTP read paths (MTU
@@ -63,16 +56,6 @@ var (
 	// Kept process-global: it is a bool flag where "unset" and "false" are
 	// indistinguishable, so a per-instance override cannot fall back cleanly.
 	RTPProfileSAVPDisable = false
-
-	// SDP codec exchanges
-	// 0 (Default) - answerer prefers offerer order recomended by rfc
-	// 1 - answerer prefers local order
-	//
-	// Deprecated: configure diago.MediaConfig.SDP.CodecPreferLocalOrder (or
-	// MediaSession.SDPCodecPreferLocalOrder) instead. This global is only a
-	// process-wide fallback for sessions that leave the per-session value at
-	// zero.
-	SDPCodecPreferLocalOrder int = 0
 )
 
 // RTPNAT options
@@ -112,7 +95,7 @@ func logRTPRead(m *MediaSession, raddr net.Addr, p *rtp.Packet) {
 		return
 	}
 
-	DefaultLogger().Debug(fmt.Sprintf("RTP read %s < %s:\n%s", laddr, raddrStr, p.String()))
+	m.logger().Debug(fmt.Sprintf("RTP read %s < %s:\n%s", laddr, raddrStr, p.String()))
 }
 
 func logRTPWrite(m *MediaSession, p *rtp.Packet) {
@@ -127,14 +110,14 @@ func logRTPWrite(m *MediaSession, p *rtp.Packet) {
 		return
 	}
 
-	DefaultLogger().Debug(fmt.Sprintf("RTP write %s > %s:\n%s", laddr, raddr, p.String()))
+	m.logger().Debug(fmt.Sprintf("RTP write %s > %s:\n%s", laddr, raddr, p.String()))
 }
 
 func logRTCPRead(m *MediaSession, pkts []rtcp.Packet) {
 	if RTCPDebug.Load() {
 		laddr := m.rtcpConn.LocalAddr()
 		for _, p := range pkts {
-			DefaultLogger().Debug(fmt.Sprintf("RTCP read %s < %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
+			m.logger().Debug(fmt.Sprintf("RTCP read %s < %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
 		}
 	}
 }
@@ -142,7 +125,7 @@ func logRTCPRead(m *MediaSession, pkts []rtcp.Packet) {
 func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
 	if RTCPDebug.Load() {
 		laddr := m.rtcpConn.LocalAddr()
-		DefaultLogger().Debug(fmt.Sprintf("RTCP write %s > %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
+		m.logger().Debug(fmt.Sprintf("RTCP write %s > %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
 	}
 }
 
@@ -178,16 +161,19 @@ type MediaSession struct {
 
 	sdp []byte
 
-	// Creation-time config normally set from diago's MediaConfig. Zero values
-	// fall back to the package globals (RTPPortStart/RTPPortEnd,
-	// SDPCodecPreferLocalOrder). Set only in the Config phase (before Init);
-	// carried through Fork for re-INVITE consistency.
+	// Creation-time config normally set from diago's MediaConfig. Set only in
+	// the Config phase (before Init); carried through Fork for re-INVITE
+	// consistency.
 	RTPPortStart             int
 	RTPPortEnd               int
 	SDPCodecPreferLocalOrder int
 	// SDPSessionName overrides the SDP "s=" line. Empty keeps the default
 	// "Sip Go Media". Set only in the Config phase; carried through Fork.
 	SDPSessionName string
+
+	// Logger receives this session's logs. Nil falls back to the media
+	// package default (SetDefaultLogger/slog.Default). Carried through Fork.
+	Logger *slog.Logger
 
 	// Mode is sdp mode. Check consts sdp.ModeRecvOnly etc...
 	Mode string
@@ -297,6 +283,14 @@ func (s *MediaSession) InitWithListeners(lRTP net.PacketConn, lRTCP net.PacketCo
 	s.SetRemoteAddr(raddr)
 }
 
+// logger returns the session logger with the package default as fallback.
+func (s *MediaSession) logger() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return DefaultLogger()
+}
+
 func (s *MediaSession) String() string {
 	return fmt.Sprintln(
 		"rtp.connection", s.rtpConn.LocalAddr().String(),
@@ -337,10 +331,11 @@ func (s *MediaSession) InitWithSDP(localSDP []byte) error {
 // This is a durable, global state on the conn: any later StartRTP clears it
 // for everyone, so concurrent components overwrite each other.
 //
-// Deprecated: The conn deadline is an implementation detail of the media
-// stack. Use diago's DialogMedia.PauseAudioRead / PauseAudioWrite, which are
-// refcounted and scoped to the stable handles. The rw mask values 1 (read)
-// and 2 (write) can be combined.
+// It is a low-level primitive retained for the deadline-based components
+// (bridge mix polling, DTMF read windows). New code should use the refcounted
+// gate APIs on the stable handles: diago's DialogMedia.PauseAudioRead /
+// PauseAudioWrite (PauseRead/PauseWrite in this package). The rw mask values
+// 1 (read) and 2 (write) can be combined.
 func (s *MediaSession) StopRTP(rw int8, dur time.Duration) error {
 	t := time.Now().Add(dur)
 	if rw&1 != 0 && rw&2 != 0 {
@@ -356,10 +351,8 @@ func (s *MediaSession) StopRTP(rw int8, dur time.Duration) error {
 }
 
 // StartRTP clears the conn deadline (both directions when the mask covers
-// them), restoring blocking reads and writes.
-//
-// Deprecated: Use the release function returned by diago's
-// DialogMedia.PauseAudioRead / PauseAudioWrite.
+// them), restoring blocking reads and writes. It is the counterpart of
+// StopRTP; see there for when to prefer the gate APIs.
 func (s *MediaSession) StartRTP(rw int8) error {
 	if rw&1 != 0 && rw&2 != 0 {
 		return s.rtpConn.SetDeadline(time.Time{})
@@ -413,6 +406,7 @@ func (s *MediaSession) Fork() *MediaSession {
 		RTPPortEnd:               s.RTPPortEnd,
 		SDPCodecPreferLocalOrder: s.SDPCodecPreferLocalOrder,
 		SDPSessionName:           s.SDPSessionName,
+		Logger:                   s.Logger,
 	}
 
 	if cp.SecureRTP == 2 && cp.dtlsEstablished {
@@ -517,7 +511,7 @@ func (s *MediaSession) LocalSDP() []byte {
 				return nil
 			}()
 			if err != nil {
-				DefaultLogger().Error("Failed to setup SRTP context", "error", err)
+				s.logger().Error("Failed to setup SRTP context", "error", err)
 			}
 		}
 	}
@@ -551,7 +545,7 @@ func (s *MediaSession) LocalSDP() []byte {
 		for i, cert := range s.DTLSConf.Certificates {
 			fingerprint, err := dtlsSHA256Fingerprint(cert)
 			if err != nil {
-				DefaultLogger().Error("Failed to generate dtls certificate fingerprint", "error", err)
+				s.logger().Error("Failed to generate dtls certificate fingerprint", "error", err)
 				continue
 			}
 			dtlsSet.fingerprints[i] = sdpFingerprints{
@@ -585,11 +579,11 @@ func (s *MediaSession) LocalSDP() []byte {
 		// LocalSDP has no error return and a caller may still need a well
 		// formed offer; degrade to the default name instead of emitting the
 		// injected payload.
-		DefaultLogger().Error("Invalid SDP session name, using default", "error", err)
+		s.logger().Error("Invalid SDP session name, using default", "error", err)
 		sessionName = "Sip Go Media"
 	}
 
-	return generateSDPForAudio(s.sessionID, s.sessionVersion, rtpProfile, ip, connIP, rtpPort, mode, codecs, localSDES, dtlsSet, sessionName)
+	return generateSDPForAudio(s.sessionID, s.sessionVersion, rtpProfile, ip, connIP, rtpPort, mode, codecs, localSDES, dtlsSet, sessionName, s.logger())
 }
 
 // NegotiatedDirection returns the direction negotiated in the last completed
@@ -815,12 +809,12 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		// stay in effect. setup/fingerprint were parsed and validated above,
 		// so a malformed re-offer is still rejected.
 		if s.dtlsEstablished && s.localCtxSRTP != nil && s.remoteCtxSRTP != nil {
-			DefaultLogger().Debug("DTLS association reused for media update")
+			s.logger().Debug("DTLS association reused for media update")
 			return nil
 		}
 
 		// THIS may need external or after SIP ACK establishment
-		dtlsConf := s.DTLSConf.ToLibConf(fingerprints)
+		dtlsConf := s.DTLSConf.ToLibConf(fingerprints, s.logger())
 		role := "client"
 		switch setup {
 		case "actpass", "passive":
@@ -848,7 +842,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		}
 
 		s.onFinalize = func() error {
-			DefaultLogger().Debug("Starting dtls handshake",
+			s.logger().Debug("Starting dtls handshake",
 				"setup", setup,
 				"role", role,
 				"laddr", s.dtlsConn.LocalAddr().String(),
@@ -858,7 +852,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 				return fmt.Errorf("dtls conn handshake: %w", err)
 			}
 
-			DefaultLogger().Debug("Handshake finished. Checking DTLS State")
+			s.logger().Debug("Handshake finished. Checking DTLS State")
 
 			state, ok := s.dtlsConn.ConnectionState()
 			if !ok {
@@ -908,7 +902,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 			}
 
 			s.dtlsEstablished = true
-			DefaultLogger().Debug("DTLS SRTP setuped")
+			s.logger().Debug("DTLS SRTP setuped")
 			return nil
 		}
 	}
@@ -959,14 +953,11 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 		return 0
 	}
 
-	DefaultLogger().Debug("Remote Codecs Update", "local", s.Codecs, "remote", codecs)
+	s.logger().Debug("Remote Codecs Update", "local", s.Codecs, "remote", codecs)
 
 	// Some systems may like to answer with local order of preference.
-	// Per-session value from MediaConfig wins; fall back to the package global.
+	// Per-session value from MediaConfig.
 	preferLocalOrder := s.SDPCodecPreferLocalOrder
-	if preferLocalOrder == 0 {
-		preferLocalOrder = SDPCodecPreferLocalOrder
-	}
 	if preferLocalOrder > 0 && answerer {
 		filter := make([]Codec, 0, len(codecs))
 		for _, lc := range local {
@@ -1043,15 +1034,8 @@ func (s *MediaSession) DTMFCodecNegotiated() (Codec, bool) {
 
 // Listen creates listeners instead
 func (s *MediaSession) createListeners(laddr *net.UDPAddr) error {
-	// Per-session port range from MediaConfig; fall back to package globals
-	// when unset (zero).
+	// Per-session port range from MediaConfig (zero means ephemeral ports).
 	portStart, portEnd := s.RTPPortStart, s.RTPPortEnd
-	if portStart == 0 {
-		portStart = RTPPortStart
-	}
-	if portEnd == 0 {
-		portEnd = RTPPortEnd
-	}
 
 	// var err error
 
@@ -1130,7 +1114,7 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 			return n, fmt.Errorf("Read SRTP Decrypt error: %w", err)
 		}
 		if len(decrypted) > len(buf) {
-			DefaultLogger().Warn("Growing Decrypted RTP buffer", "diff", len(decrypted)-len(buf))
+			m.logger().Warn("Growing Decrypted RTP buffer", "diff", len(decrypted)-len(buf))
 		}
 
 		buf = decrypted
@@ -1165,7 +1149,7 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 
 			if m.learnedRTPFrom.CompareAndSwap(nil, fromAddr) {
 				// Allow only first swap, rest is ignored
-				DefaultLogger().Debug("RTP NAT switch to new source", "addr", from.String())
+				m.logger().Debug("RTP NAT switch to new source", "addr", from.String())
 			}
 		}()
 	}
@@ -1226,7 +1210,7 @@ func (m *MediaSession) DiscardQueuedRTP() (int, error) {
 		return 0, nil
 	}
 	if m.SecureRTP == 2 && !m.dtlsEstablished {
-		DefaultLogger().Debug("DiscardQueuedRTP skipped: DTLS handshake not established")
+		m.logger().Debug("DiscardQueuedRTP skipped: DTLS handshake not established")
 		return 0, nil
 	}
 	defer func() {
@@ -1283,7 +1267,7 @@ func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err erro
 		if err != nil {
 			// Dropping the packet and surfacing the error beats feeding ciphertext
 			// into unmarshal, which would silently kill RTCP feedback forever
-			DefaultLogger().Error("Failed to decrypt SRTCP", "error", err)
+			m.logger().Error("Failed to decrypt SRTCP", "error", err)
 			return 0, errors.Join(errRTCPFailedToUnmarshal, err)
 		}
 	}
@@ -1308,7 +1292,7 @@ func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err erro
 
 			// Switch RTCP if RTP switched?
 			if rtpA != nil {
-				DefaultLogger().Debug("RTCP New Source Learned", "addr", from.String())
+				m.logger().Debug("RTCP New Source Learned", "addr", from.String())
 				m.learnedRTCPFrom.Store(fromAddr)
 			}
 		}()
@@ -1519,13 +1503,13 @@ type dtlsSetup struct {
 	fingerprints []sdpFingerprints
 }
 
-func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string) []byte {
+func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string, log *slog.Logger) []byte {
 	// ntpTime := GetCurrentNTPTimestamp()
 	if len(codecs) == 0 {
 		// Nothing usable to advertise (ex. opus-only configuration without
 		// with_opus_c). RFC 4566 requires at least one fmt; emit a rejected
 		// m= line (port 0) instead of "m=audio <port> RTP/AVP " with none.
-		DefaultLogger().Error("no usable codecs to advertise; SDP marks the media stream as rejected")
+		log.Error("no usable codecs to advertise; SDP marks the media stream as rejected")
 		rtpPort = 0
 		codecs = []Codec{CodecAudioUlaw}
 	}

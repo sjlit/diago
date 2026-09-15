@@ -39,22 +39,6 @@ func TestMediaSessionPortRangeFromConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("FallsBackToGlobals", func(t *testing.T) {
-		oldStart, oldEnd := RTPPortStart, RTPPortEnd
-		RTPPortStart, RTPPortEnd = 17000, 17010
-		t.Cleanup(func() {
-			RTPPortStart, RTPPortEnd = oldStart, oldEnd
-			rtpPortOffset.Store(0)
-		})
-
-		s := newSession(0, 0)
-		require.NoError(t, s.Init())
-		port := s.Laddr.Port
-		assert.GreaterOrEqual(t, port, 17000)
-		assert.Less(t, port, 17010)
-		require.NoError(t, s.Close())
-	})
-
 	t.Run("ForkCarriesConfig", func(t *testing.T) {
 		s := newSession(16000, 16020)
 		s.SDPCodecPreferLocalOrder = 1
@@ -66,8 +50,8 @@ func TestMediaSessionPortRangeFromConfig(t *testing.T) {
 }
 
 // TestMediaSessionCodecOrderPerSession locks that the codec negotiation order
-// can be set per session (fed from MediaConfig) while falling back to the
-// package global.
+// can be set per session (fed from MediaConfig); the package global fallback
+// was removed in v2.
 func TestMediaSessionCodecOrderPerSession(t *testing.T) {
 	local := []Codec{CodecAudioUlaw, CodecAudioAlaw}
 	remote := []Codec{CodecAudioAlaw, CodecAudioUlaw}
@@ -77,17 +61,6 @@ func TestMediaSessionCodecOrderPerSession(t *testing.T) {
 		n := s.updateRemoteCodecs(remote, true)
 		require.Equal(t, 2, n)
 		assert.Equal(t, "PCMU", s.filterCodecs[0].Name, "local order must win")
-	})
-
-	t.Run("GlobalFallback", func(t *testing.T) {
-		old := SDPCodecPreferLocalOrder
-		SDPCodecPreferLocalOrder = 1
-		t.Cleanup(func() { SDPCodecPreferLocalOrder = old })
-
-		s := &MediaSession{Codecs: local}
-		n := s.updateRemoteCodecs(remote, true)
-		require.Equal(t, 2, n)
-		assert.Equal(t, "PCMU", s.filterCodecs[0].Name, "global must apply when session field unset")
 	})
 
 	t.Run("DefaultOffererOrder", func(t *testing.T) {

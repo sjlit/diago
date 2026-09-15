@@ -6,7 +6,6 @@ package media
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -89,17 +88,6 @@ func (s *MediaSession) CodecForPayloadType(payloadType uint8) (Codec, bool) {
 	return Codec{}, false
 }
 
-// Deprecated: Use CodecAudioFromSession
-func CodecFromSession(s *MediaSession) Codec {
-	return CodecAudioFromSession(s)
-}
-
-// Deprecated: Use CodecAudioFromPayloadType
-func CodecFromPayloadType(payloadType uint8) Codec {
-	f := strconv.Itoa(int(payloadType))
-	return mapSupportedCodec(f)
-}
-
 func CodecAudioFromPayloadType(payloadType uint8) (Codec, error) {
 	f := strconv.Itoa(int(payloadType))
 	switch f {
@@ -113,33 +101,6 @@ func CodecAudioFromPayloadType(payloadType uint8) (Codec, error) {
 		return CodecTelephoneEvent8000, nil
 	}
 	return Codec{}, fmt.Errorf("non supported codec: %d", payloadType)
-}
-
-func mapSupportedCodec(f string) Codec {
-	// TODO: Here we need to be more explicit like matching sample rate, channels and other
-
-	switch f {
-	case sdp.FORMAT_TYPE_ALAW:
-		return CodecAudioAlaw
-	case sdp.FORMAT_TYPE_ULAW:
-		return CodecAudioUlaw
-	case sdp.FORMAT_TYPE_OPUS:
-		return CodecAudioOpus
-	case sdp.FORMAT_TYPE_TELEPHONE_EVENT:
-		return CodecTelephoneEvent8000
-	default:
-		slog.Warn("Unsupported format. Using default clock rate", "format", f)
-	}
-	// Format as default
-	pt, err := sdp.FormatNumeric(f)
-	if err != nil {
-		slog.Warn("Format is non numeric value", "format", f)
-	}
-	return Codec{
-		PayloadType: pt,
-		SampleRate:  8000,
-		SampleDur:   20 * time.Millisecond,
-	}
 }
 
 // filterUnsupportedCodecs drops codecs that cannot be used in this build.

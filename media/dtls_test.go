@@ -71,7 +71,7 @@ func TestDTLSVerifyConnection(t *testing.T) {
 
 	t.Run("matchingSHA256FingerprintPasses", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
-		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: fpSHA256}})
+		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: fpSHA256}}, nil)
 		require.NoError(t, err)
 	})
 
@@ -80,39 +80,39 @@ func TestDTLSVerifyConnection(t *testing.T) {
 	// section 5.10 MITM protection.
 	t.Run("mismatchedFingerprintFailsClosed", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
-		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: mismatch}})
+		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: mismatch}}, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "does not match")
 	})
 
 	t.Run("otherHashAlgorithmsSupported", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
-		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "sha-1", fingerprint: fpSHA1}})
+		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "sha-1", fingerprint: fpSHA1}}, nil)
 		require.NoError(t, err)
 	})
 
 	t.Run("fingerprintFormattingIsIgnored", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
 		normalized := strings.ToLower(strings.ReplaceAll(fpSHA256, ":", ""))
-		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: normalized}})
+		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: normalized}}, nil)
 		require.NoError(t, err)
 	})
 
 	t.Run("onlyUnsupportedAlgorithmsFailClosed", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
-		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "MD5", fingerprint: "00:11"}})
+		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "MD5", fingerprint: "00:11"}}, nil)
 		require.Error(t, err)
 	})
 
 	t.Run("missingPeerCertificateFails", func(t *testing.T) {
 		state := &dtls.State{}
-		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: fpSHA256}})
+		err := dtlsVerifyConnection(state, []sdpFingerprints{{alg: "SHA-256", fingerprint: fpSHA256}}, nil)
 		require.Error(t, err)
 	})
 
 	t.Run("noFingerprintsFailsClosed", func(t *testing.T) {
 		state := &dtls.State{PeerCertificates: [][]byte{der}}
-		err := dtlsVerifyConnection(state, nil)
+		err := dtlsVerifyConnection(state, nil, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no SDP fingerprints")
 	})

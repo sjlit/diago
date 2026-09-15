@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 )
 
@@ -35,6 +36,15 @@ func (r *RTPRealTimeReader) Reset() {
 	r.firstReadTime = time.Time{}
 }
 
+// logger returns the reader's logger, inherited from the packet reader handle
+// that owns it.
+func (r *RTPRealTimeReader) logger() *slog.Logger {
+	if r.rtpReader != nil && r.rtpReader.log != nil {
+		return r.rtpReader.log
+	}
+	return DefaultLogger()
+}
+
 func (r *RTPRealTimeReader) Read(b []byte) (int, error) {
 	if r.firstReadTime.IsZero() {
 		// If no read yet made
@@ -60,7 +70,7 @@ func (r *RTPRealTimeReader) Read(b []byte) (int, error) {
 
 		if time.Since(r.firstReadTime) > dur+2*r.codec.SampleDur {
 			// Skip it
-			DefaultLogger().Debug("Skipping non realtime packet", "ssrc", rtpHeader.SSRC, "seq", rtpHeader.SequenceNumber, "ts", rtpHeader.Timestamp, "ts_diff", tsDiff)
+			r.logger().Debug("Skipping non realtime packet", "ssrc", rtpHeader.SSRC, "seq", rtpHeader.SequenceNumber, "ts", rtpHeader.Timestamp, "ts_diff", tsDiff)
 			continue
 		}
 		return n, nil

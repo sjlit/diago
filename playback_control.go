@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sync"
 	"sync/atomic"
 )
 
@@ -64,13 +65,13 @@ type AudioPlaybackControl struct {
 	control *audioControl
 }
 
-// newAudioControl constructs an audioControl with stopCh initialized. Stop
-// closes stopCh exactly once; the Pause gate listens on it so Stop can
-// interrupt a paused playback without polling latency.
+// newAudioControl constructs an audioControl with a fresh stop channel. Stop
+// closes the channel of the current play generation exactly once; the Pause
+// gate listens on it so Stop can interrupt a paused playback without polling.
 func newAudioControl(writer io.Writer) *audioControl {
 	return &audioControl{
-		Writer: writer,
-		stopCh: make(chan struct{}),
+		Writer:   writer,
+		stopChan: make(chan struct{}),
 	}
 }
 
@@ -241,9 +242,13 @@ type audioControl struct {
 	// to channel closed on resume.
 	gate atomic.Pointer[chan struct{}]
 	stop atomic.Bool
-	// stopCh is closed exactly once by Stop. Pause gate listens on it so
-	// Stop interrupts a paused playback without polling latency.
-	stopCh chan struct{}
+	// stopChan is the stop channel of the CURRENT play generation; Stop
+	// closes it exactly once and enterPlay replaces it, so a playback started
+	// after a stop gets a live channel again. stopMu guards the field and
+	// makes the "mark stopped + close channel" sequence atomic against
+	// enterPlay's "reset + fresh channel".
+	stopMu   sync.Mutex
+	stopChan chan struct{}
 	// replay holds pending replay request consumed by next Write
 	replay atomic.Bool
 	// active is true while Play is in progress. Guarded by enterPlay/exitPlay.
@@ -280,13 +285,15 @@ func (c *audioControl) Write(b []byte) (n int, err error) {
 	}
 
 	// Pause blocks playback position until resumed. RTP stream pauses with it
-	// (no packets sent), which remote side experiences as silence. stopCh is
-	// also selected so Stop interrupts a paused playback immediately.
+	// (no packets sent), which remote side experiences as silence. The stop
+	// channel of the current generation is also selected so Stop interrupts a
+	// paused playback immediately.
 	if gate := c.gate.Load(); gate != nil {
+		stopCh := c.stopChanNow()
 		for c.gate.Load() != nil {
 			select {
 			case <-*gate:
-			case <-c.stopCh:
+			case <-stopCh:
 				return 0, stopSignal{}
 			}
 			if c.stop.Load() {
@@ -328,13 +335,25 @@ func (c *audioControl) Resume() {
 }
 
 // Stop will stop reader/writer. Write/Read returns error matching
-// ErrPlaybackStopped and io.EOF. First call closes stopCh so any paused
-// Write returns immediately. Subsequent calls are no-op.
+// ErrPlaybackStopped and io.EOF. First call of a play generation closes its
+// stop channel so any paused Write returns immediately; subsequent calls are
+// no-op. A playback started again after Stop gets its own stop channel.
 func (c *audioControl) Stop() {
-	if c.stop.CompareAndSwap(false, true) {
-		close(c.stopCh)
-		c.state.Store(int32(PlaybackStateStopped))
+	c.stopMu.Lock()
+	defer c.stopMu.Unlock()
+	if c.stop.Load() {
+		return
 	}
+	c.stop.Store(true)
+	close(c.stopChan)
+	c.state.Store(int32(PlaybackStateStopped))
+}
+
+// stopChanNow returns the stop channel of the current play generation.
+func (c *audioControl) stopChanNow() <-chan struct{} {
+	c.stopMu.Lock()
+	defer c.stopMu.Unlock()
+	return c.stopChan
 }
 
 // Replay sets pending replay request. It is consumed by next Write and fails
@@ -356,9 +375,13 @@ func (c *audioControl) State() PlaybackState {
 }
 
 func (c *audioControl) enterPlay() {
-	// Clear leftovers from previous play
-	c.Resume()
+	// Clear leftovers from previous play and install a live stop channel for
+	// this generation (Stop closes the channel of the generation it stopped).
+	c.stopMu.Lock()
+	c.stopChan = make(chan struct{})
 	c.stop.Store(false)
+	c.stopMu.Unlock()
+	c.Resume()
 	c.replay.Store(false)
 	c.active.Store(true)
 	c.state.Store(int32(PlaybackStatePlaying))

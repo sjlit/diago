@@ -102,6 +102,11 @@ type DialogMedia struct {
 	onClose       func() error
 	onMediaUpdate func(*DialogMedia)
 
+	// log is the dialog-level logger copied from MediaConfig at construction
+	// (write-once before the dialog is shared). Nil falls back to the media
+	// package default. See logger().
+	log *slog.Logger
+
 	// moh is the single active hold-music loop (nil when none); mohTone is
 	// the dialog-level default source from MediaConfig.MusicOnHold. See moh.go.
 	moh     *MusicOnHold
@@ -121,11 +126,22 @@ type DialogMedia struct {
 // with the DialogMedia() accessor required by the DialogSession interface.
 type dialogMedia = DialogMedia
 
+// logger returns the dialog-level logger, falling back to the media package
+// default when no MediaConfig.Logger was configured.
+func (d *DialogMedia) logger() *slog.Logger {
+	if d.log != nil {
+		return d.log
+	}
+	return media.DefaultLogger()
+}
+
 // RTPPacketReader returns the dialog's stable RTP read handle. It is created
 // on the first media init and never replaced; its internals are hot-swapped on
 // media updates, so code that needs the handle should resolve it per use.
 // Safe from any goroutine.
 func (d *DialogMedia) RTPPacketReader() *media.RTPPacketReader {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.rtpPacketReader
 }
 
@@ -134,6 +150,8 @@ func (d *DialogMedia) RTPPacketReader() *media.RTPPacketReader {
 // media updates, so code that needs the handle should resolve it per use.
 // Safe from any goroutine.
 func (d *DialogMedia) RTPPacketWriter() *media.RTPPacketWriter {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.rtpPacketWriter
 }
 
@@ -244,29 +262,25 @@ func (d *DialogMedia) onCloseUnsafe(f func() error) {
 	d.onClose = f
 }
 
-// InitMediaSession manually installs a media session and its stable handles.
-//
-// Deprecated: Media session creation is owned by DialogMedia and driven by the
-// signaling lifecycle (ProgressMedia/Answer, re-INVITE). Manual initialization
-// is not supported.
-func (d *DialogMedia) InitMediaSession(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.initMediaSessionUnsafe(m, r, w)
-}
-
 func (d *DialogMedia) initMediaSessionUnsafe(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
 	d.mediaSession = m
 	d.rtpPacketReader = r
 	d.rtpPacketWriter = w
 }
 
-func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media.RTPSession) {
+func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media.RTPSession) error {
+	if d.closed {
+		// The dialog media was torn down (BYE/Close) while this setup was in
+		// flight. Refuse the install so the freshly created sessions are not
+		// left behind without an owner; callers close what they created.
+		return ErrDialogClosed
+	}
 	d.mediaSession = m
 	d.rtpSession = rtpSess
 	d.rtpPacketReader = media.NewRTPPacketReaderSession(rtpSess)
 	d.rtpPacketWriter = media.NewRTPPacketWriterSession(rtpSess)
 	d.updateRemoteHeldUnsafe()
+	return nil
 }
 
 // updateRemoteHeldUnsafe refreshes the remote-held flag from the current
@@ -306,6 +320,12 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	// but ProgressMedia/Answer can race with a concurrent BYE closing media.
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	if d.closed {
+		// The media was torn down while this setup was in flight: do not
+		// create listeners that no owner would ever close.
+		return ErrDialogClosed
+	}
 
 	// Enforce the SRTPConfig invariant here as well, so per-call configs built
 	// without mediaConfigForTransport (ex. WithMediaDTLS on Answer) enable DTLS
@@ -352,6 +372,7 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 		RTPPortEnd:               conf.Network.RTPPortEnd,
 		SDPCodecPreferLocalOrder: conf.SDP.CodecPreferLocalOrder,
 		SDPSessionName:           conf.SDP.SessionName,
+		Logger:                   conf.Logger,
 	}
 
 	if err := sess.Init(); err != nil {
@@ -457,6 +478,11 @@ func (d *DialogMedia) mediaUpdateUnsafe(msess *media.MediaSession) error {
 // fully stopped. A fork preserves statistics and shared connections; a new
 // session is used when media connections were recreated.
 func (d *DialogMedia) replaceRTPSessionUnsafe(msess *media.MediaSession) error {
+	if d.closed {
+		// A late re-INVITE/ACK after teardown must not install a new monitor
+		// over closed connections.
+		return ErrDialogClosed
+	}
 	oldRTPSess := d.rtpSession
 	if oldRTPSess == nil {
 		return fmt.Errorf("RTP Session is nil while trying to update it")
@@ -562,7 +588,7 @@ func WithAudioReaderPCMMonitor(mon *audio.MonitorPCMReader, w io.Writer) AudioRe
 }
 
 // AudioReader returns io.Reader on which you can read your ENCODED audio.
-// By default it is the RTPPacketReader handle unless overwritten with SetAudioReader().
+// By default it is the RTPPacketReader handle unless a pipeline component wraps it.
 // Use ReaderWithProps when the negotiated codec or addresses are needed.
 //
 // NOTE: AudioReader must be called after negotiation is finished, like Answer()
@@ -641,9 +667,9 @@ func (d *DialogMedia) audioReaderProps(p *MediaProps) (io.Reader, error) {
 	return r, nil
 }
 
-// SetAudioReader adds/changes audio reader.
-// Use this when you want to have interceptors of your audio
-func (d *DialogMedia) SetAudioReader(r io.Reader) {
+// setAudioReader installs a custom audio reader head. It is internal: the
+// exported setter was removed because it bypassed the stable-handle chain.
+func (d *DialogMedia) setAudioReader(r io.Reader) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.audioReader = r
@@ -687,7 +713,7 @@ func WithAudioWriterMonitor(mon *audio.MonitorPCMWriter, w io.Writer) AudioWrite
 }
 
 // AudioWriter returns io.Writer on which you can write your ENCODED audio.
-// By default it is the RTPPacketWriter handle unless overwritten with SetAudioWriter().
+// By default it is the RTPPacketWriter handle unless a pipeline component wraps it.
 // Use WriterWithProps when the negotiated codec or addresses are needed.
 // NOTE: RTPPacketWriter has running sample clock, but it expects samples sent, match sample duration of codec.
 func (d *DialogMedia) AudioWriter(opts ...AudioWriterOption) (io.Writer, error) {
@@ -749,34 +775,6 @@ func (d *DialogMedia) audioWriterProps(p *MediaProps) (io.Writer, error) {
 	return w, nil
 }
 
-// SetAudioWriter adds/changes audio reader.
-// Use this when you want to have pipelines of your audio
-//
-// Deprecated: Use AudioWriter options (WithAudioWriterDTMF, WithAudioWriterMonitor)
-// to extend the pipeline; they keep the stable-handle chain consistent.
-func (d *DialogMedia) SetAudioWriter(r io.Writer) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.audioWriter = r
-}
-
-// Echo does audio echo for you
-//
-// Deprecated: Use EchoContext.
-func (d *DialogMedia) Echo() error {
-	audioR, err := d.AudioReader()
-	if err != nil {
-		return err
-	}
-	audioW, err := d.AudioWriter()
-	if err != nil {
-		return err
-	}
-
-	_, err = media.Copy(audioR, audioW)
-	return err
-}
-
 // EchoContext does audio echo until the context is canceled. Cancellation
 // interrupts the in-flight read through the reader gate and returns ctx.Err().
 func (d *DialogMedia) EchoContext(ctx context.Context) error {
@@ -809,8 +807,7 @@ func (d *DialogMedia) CreatePlayback() (*AudioPlayback, error) {
 		return nil, err
 	}
 	p := NewAudioPlayback(w, mprops.Codec)
-	// On each play it needs reset RTP timestamp
-	p.onPlay = d.rtpPacketWriter.ResetTimestamp
+	d.armPlaybackTimestampReset(&p)
 	return &p, nil
 }
 
@@ -829,7 +826,19 @@ func (d *DialogMedia) CreatePlaybackControl() (*AudioPlaybackControl, error) {
 		AudioPlayback: NewAudioPlayback(control, mprops.Codec),
 		control:       control,
 	}
+	d.armPlaybackTimestampReset(&p.AudioPlayback)
 	return &p, nil
+}
+
+// armPlaybackTimestampReset wires the stable writer handle's timestamp reset
+// into a playback so a replay or a new playout after a pause advances the RTP
+// timeline by the elapsed wall-clock time. Custom pipelines without an RTP
+// writer handle own their timing: the hook stays nil there instead of
+// dereferencing a missing handle.
+func (d *DialogMedia) armPlaybackTimestampReset(p *AudioPlayback) {
+	if w := d.RTPPacketWriter(); w != nil {
+		p.onPlay = w.ResetTimestamp
+	}
 }
 
 // CreateRingtonePlayback creates playback for ringtone
@@ -859,34 +868,6 @@ func (d *DialogMedia) CreateRingtonePlayback() (*AudioRingtone, error) {
 		dm:         d,
 	}
 	return &ar, nil
-}
-
-// AudioStereoRecordingCreate creates Stereo Recording audio Pipeline and stores as Wav file format
-// For audio to be recorded use AudioReader and AudioWriter from Recording
-//
-// It does NOT install itself into the pipeline: the caller pulls the returned
-// AudioReader/AudioWriter (a manual echo/copy loop) or wires them in with
-// SetAudioReader/SetAudioWriter.
-//
-// Deprecated: Use DialogMedia.StartStereoRecording instead. It self-installs
-// the tap into the current audio chain atomically (no deprecated setter, no
-// half-wired window), is fail-open by default so a full disk cannot interrupt
-// bridged media, and supports Pause/Resume and configurable spool.
-// This method will be removed in a future release; do not use in new code.
-func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereoRecordingWav, error) {
-	mpropsW := MediaProps{}
-	aw, err := d.audioWriterProps(&mpropsW)
-	if err != nil {
-		return nil, err
-	}
-
-	mpropsR := MediaProps{}
-	ar, err := d.audioReaderProps(&mpropsR)
-	if err != nil {
-		return nil, err
-	}
-
-	return newDialogRecordingWav(wavFile, ar, mpropsR, aw, mpropsW)
 }
 
 // IsRemoteHeld reports whether the negotiated media direction currently
@@ -1084,56 +1065,6 @@ func (d *DialogMedia) ListenContext(pctx context.Context) error {
 	}
 }
 
-// ListenUntil listens until dur elapses.
-//
-// Deprecated: Use ListenContext with a context deadline.
-func (d *DialogMedia) ListenUntil(dur time.Duration) error {
-	buf := make([]byte, media.RTPBufSize)
-
-	ms := d.currentMediaSession()
-	if ms == nil {
-		return ErrDialogNotAnswered
-	}
-	ms.StopRTP(1, dur)
-	audioReader, err := d.AudioReader()
-	if err != nil {
-		return err
-	}
-	for {
-		_, err := audioReader.Read(buf)
-		if err != nil {
-			return err
-		}
-	}
-}
-
-// StopRTP pauses reading and/or writing by expiring the shared conn
-// deadline. It is a durable, global state: any other component's StartRTP
-// clears it for everyone.
-//
-// Deprecated: Use PauseAudioRead / PauseAudioWrite, which are refcounted and
-// scoped to this dialog's stable handles.
-func (d *DialogMedia) StopRTP(rw int8, dur time.Duration) error {
-	ms := d.currentMediaSession()
-	if ms == nil {
-		return ErrDialogNotAnswered
-	}
-	return ms.StopRTP(rw, dur)
-}
-
-// StartRTP clears the conn deadline (both directions).
-// The dur parameter is ignored and kept only for signature compatibility.
-//
-// Deprecated: Use the release function returned by PauseAudioRead /
-// PauseAudioWrite.
-func (d *DialogMedia) StartRTP(rw int8, dur time.Duration) error {
-	ms := d.currentMediaSession()
-	if ms == nil {
-		return ErrDialogNotAnswered
-	}
-	return ms.StartRTP(rw)
-}
-
 type DTMFReader struct {
 	// dm resolves the CURRENT media session at use time so that deadline
 	// control survives media updates (re-INVITE)
@@ -1227,7 +1158,7 @@ func (m *DialogMedia) deliverDTMF(dtmf rune, dur time.Duration) {
 	m.mu.Unlock()
 
 	if len(readers) == 0 {
-		slog.Debug("Received SIP INFO DTMF but no DTMF reader registered", "dtmf", string(dtmf))
+		m.logger().Debug("Received SIP INFO DTMF but no DTMF reader registered", "dtmf", string(dtmf))
 		return
 	}
 	for _, r := range readers {
@@ -1236,7 +1167,7 @@ func (m *DialogMedia) deliverDTMF(dtmf rune, dur time.Duration) {
 			continue
 		}
 		if err := fn(dtmf); err != nil {
-			slog.Error("DTMF callback failed on SIP INFO DTMF", "error", err)
+			m.logger().Error("DTMF callback failed on SIP INFO DTMF", "error", err)
 		}
 	}
 	_ = dur // duration is informational for out-of-band digits

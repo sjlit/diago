@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 )
 
@@ -30,27 +29,6 @@ type RTPReader interface {
 // the chain and retargets its upstream session instead of replacing it.
 type rtpSessionUpdater interface {
 	updateRTPSession(*RTPSession)
-}
-
-// RTPReaderRaw is a raw byte-level RTP reader abstraction.
-//
-// Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
-type RTPReaderRaw interface {
-	ReadRTPRaw(buf []byte) (int, error)
-}
-
-// RTCPReader is an RTCP reader abstraction.
-//
-// Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
-type RTCPReader interface {
-	ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error)
-}
-
-// RTPCReaderRaw is a raw byte-level RTCP reader abstraction.
-//
-// Deprecated: No implementation and no use; use RTPPacketReader instead. It will be removed.
-type RTPCReaderRaw interface {
-	ReadRTCPRaw(buf []byte) (int, error)
 }
 
 // RTPPacketReader reads RTP packet and extracts payload and header
@@ -89,6 +67,7 @@ type RTPPacketReader struct {
 func NewRTPPacketReaderSession(sess *RTPSession) *RTPPacketReader {
 	r := newRTPPacketReaderMedia(sess.Sess)
 	r.reader = sess
+	r.log = sess.logger().With("caller", "media")
 	return r
 }
 
@@ -293,17 +272,9 @@ func (r *RTPPacketReader) UpdateRTPSession(rtpSess *RTPSession) {
 			s.Sess.rtpConn.SetReadDeadline(time.Now())
 		}
 	}
-
-	// codec := CodecFromSession(rtpSess.Sess)
-	// r.mu.Lock()
-	// r.RTPSession = rtpSess
-	// // r.payloadType = codec.PayloadType
-	// r.reader = rtpSess
-	// r.mu.Unlock()
 }
 
 func (r *RTPPacketReader) UpdateReader(reader RTPReader) {
-	// codec := CodecFromSession(rtpSess.Sess)
 	r.mu.Lock()
 	// Make sure that current reading is stopped
 	if m, ok := r.reader.(*MediaSession); ok {

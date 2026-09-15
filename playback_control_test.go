@@ -140,6 +140,52 @@ func TestPlaybackControlStopDuringPlay(t *testing.T) {
 	assert.Equal(t, PlaybackStateIdle, p.State())
 }
 
+// TestPlaybackControlReuseAfterStop is a regression test for the stop channel
+// being closed more than once: a playback restarted after Stop must be
+// pausable again, and stopping it again must not panic with "close of closed
+// channel".
+func TestPlaybackControlReuseAfterStop(t *testing.T) {
+	data := make([]byte, 32000)
+	cw := &countWriter{}
+	p := newTestControl(cw)
+
+	play := func() chan error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+			done <- err
+		}()
+		waitPlaying(t, &p)
+		return done
+	}
+
+	// First generation: stop mid-play.
+	done := play()
+	time.Sleep(10 * time.Millisecond)
+	p.Stop()
+	require.ErrorIs(t, <-done, ErrPlaybackStopped)
+
+	// Second generation: pause/resume must work again.
+	done = play()
+	time.Sleep(10 * time.Millisecond)
+	p.Pause()
+	require.Equal(t, PlaybackStatePaused, p.State())
+	p.Resume()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("second play did not finish")
+	}
+
+	// Third generation: stopping again must not panic.
+	done = play()
+	time.Sleep(10 * time.Millisecond)
+	p.Stop()
+	require.ErrorIs(t, <-done, ErrPlaybackStopped)
+	require.Equal(t, PlaybackStateStopped, p.State())
+}
+
 func TestPlaybackControlStopDuringPause(t *testing.T) {
 	data := make([]byte, 6400)
 	cw := &countWriter{}

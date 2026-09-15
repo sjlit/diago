@@ -278,9 +278,8 @@ type NetworkConfig struct {
 	// RTPNAT 0 - disabled, 1 - learn source. Check media.RTPNAT options.
 	RTPNAT RTPNATMode
 	// RTPPortStart/RTPPortEnd define the local RTP port range. Ports are
-	// picked in steps of 2 so the RTCP port (RTP+1) fits. Zero values
-	// inherit the media package globals media.RTPPortStart/RTPPortEnd
-	// (0 = ephemeral ports with retry).
+	// picked in steps of 2 so the RTCP port (RTP+1) fits. Zero means
+	// ephemeral ports with the library's bind retry.
 	RTPPortStart int
 	RTPPortEnd   int
 }
@@ -288,8 +287,8 @@ type NetworkConfig struct {
 // SDPConfig groups SDP generation settings.
 type SDPConfig struct {
 	// CodecPreferLocalOrder makes the answerer order common codecs by local
-	// preference instead of the offerer order (RFC 3264 default). Zero
-	// inherits media.SDPCodecPreferLocalOrder.
+	// preference instead of the offerer order (RFC 3264 default). Zero keeps
+	// the offerer order.
 	CodecPreferLocalOrder int
 	// SessionName overrides the SDP "s=" session-name line. Empty keeps the
 	// library default "Sip Go Media".
@@ -309,23 +308,28 @@ type MediaConfig struct {
 	// before. Per-call override: WithMusicOnHold; manual control:
 	// DialogMedia.PlayMusicOnHold/StopMusicOnHold.
 	MusicOnHold audio.Tone
+
+	// Logger receives media-pipeline logs: media package internals (RTP/RTCP,
+	// negotiation, DTLS debug) and dialog-level components (hold music, DTMF
+	// relay, playback). Nil falls back to the Diago logger; when that is also
+	// unset the media package default (slog.Default) is used.
+	Logger *slog.Logger
 }
 
 // TransportMediaConfig overrides the transport-scoped parts of MediaConfig
 // (SRTP and Network) for dialogs carried over a specific Transport. Zero
 // fields inherit the global MediaConfig; the precedence for a field is:
 // explicit Transport value, then a value derived from BindHost/ExternalHost,
-// then MediaConfig. Codecs, SDP and MusicOnHold are global-only.
+// then MediaConfig. Codecs, SDP, MusicOnHold and Logger are global-only.
 type TransportMediaConfig struct {
 	SRTP    SRTPConfig
 	Network NetworkConfig
 }
 
 // WithMediaConfig replaces the global media configuration. It is a whole
-// struct replacement, not a merge: fields left at their zero value fall back
-// to the library defaults only via media session globals (see NetworkConfig
-// and SDPConfig). Codecs left nil would fail session creation, so start from
-// the defaults you need.
+// struct replacement, not a merge: zero fields keep their documented library
+// defaults (see NetworkConfig and SDPConfig). Codecs left nil would fail
+// session creation, so start from the defaults you need.
 func WithMediaConfig(conf MediaConfig) DiagoOption {
 	return func(dg *Diago) {
 		dg.mediaConf = conf
@@ -346,6 +350,9 @@ func WithClient(client *sipgo.Client) DiagoOption {
 	}
 }
 
+// WithLogger sets the logger for sipgo, the Diago engine, and the media
+// pipeline logs (hold music, DTMF relay, playback and media internals) unless
+// MediaConfig.Logger explicitly overrides it.
 func WithLogger(l *slog.Logger) DiagoOption {
 	return func(dg *Diago) {
 		dg.log = l
@@ -383,6 +390,12 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 
 	for _, o := range opts {
 		o(dg)
+	}
+
+	// Media logs follow the Diago logger unless a MediaConfig explicitly
+	// carries its own.
+	if dg.mediaConf.Logger == nil {
+		dg.mediaConf.Logger = dg.log
 	}
 
 	if len(dg.transports) == 0 {
@@ -455,14 +468,15 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		// Server-side digest auth is opt-in: call DialogServerSession.Authorize
 		// (DigestAuthServer.AuthorizeDialog) as the first action of your serve
 		// handler to challenge/validate the INVITE (RFC 2617).
+		mediaConf := dg.mediaConfigForTransport(tran)
 		dWrap := &DialogServerSession{
 			DialogServerSession: dialog,
-			dialogMedia:         DialogMedia{},
+			dialogMedia:         DialogMedia{log: mediaConf.Logger},
 			// TODO we may actually just build media session with this conf here
-			mediaConf: dg.mediaConfigForTransport(tran),
+			mediaConf: mediaConf,
 		}
 
-		defer closeAndLog(dWrap, "closing dialog server returned error")
+		defer closeAndLog(dWrap.logger(), dWrap, "closing dialog server returned error")
 
 		if err := dg.cache.server.store(dWrap.Context(), dWrap.DialogServerSession.ID, dWrap); err != nil {
 			return fmt.Errorf("failed to store server dialog: %w", err)
@@ -548,12 +562,12 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		// Terminate our media processing
 		// As user may stuck in playing or reading media, this unblocks that goroutine
 		if cd != nil {
-			defer closeAndLog(&cd.dialogMedia, "failed to close client media")
+			defer closeAndLog(cd.logger(), &cd.dialogMedia, "failed to close client media")
 
 			return cd.ReadBye(req, tx)
 		}
 
-		defer closeAndLog(&sd.dialogMedia, "failed to close server media")
+		defer closeAndLog(sd.logger(), &sd.dialogMedia, "failed to close server media")
 		return sd.ReadBye(req, tx)
 	}))
 
@@ -1122,6 +1136,7 @@ func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, contact *sip.C
 	// overlaid, so it carries all fields (codecs, RTPNAT, SRTP alg, port
 	// range, codec order).
 	d.mediaConfig = dg.mediaConfigForTransport(tran)
+	d.dialogMedia.log = d.mediaConfig.Logger
 
 	// This should be run on ACK
 	d.OnState(func(s sip.DialogState) {
@@ -1242,18 +1257,7 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...Signal
 		var rr *RegisterResponseError
 		if errors.As(err, &rr) {
 			resCode := rr.RegisterRes.StatusCode
-			switch {
-			case resCode == 401 || resCode == 407:
-				return err
-			case resCode == 408 || resCode == 491:
-				// Transient client failures, keep retrying
-			case resCode >= 400 && resCode < 500:
-				// Other 4xx (403 Forbidden, 404 Not Found, ...) are terminal, never retry them
-				return err
-			case resCode > 500 && resCode < 600:
-				return err
-			case resCode < 200 || resCode > 699:
-				// strange
+			if !shouldRetryRegister(resCode) {
 				return err
 			}
 

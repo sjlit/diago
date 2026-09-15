@@ -96,7 +96,7 @@ func TestStartStereoRecordingKeepsTransparentTapWhenWrapped(t *testing.T) {
 
 	// Simulate the bridge replacing the head with a wrapper on top.
 	outer := &bytes.Buffer{} // any distinct reader stands in for the wrapper
-	d.SetAudioReader(outer)
+	d.setAudioReader(outer)
 
 	require.NoError(t, rec.Close())
 	assert.Equal(t, io.Reader(outer), chainReader(d), "Close must not remove a tap that is no longer outermost")

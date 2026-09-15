@@ -58,7 +58,7 @@ func main() {
 		}
 
 		slog.Info("Starting echo")
-		err := d.Echo()
+		err := d.EchoContext(ctx)
 		slog.Info("Echo finished with", "error", err)
 
 		return nil

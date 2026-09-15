@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/emiago/sipgo/sip"
-	"github.com/pion/rtp"
 	"github.com/sjlit/diago/v2/media"
 )
 
@@ -27,25 +26,13 @@ func copyWithBuf(reader io.Reader, writer io.Writer, payloadBuf []byte) (int64, 
 	return media.CopyWithBuf(reader, writer, payloadBuf)
 }
 
-func closeAndLog(closer io.Closer, msg string) {
+func closeAndLog(log *slog.Logger, closer io.Closer, msg string) {
 	if err := closer.Close(); err != nil {
-		slog.Error(msg, "error", err)
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Error(msg, "error", err)
 	}
-}
-
-type rtpWriterBuffer struct {
-	buf []*rtp.Packet
-}
-
-func newRTPWriterBuffer() *rtpWriterBuffer {
-	return &rtpWriterBuffer{
-		buf: make([]*rtp.Packet, 0, 1000),
-	}
-}
-
-func (w *rtpWriterBuffer) WriteRTP(p *rtp.Packet) error {
-	w.buf = append(w.buf, p)
-	return nil
 }
 
 type loggingTransport struct{}

@@ -498,7 +498,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 				panic(err)
 			}
 
-			err := d.Echo()
+			err := d.EchoContext(ctx)
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
@@ -571,7 +571,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 				panic(err)
 			}
 
-			err := d.Echo()
+			err := d.EchoContext(ctx)
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
@@ -665,7 +665,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				panic(err)
 			}
 
-			err := d.Echo()
+			err := d.EchoContext(ctx)
 			slog.Info("Echo finished with", "error", err)
 
 			return nil

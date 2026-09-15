@@ -87,6 +87,15 @@ type AudioPlaybackDTMF struct {
 	started   atomic.Bool
 }
 
+// logger returns the dialog logger with the media package default as
+// fallback (manually constructed handles may not carry a dialog).
+func (p *AudioPlaybackDTMF) logger() *slog.Logger {
+	if p.dm != nil {
+		return p.dm.logger()
+	}
+	return media.DefaultLogger()
+}
+
 // CreatePlaybackDTMF creates playback controlled with in-band RTP DTMF.
 //
 // By default any DTMF key interrupts playback. Use options to customize:
@@ -100,8 +109,8 @@ type AudioPlaybackDTMF struct {
 //	pb.Close()
 //
 // While playback is active DTMF keys are detected by reading audio RTP in
-// background. Other audio reading (CreateDTMFReader, Echo, recording) MUST NOT
-// be used until Close is called.
+// background. Other audio reading (CreateDTMFReader, EchoContext, recording)
+// MUST NOT be used until Close is called.
 func (d *DialogMedia) CreatePlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
 	pb, err := d.CreatePlaybackControl()
 	if err != nil {
@@ -251,7 +260,7 @@ func (p *AudioPlaybackDTMF) readLoop() {
 				continue
 			}
 			// Dialog closed (net closed => io.EOF) or reading stopped
-			slog.Debug("DTMF read loop stopped", "error", err)
+			p.logger().Debug("DTMF read loop stopped", "error", err)
 			return
 		}
 	}
@@ -263,7 +272,7 @@ func (p *AudioPlaybackDTMF) handleDTMF(dtmf rune) error {
 	replayed := false
 	if _, ok := p.replayKeys[dtmf]; ok {
 		if err := p.control.Replay(); err != nil {
-			slog.Debug("DTMF replay skipped", "dtmf", string(dtmf), "error", err)
+			p.logger().Debug("DTMF replay skipped", "dtmf", string(dtmf), "error", err)
 		} else {
 			replayed = true
 		}
@@ -281,7 +290,7 @@ func (p *AudioPlaybackDTMF) handleDTMF(dtmf rune) error {
 	select {
 	case p.dtmfCh <- dtmf:
 	default:
-		slog.Warn("DTMF dropped, DTMF channel is full", "dtmf", string(dtmf))
+		p.logger().Warn("DTMF dropped, DTMF channel is full", "dtmf", string(dtmf))
 	}
 
 	if p.onDTMF != nil {

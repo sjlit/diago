@@ -150,15 +150,21 @@ func (m *DialogMedia) SendDTMF(ctx context.Context, digits string, opts ...DTMFS
 	defer m.dtmfSendMu.Unlock()
 
 	if method == DTMFMethodInband {
-		segs := make([]audio.ToneSegment, 0, 2*len(digits))
-		for _, d := range digits {
+		digitsRunes := []rune(digits)
+		segs := make([]audio.ToneSegment, 0, 2*len(digitsRunes))
+		for i, d := range digitsRunes {
 			tone, err := audio.ToneDTMFDigit(unicode.ToUpper(d))
 			if err != nil {
 				return err
 			}
 			seg := tone.Segments[0]
 			seg.On = cfg.eventDur
-			segs = append(segs, seg, audio.ToneSegment{Off: cfg.interval})
+			segs = append(segs, seg)
+			// No trailing silence after the last digit, matching the RTP
+			// path (the inter-digit gap exists to separate digits).
+			if i != len(digitsRunes)-1 {
+				segs = append(segs, audio.ToneSegment{Off: cfg.interval})
+			}
 		}
 		return m.PlayTone(ctx, audio.Tone{Segments: segs})
 	}

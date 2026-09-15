@@ -28,6 +28,15 @@ type RTPDtmfReader struct {
 	dtmfEnd bool
 }
 
+// logger returns the reader's logger, inherited from the packet reader handle
+// it decodes events from.
+func (r *RTPDtmfReader) logger() *slog.Logger {
+	if r.packetReader != nil && r.packetReader.log != nil {
+		return r.packetReader.log
+	}
+	return DefaultLogger()
+}
+
 // RTP DTMF writer is midleware for reading DTMF events
 // It reads from io Reader and checks packet Reader
 func NewRTPDTMFReader(codec Codec, packetReader *RTPPacketReader, reader io.Reader) *RTPDtmfReader {
@@ -78,9 +87,9 @@ func (w *RTPDtmfReader) Read(b []byte) (int, error) {
 }
 
 func (w *RTPDtmfReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
-	if DefaultLogger().Handler().Enabled(context.Background(), slog.LevelDebug) {
+	if w.logger().Handler().Enabled(context.Background(), slog.LevelDebug) {
 		// Expensive call on logger
-		DefaultLogger().Debug("Processing DTMF event", "ev", ev, "mbit", mbit)
+		w.logger().Debug("Processing DTMF event", "ev", ev, "mbit", mbit)
 	}
 	if ev.EndOfEvent {
 		if mbit {

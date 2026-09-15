@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"log/slog"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -65,7 +66,10 @@ type DTLSConfig struct {
 	EllipticCurves []uint16
 }
 
-func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
+func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints, log *slog.Logger) *dtls.Config {
+	if log == nil {
+		log = DefaultLogger()
+	}
 	// RFC 5763 §5 requires both endpoints to present a certificate when
 	// DTLS-SRTP is negotiated with fingerprints. With the default
 	// ServerClientAuthNoCert the server never sends CertificateRequest,
@@ -76,7 +80,7 @@ func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
 	auth := dtls.ClientAuthType(conf.ServerClientAuth)
 	if len(fingerprints) > 0 && auth == dtls.NoClientCert {
 		auth = dtls.RequireAnyClientCert
-		DefaultLogger().Debug("forcing RequireAnyClientCert, SDP fingerprints present")
+		log.Debug("forcing RequireAnyClientCert, SDP fingerprints present")
 	}
 
 	config := &dtls.Config{
@@ -114,7 +118,7 @@ func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints) *dtls.Config {
 			if len(fingerprints) == 0 {
 				return nil
 			}
-			return dtlsVerifyConnection(state, fingerprints)
+			return dtlsVerifyConnection(state, fingerprints, log)
 		},
 		StopReaderAfterHandshake: true,
 	}
@@ -146,7 +150,7 @@ func dtlsServer(conn net.PacketConn, raddr net.Addr, certificates []tls.Certific
 	conf := DTLSConfig{
 		Certificates: certificates,
 	}
-	return dtls.Server(conn, raddr, conf.ToLibConf([]sdpFingerprints{}))
+	return dtls.Server(conn, raddr, conf.ToLibConf([]sdpFingerprints{}, nil))
 }
 
 func dtlsClient(conn net.PacketConn, raddr net.Addr, certificates []tls.Certificate, serverName string) (*dtls.Conn, error) {
@@ -155,7 +159,7 @@ func dtlsClient(conn net.PacketConn, raddr net.Addr, certificates []tls.Certific
 		Certificates: certificates,
 		ServerName:   serverName,
 	}
-	return dtls.Client(conn, raddr, conf.ToLibConf([]sdpFingerprints{}))
+	return dtls.Client(conn, raddr, conf.ToLibConf([]sdpFingerprints{}, nil))
 }
 
 // dtlsVerifyConnection checks the DTLS peer certificate against the
@@ -164,7 +168,10 @@ func dtlsClient(conn net.PacketConn, raddr net.Addr, certificates []tls.Certific
 // present its own certificate. It fails closed: when none of the offered
 // fingerprints matches, the handshake is aborted. Empty fingerprints also
 // fail (N7): a peer stripping a=fingerprint must not downgrade to unverified.
-func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints) error {
+func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints, log *slog.Logger) error {
+	if log == nil {
+		log = DefaultLogger()
+	}
 	if len(fingerprints) == 0 {
 		return fmt.Errorf("dtls: no SDP fingerprints offered, refusing (RFC 5763)")
 	}
@@ -176,11 +183,11 @@ func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints) err
 	for _, fp := range fingerprints {
 		remoteFP, err := certificateFingerprint(remoteCert, fp.alg)
 		if err != nil {
-			DefaultLogger().Debug("Skipping fingerprint with unsupported hash algorithm", "alg", fp.alg)
+			log.Debug("Skipping fingerprint with unsupported hash algorithm", "alg", fp.alg)
 			continue
 		}
 
-		DefaultLogger().Debug("Comparing fingerprint", "alg", fp.alg, "fp", fp.fingerprint, "rfp", remoteFP)
+		log.Debug("Comparing fingerprint", "alg", fp.alg, "fp", fp.fingerprint, "rfp", remoteFP)
 		if fingerprintEqual(fp.fingerprint, remoteFP) {
 			return nil
 		}

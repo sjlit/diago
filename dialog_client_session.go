@@ -198,6 +198,10 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *sign
 			sess = params.Media.MediaSession.Fork()
 		}
 		d.mu.Lock()
+		if d.dialogMedia.closed {
+			d.mu.Unlock()
+			return ErrDialogClosed
+		}
 		if d.mediaSession == nil {
 			d.initMediaSessionUnsafe(sess, nil, nil)
 		}
@@ -418,11 +422,16 @@ func (d *DialogClientSession) waitAnswerEarly(ctx context.Context, med *DialogMe
 
 		rtpSess := media.NewRTPSession(sess)
 		med.mu.Lock()
-		med.initRTPSessionUnsafe(sess, rtpSess)
-		med.onCloseUnsafe(func() error {
-			return rtpSess.Close()
-		})
+		ierr := med.initRTPSessionUnsafe(sess, rtpSess)
+		if ierr == nil {
+			med.onCloseUnsafe(func() error {
+				return rtpSess.Close()
+			})
+		}
 		med.mu.Unlock()
+		if ierr != nil {
+			return errors.Join(ierr, rtpSess.Close())
+		}
 
 		// Must be called after reader and writer setup due to race
 		if err := rtpSess.MonitorBackground(); err != nil {
@@ -469,11 +478,14 @@ func (d *DialogClientSession) applyRemoteSDP(med *DialogMedia, remoteSDP []byte)
 	// Create RTP session. After this no media session configuration should be changed
 	rtpSess := media.NewRTPSession(sess)
 	med.mu.Lock()
-	med.initRTPSessionUnsafe(sess, rtpSess)
+	err := med.initRTPSessionUnsafe(sess, rtpSess)
 	// d.onCloseUnsafe(func() error {
 	// 	return rtpSess.Close()
 	// })
 	med.mu.Unlock()
+	if err != nil {
+		return errors.Join(err, rtpSess.Close())
+	}
 
 	// Must be called after reader and writer setup due to race
 	return rtpSess.MonitorBackground()

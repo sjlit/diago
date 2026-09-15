@@ -6,6 +6,7 @@ package media
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"net"
 	"testing"
 
@@ -17,25 +18,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMediaLoggerPropagation verifies the per-session logger is inherited by
+// the RTP session and the stable packet reader handle, with the package
+// default as fallback when unset.
+func TestMediaLoggerPropagation(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sess, err := NewMediaSession(net.ParseIP("127.0.0.1"), 0)
+	require.NoError(t, err)
+	defer sess.Close()
+	sess.Logger = logger
+
+	rtpSess := NewRTPSession(sess)
+	require.Same(t, logger, rtpSess.logger())
+
+	reader := NewRTPPacketReaderSession(rtpSess)
+	reader.log.Debug("reader-log-probe")
+	require.Contains(t, buf.String(), "reader-log-probe",
+		"the packet reader handle must log through the session logger")
+
+	sess.Logger = nil
+	require.NotNil(t, sess.logger(), "unset logger must fall back to the package default")
+}
+
 func TestMediaPortRange(t *testing.T) {
-	oldStart, oldEnd := RTPPortStart, RTPPortEnd
-	t.Cleanup(func() { RTPPortStart, RTPPortEnd = oldStart, oldEnd })
-	RTPPortStart = 5000
-	RTPPortEnd = 5010
+	const portStart, portEnd = 5000, 5010
+	rtpPortOffset.Store(0)
+	t.Cleanup(func() { rtpPortOffset.Store(0) })
 
 	sessions := []*MediaSession{}
-	for i := RTPPortStart; i < RTPPortEnd; i += 2 {
-		require.Equal(t, i-RTPPortStart, int(rtpPortOffset.Load()))
-		mess, err := NewMediaSession(net.IPv4(127, 0, 0, 1), 0)
+	for i := portStart; i < portEnd; i += 2 {
+		require.Equal(t, i-portStart, int(rtpPortOffset.Load()))
+		mess := &MediaSession{
+			Codecs:       []Codec{CodecAudioUlaw},
+			Mode:         sdp.ModeSendrecv,
+			Laddr:        net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
+			RTPPortStart: portStart,
+			RTPPortEnd:   portEnd,
+		}
+		require.NoError(t, mess.Init())
 		t.Log(mess.rtpConn.LocalAddr(), mess.rtcpConn.LocalAddr())
-		require.NoError(t, err)
 		sessions = append(sessions, mess)
 	}
 
 	for _, s := range sessions {
 		s.Close()
 	}
-
 }
 
 func TestDTMFEncodeDecode(t *testing.T) {

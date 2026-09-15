@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
 
 	"github.com/sjlit/diago/v2/audio"
@@ -170,7 +169,7 @@ func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto
 	d.mu.Unlock()
 
 	if dir == sdp.ModeRecvonly || dir == sdp.ModeInactive {
-		slog.Warn("Music on hold started while the negotiated direction prevents sending; audio is dropped until the dialog is unheld", "direction", dir)
+		d.logger().Warn("Music on hold started while the negotiated direction prevents sending; audio is dropped until the dialog is unheld", "direction", dir)
 	}
 
 	go d.mohLoop(m, tone, m.ctx)
@@ -204,7 +203,7 @@ func (d *DialogMedia) mohAutoStart(ctx context.Context, toneOverride *audio.Tone
 		ctx = context.Background()
 	}
 	if _, err := d.playMusicOnHold(context.WithoutCancel(ctx), tone, true); err != nil && !errors.Is(err, ErrMusicOnHoldActive) {
-		slog.Warn("Hold: automatic music on hold failed to start", "error", err)
+		d.logger().Warn("Hold: automatic music on hold failed to start", "error", err)
 	}
 }
 
@@ -218,7 +217,7 @@ func (d *DialogMedia) mohAutoStop() {
 		return
 	}
 	if err := m.Stop(); err != nil {
-		slog.Debug("Unhold: stopping automatic music on hold failed", "error", err)
+		d.logger().Debug("Unhold: stopping automatic music on hold failed", "error", err)
 	}
 }
 

@@ -364,6 +364,12 @@ func (d *DialogServerSession) RemoteContact() *sip.ContactHeader {
 // RespondSDP responds with 200 OK and provided SDP body.
 // Options can customize status headers and Contact of the response.
 // Scope: WithHeaders, WithContact, WithResponseMutator (use the body argument).
+//
+// The 2xx exchange retransmits the response until the peer's ACK arrives and
+// waits for it before returning (RFC 3261 §13.3.1.4; bounded by 64*T1 ≈ 32s
+// without an ACK). ctx is honored before the response is written but does not
+// interrupt that ACK wait, so callers should not rely on ctx for a strict
+// upper bound here.
 func (d *DialogServerSession) RespondSDP(ctx context.Context, body []byte, opts ...SignalOption) error {
 	params, err := newSignalParams(opts, "RespondSDP", scopeRespondSDP)
 	if err != nil {
@@ -378,6 +384,11 @@ func (d *DialogServerSession) RespondSDP(ctx context.Context, body []byte, opts 
 // Scope: ProgressMedia options plus WithOnMediaUpdate and WithOnRefer; media
 // overrides only apply when Answer creates the media session itself (no early
 // media from ProgressMedia).
+//
+// The 2xx exchange retransmits the response until the peer's ACK arrives and
+// waits for it before returning (RFC 3261 §13.3.1.4; bounded by 64*T1 ≈ 32s
+// without an ACK). ctx is honored before the response is written but does not
+// interrupt that ACK wait, so Answer can outlive its ctx on a slow/absent ACK.
 func (d *DialogServerSession) Answer(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts, "Answer", scopeAnswer)
 	if err != nil {
@@ -448,12 +459,15 @@ func (d *DialogServerSession) answerSession(ctx context.Context, rtpSess *media.
 	}
 
 	d.mu.Lock()
-	d.initRTPSessionUnsafe(sess, rtpSess)
+	ierr := d.initRTPSessionUnsafe(sess, rtpSess)
 	// Close RTP session
 	// d.onCloseUnsafe(func() error {
 	// 	return rtpSess.Close()
 	// })
 	d.mu.Unlock()
+	if ierr != nil {
+		return errors.Join(ierr, rtpSess.Close())
+	}
 
 	body := sess.LocalSDP()
 	if params != nil && params.Msg.Body != nil {
@@ -497,12 +511,15 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 	}
 
 	d.mu.Lock()
-	d.initRTPSessionUnsafe(sess, rtpSess)
+	err := d.initRTPSessionUnsafe(sess, rtpSess)
 	// Close RTP session
 	// d.onCloseUnsafe(func() error {
 	// 	return rtpSess.Close()
 	// })
 	d.mu.Unlock()
+	if err != nil {
+		return errors.Join(err, rtpSess.Close())
+	}
 	return nil
 }
 
@@ -511,6 +528,9 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 // Scope: WithHeaders, WithContact, WithBody, WithResponseMutator, plus the
 // media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP, WithMediaExternalIP,
 // WithMediaDTLS, WithSDPSessionName, WithMediaSession, WithMusicOnHold).
+//
+// Like Answer, the 2xx ACK wait (up to 64*T1 ≈ 32s) is not interruptible by
+// ctx.
 func (d *DialogServerSession) AnswerLate(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts, "AnswerLate", scopeAnswerLate)
 	if err != nil {
@@ -525,12 +545,15 @@ func (d *DialogServerSession) AnswerLate(ctx context.Context, opts ...SignalOpti
 	localSDP := sess.LocalSDP()
 
 	d.mu.Lock()
-	d.initRTPSessionUnsafe(sess, rtpSess)
+	err = d.initRTPSessionUnsafe(sess, rtpSess)
 	// Close RTP session
 	// d.onCloseUnsafe(func() error {
 	// 	return rtpSess.Close()
 	// })
 	d.mu.Unlock()
+	if err != nil {
+		return errors.Join(err, rtpSess.Close())
+	}
 
 	body := localSDP
 	if params != nil && params.Msg.Body != nil {

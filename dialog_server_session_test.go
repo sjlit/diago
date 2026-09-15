@@ -460,7 +460,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 func TestIntegrationDialogServerPlayback(t *testing.T) {
 	skipShort(t)
-	rtpBuf := newRTPWriterBuffer()
+	rtpBuf := &rtpBufferTestWriter{}
 	dialog := &DialogServerSession{
 		dialogMedia: DialogMedia{
 			mediaSession:    &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
@@ -749,4 +749,15 @@ a=` + mode)
 	_, err = d.applyLateOfferAnswerUnsafe(answer("sendrecv"))
 	require.NoError(t, err)
 	require.False(t, d.IsRemoteHeld(), "sendrecv answer must clear the flag")
+}
+
+// rtpBufferTestWriter records RTP packets written through it; it replaces the
+// former production helper that was only ever used by tests.
+type rtpBufferTestWriter struct {
+	buf []*rtp.Packet
+}
+
+func (w *rtpBufferTestWriter) WriteRTP(p *rtp.Packet) error {
+	w.buf = append(w.buf, p)
+	return nil
 }

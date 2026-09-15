@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"sync"
@@ -61,6 +62,10 @@ var (
 type RTPSession struct {
 	// Keep pointers at top to reduce GC
 	Sess *MediaSession
+
+	// log receives this session's logs; inherited from the media session
+	// (MediaSession.Logger) with the package default as fallback.
+	log *slog.Logger
 
 	rtcpMU sync.Mutex
 	// All below fields should not be updated without rtcpMu Lock
@@ -175,12 +180,21 @@ type RTPWriteStats struct {
 func NewRTPSession(sess *MediaSession) *RTPSession {
 	return &RTPSession{
 		Sess:        sess,
+		log:         sess.logger(),
 		rtcpTicker:  time.NewTicker(5 * time.Second),
 		rtcpClosed:  make(chan struct{}),
 		onReadRTCP:  DefaultOnReadRTCP,
 		onWriteRTCP: DefaultOnWriteRTCP,
 		sourceLock:  RTPSourceLock,
 	}
+}
+
+// logger returns the RTP session logger with the package default as fallback.
+func (s *RTPSession) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return DefaultLogger()
 }
 
 // Fork creates a new RTP session lifecycle for a forked media session while
@@ -291,16 +305,16 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 
 		// Validate pkt. Check is it keep alive
 		if readPkt.Version == 0 {
-			DefaultLogger().Debug("Received RTP with invalid version. Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
+			s.logger().Debug("Received RTP with invalid version. Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
 			continue
 		}
 		if len(readPkt.Payload) == 0 {
-			DefaultLogger().Debug("Received RTP with empty Payload. Keep Alive? Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
+			s.logger().Debug("Received RTP with empty Payload. Keep Alive? Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
 			continue
 		}
 
 		if s.sourceLock && !s.sourceLockProtection(readPkt, sess.ReadRTPFromAddr) {
-			DefaultLogger().Debug("RTP Source lock protection learning. Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
+			s.logger().Debug("RTP Source lock protection learning. Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
 			continue
 		}
 
@@ -321,7 +335,7 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 		// that caller should not run reading while session is established
 		codec, ok := sess.CodecForPayloadType(readPkt.PayloadType)
 		if !ok {
-			DefaultLogger().Warn("Received RTP with unsupported payload_type", "pt", readPkt.PayloadType)
+			s.logger().Warn("Received RTP with unsupported payload_type", "pt", readPkt.PayloadType)
 			return 0, nil
 		}
 
@@ -483,7 +497,7 @@ func (s *RTPSession) Monitor() error {
 		select {
 		case now = <-s.rtcpTicker.C:
 		case <-s.rtcpClosed:
-			DefaultLogger().Debug("RTCP writer closed")
+			s.logger().Debug("RTCP writer closed")
 			return nil
 		}
 		if err = s.writeRTCP(now); err != nil {
@@ -505,7 +519,7 @@ func (s *RTPSession) MonitorBackground() error {
 		return err
 	}
 
-	log := DefaultLogger()
+	log := s.logger()
 	go func() {
 		defer s.monitorWG.Done()
 		log.Debug("RTCP reader started", "laddr", sess.rtcpConn.LocalAddr().String())
@@ -573,7 +587,7 @@ func (s *RTPSession) readRTCP() error {
 		n, err := sess.ReadRTCP(buf, rtcpBuf)
 		if err != nil {
 			if errors.Is(err, errRTCPFailedToUnmarshal) {
-				DefaultLogger().Error("RTCP Unmarshal error. Continue listen", "error", err)
+				s.logger().Error("RTCP Unmarshal error. Continue listen", "error", err)
 				continue
 			}
 			return err
@@ -623,7 +637,7 @@ func (s *RTPSession) readRTCPPacket(pkt rtcp.Packet) {
 func (s *RTPSession) readReceptionReport(rr rtcp.ReceptionReport, now time.Time) {
 	// For now only use single SSRC
 	if rr.SSRC != s.writeStats.SSRC {
-		DefaultLogger().Warn("Reception report SSRC does not match our internal", "ssrc", rr.SSRC, "expected", s.writeStats.SSRC)
+		s.logger().Warn("Reception report SSRC does not match our internal", "ssrc", rr.SSRC, "expected", s.writeStats.SSRC)
 		return
 	}
 
@@ -634,7 +648,7 @@ func (s *RTPSession) readReceptionReport(rr rtcp.ReceptionReport, now time.Time)
 		var skewed bool
 		s.readStats.RTT, skewed = calcRTT(now, rr.LastSenderReport, rr.Delay)
 		if skewed {
-			DefaultLogger().Warn("Internal RTCP clock skew detected", "ssrc", rr.SSRC, "rtt", s.readStats.RTT.String())
+			s.logger().Warn("Internal RTCP clock skew detected", "ssrc", rr.SSRC, "rtt", s.readStats.RTT.String())
 		}
 	}
 	// used to calc fraction lost

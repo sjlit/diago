@@ -15,11 +15,11 @@ import (
 func TestToLibConf_ForcesRequireAnyWhenFingerprintsPresent(t *testing.T) {
 	fps := []sdpFingerprints{{alg: "SHA-256", fingerprint: "AA:BB"}}
 	conf := DTLSConfig{ServerClientAuth: ServerClientAuthNoCert}
-	lib := conf.ToLibConf(fps)
+	lib := conf.ToLibConf(fps, nil)
 	require.Equal(t, dtls.RequireAnyClientCert, lib.ClientAuth)
 
 	confEmpty := DTLSConfig{ServerClientAuth: ServerClientAuthNoCert}
-	libEmpty := confEmpty.ToLibConf(nil)
+	libEmpty := confEmpty.ToLibConf(nil, nil)
 	require.Equal(t, dtls.NoClientCert, libEmpty.ClientAuth)
 }
 

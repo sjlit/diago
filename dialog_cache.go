@@ -48,11 +48,6 @@ func (m *dialogCacheMap[T]) rangeDialogs(ctx context.Context, f func(id string, 
 	return nil
 }
 
-type dialogData struct {
-	InviteRequest sip.Request
-	State         sip.DialogState
-}
-
 // dialogCachePool is the internal index of live dialogs. Requests are
 // resolved through matchDialog; the pool itself is not part of the public API.
 type dialogCachePool struct {

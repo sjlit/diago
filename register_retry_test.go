@@ -199,3 +199,145 @@ func TestRegisterTerminal4xxStops(t *testing.T) {
 	}
 	assert.EqualValues(t, 2, attempts.Load(), "terminal 4xx must not be retried")
 }
+
+func TestShouldRetryRegister(t *testing.T) {
+	cases := []struct {
+		code  int
+		retry bool
+	}{
+		{100, false},
+		{200, false},
+		{301, false},
+		{302, false},
+		{400, false},
+		{401, false},
+		{403, false},
+		{404, false},
+		{407, false},
+		{408, true},
+		{480, false},
+		{486, false},
+		{491, true},
+		{500, true},
+		{501, false},
+		{502, true},
+		{503, true},
+		{504, true},
+		{505, false},
+		{599, true},
+		{600, false},
+		{603, false},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.retry, shouldRetryRegister(c.code), "code=%d", c.code)
+	}
+}
+
+// TestRegisterRetryable5xxKeepsRetrying covers the classification hole the
+// old switch had: 500 and 503 are transient and must be retried.
+func TestRegisterRetryable5xxKeepsRetrying(t *testing.T) {
+	var attempts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		}
+		switch n := attempts.Add(1); n {
+		case 1:
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		case 2:
+			return sip.NewResponseFromRequest(req, 500, "Server Internal Error", nil)
+		case 3:
+			return sip.NewResponseFromRequest(req, 503, "Service Unavailable", nil)
+		default:
+			cancel()
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		}
+	})
+
+	var mu sync.Mutex
+	var delays []time.Duration
+	dg.registerAfter = recordingAfter(&delays, &mu)
+
+	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.GreaterOrEqual(t, attempts.Load(), int32(4), "500 and 503 must be retried")
+}
+
+// TestRegisterTerminal5xxStops: 501 is not transient, the loop must stop.
+func TestRegisterTerminal5xxStops(t *testing.T) {
+	var attempts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		}
+		switch n := attempts.Add(1); n {
+		case 1:
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		default:
+			return sip.NewResponseFromRequest(req, 501, "Not Implemented", nil)
+		}
+	})
+
+	var mu sync.Mutex
+	var delays []time.Duration
+	dg.registerAfter = recordingAfter(&delays, &mu)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	}()
+
+	select {
+	case err := <-done:
+		var rr *RegisterResponseError
+		require.ErrorAs(t, err, &rr)
+		assert.Equal(t, 501, rr.StatusCode())
+	case <-time.After(5 * time.Second):
+		t.Fatal("Register did not stop on 501")
+	}
+	assert.EqualValues(t, 2, attempts.Load(), "501 must not be retried")
+}
+
+// TestRegister3xxStops: redirects are terminal until Contact following exists.
+func TestRegister3xxStops(t *testing.T) {
+	var attempts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		}
+		switch n := attempts.Add(1); n {
+		case 1:
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		default:
+			return sip.NewResponseFromRequest(req, 302, "Moved Temporarily", nil)
+		}
+	})
+
+	var mu sync.Mutex
+	var delays []time.Duration
+	dg.registerAfter = recordingAfter(&delays, &mu)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	}()
+
+	select {
+	case err := <-done:
+		var rr *RegisterResponseError
+		require.ErrorAs(t, err, &rr)
+		assert.Equal(t, 302, rr.StatusCode())
+	case <-time.After(5 * time.Second):
+		t.Fatal("Register did not stop on a 3xx")
+	}
+	assert.EqualValues(t, 2, attempts.Load(), "3xx must not be retried")
+}
