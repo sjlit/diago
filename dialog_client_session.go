@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	ErrClientEarlyMedia = errors.New("Early media detected")
+	ErrClientEarlyMedia = errors.New("early media detected")
 )
 
 // DialogClientSession represents outbound channel
@@ -707,11 +707,14 @@ func (d *DialogClientSession) handleRefer(dg *Diago, req *sip.Request, tx sip.Se
 	onRefDialog := d.onReferDialog
 	d.mu.Unlock()
 	if onRefDialog == nil {
-		tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
+		// The transaction may already be gone; there is no retry path here.
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
 		return
 	}
 
-	dialogHandleRefer(d, dg, req, tx, onRefDialog)
+	if err := dialogHandleRefer(d, dg, req, tx, onRefDialog); err != nil {
+		dg.log.Error("Failed to handle REFER", "error", err)
+	}
 }
 
 func (d *DialogClientSession) handleReInvite(req *sip.Request, tx sip.ServerTransaction) error {

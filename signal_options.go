@@ -6,6 +6,7 @@ package diago
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -258,14 +259,7 @@ func newSignalParams(opts []SignalOption, method string, allowed optionScope) (*
 		if t.scope&^allowed == 0 {
 			continue
 		}
-		duplicate := false
-		for _, name := range unsupported {
-			if name == t.name {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
+		if !slices.Contains(unsupported, t.name) {
 			unsupported = append(unsupported, t.name)
 		}
 	}

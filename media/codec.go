@@ -162,7 +162,7 @@ func CodecsFromSDPRead(formats []string, attrs []string, codecsAudio []Codec) (i
 
 		pt64, err := strconv.ParseUint(f, 10, 8)
 		if err != nil {
-			rerr = errors.Join(rerr, fmt.Errorf("format type failed to conv to integer, skipping f=%s: %w", f, err))
+			rerr = errors.Join(rerr, fmt.Errorf("format type failed to conv to integer, skipping f=%q: %w", f, err))
 			continue
 		}
 		pt := uint8(pt64)
@@ -178,7 +178,7 @@ func CodecsFromSDPRead(formats []string, attrs []string, codecsAudio []Codec) (i
 				firstProp := props[0]
 				propsCodec := strings.Split(firstProp, "/")
 				if len(propsCodec) < 2 {
-					rerr = errors.Join(rerr, fmt.Errorf("bad rtmap property a=%s", a))
+					rerr = errors.Join(rerr, fmt.Errorf("bad rtmap property a=%q", a))
 					continue
 				}
 
@@ -186,7 +186,7 @@ func CodecsFromSDPRead(formats []string, attrs []string, codecsAudio []Codec) (i
 				sampleRateStr := propsCodec[1]
 				sampleRate64, err := strconv.ParseUint(sampleRateStr, 10, 32)
 				if err != nil {
-					rerr = errors.Join(rerr, fmt.Errorf("sample rate failed to parse a=%s: %w", a, err))
+					rerr = errors.Join(rerr, fmt.Errorf("sample rate failed to parse a=%q: %w", a, err))
 					continue
 				}
 
@@ -214,5 +214,5 @@ func CodecsFromSDPRead(formats []string, attrs []string, codecsAudio []Codec) (i
 			}
 		}
 	}
-	return n, nil
+	return n, rerr
 }

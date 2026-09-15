@@ -169,16 +169,21 @@ func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Res
 
 		res.AppendHeader(sip.NewHeader("WWW-Authenticate", e.Challenge.String()))
 
-		// Arm the expire timer before publishing the entry: any goroutine that
-		// later reads the entry from the cache (AuthorizeRequest, Close) must
-		// observe a non-nil expireTimer, otherwise it races on the field write.
+		// Publish the entry and arm its expire timer under the same lock:
+		// readers (AuthorizeRequest, Close) either see an entry with a live
+		// timer or no entry at all, and the timer cannot fire before the
+		// entry is reachable.
+		s.mu.Lock()
+		if s.cache == nil {
+			// The zero-value DigestAuthServer must work without NewDigestServer.
+			s.cache = make(map[string]*digestChallengeEntry)
+		}
+		s.cache[nonce] = e
 		e.expireTimer = time.AfterFunc(auth.expire(), func() {
 			s.mu.Lock()
 			delete(s.cache, nonce)
 			s.mu.Unlock()
 		})
-		s.mu.Lock()
-		s.cache[nonce] = e
 		s.mu.Unlock()
 	}
 

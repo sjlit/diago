@@ -15,21 +15,23 @@ type RTPRealTimeReader struct {
 	codec             Codec
 }
 
-func NewRTPRealTimeReader(reader io.Reader, rtpReader *RTPPacketReader, codec Codec) *RTPRealTimeReader {
+func NewRTPRealTimeReader(reader io.Reader, rtpReader *RTPPacketReader, codec Codec) (*RTPRealTimeReader, error) {
 	r := &RTPRealTimeReader{}
-	r.Init(reader, rtpReader, codec)
-	return r
+	if err := r.Init(reader, rtpReader, codec); err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
-func (r *RTPRealTimeReader) Init(reader io.Reader, rtpReader *RTPPacketReader, codec Codec) {
+func (r *RTPRealTimeReader) Init(reader io.Reader, rtpReader *RTPPacketReader, codec Codec) error {
 	if codec.SampleDur == 0 {
-		panic("Codec sample dur not defined " + fmt.Sprintf("%+v", codec))
+		return fmt.Errorf("codec sample dur not defined: %+v", codec)
 	}
 
 	r.r = reader
 	r.rtpReader = rtpReader
 	r.codec = codec
-
+	return nil
 }
 
 func (r *RTPRealTimeReader) Reset() {

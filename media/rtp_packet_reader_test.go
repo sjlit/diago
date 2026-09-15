@@ -106,7 +106,7 @@ func TestRTPPacketReaderUpdateRTPSessionKeepsJitterBuffer(t *testing.T) {
 	newRTPSess := NewRTPSession(newSess)
 
 	reader := NewRTPPacketReaderSession(oldRTPSess)
-	jitter := NewRTPJitterBuffer(oldRTPSess, 20*time.Millisecond, RTPJitterBufferOptions{})
+	jitter := mustNewRTPJitterBuffer(t, oldRTPSess, 20*time.Millisecond, RTPJitterBufferOptions{})
 	t.Cleanup(func() { _ = jitter.Close() })
 	reader.UpdateReader(jitter)
 

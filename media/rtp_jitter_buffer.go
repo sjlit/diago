@@ -4,6 +4,7 @@
 package media
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,10 @@ const (
 	defaultRTPJitterBufferDelayPackets = 3
 	defaultRTPJitterBufferMaxPackets   = 10
 )
+
+// ErrInvalidPacketDuration is returned by NewRTPJitterBuffer when the packet
+// duration derived from the codec is not greater than zero.
+var ErrInvalidPacketDuration = errors.New("media: RTP jitter buffer packetDuration must be greater than zero")
 
 var rtpJitterDebug = envBool("JITTER_DEBUG")
 
@@ -137,10 +142,10 @@ type RTPJitterBuffer struct {
 }
 
 // NewRTPJitterBuffer creates a fixed jitter buffer over another RTPReader.
-// It panics if packetDuration is not greater than zero.
-func NewRTPJitterBuffer(reader RTPReader, packetDuration time.Duration, opts RTPJitterBufferOptions) *RTPJitterBuffer {
+// It returns ErrInvalidPacketDuration if packetDuration is not greater than zero.
+func NewRTPJitterBuffer(reader RTPReader, packetDuration time.Duration, opts RTPJitterBufferOptions) (*RTPJitterBuffer, error) {
 	if packetDuration <= 0 {
-		panic("media: RTP jitter buffer packetDuration must be greater than zero")
+		return nil, ErrInvalidPacketDuration
 	}
 	if opts.DelayPackets <= 0 {
 		opts.DelayPackets = defaultRTPJitterBufferDelayPackets
@@ -189,7 +194,7 @@ func NewRTPJitterBuffer(reader RTPReader, packetDuration time.Duration, opts RTP
 		playoutTimer:   playoutTimer,
 	}
 	j.reader.Store(&reader)
-	return j
+	return j, nil
 }
 
 // updateRTPSession retargets the upstream session when the owning dialog
@@ -207,7 +212,7 @@ func (j *RTPJitterBuffer) updateRTPSession(rtpSess *RTPSession) {
 	// Wake an in-flight read on the abandoned session when the socket
 	// changed; a fork sharing the parent conn does not need the poke.
 	if s, ok := (*old).(*RTPSession); ok && s.Sess.rtpConn != rtpSess.Sess.rtpConn {
-		s.Sess.rtpConn.SetReadDeadline(time.Now())
+		_ = s.Sess.rtpConn.SetReadDeadline(time.Now())
 	}
 }
 

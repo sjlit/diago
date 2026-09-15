@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/sjlit/diago/v2/media"
 )
@@ -28,14 +27,6 @@ const (
 	FORMAT_TYPE_ULAW = 0
 	FORMAT_TYPE_ALAW = 8
 	FORMAT_TYPE_OPUS = 96
-)
-
-var (
-	decoderBufPool = sync.Pool{
-		New: func() any {
-			return make([]byte, 160)
-		},
-	}
 )
 
 type PCMDecoder struct {

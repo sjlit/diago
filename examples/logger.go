@@ -1,3 +1,5 @@
+// Package examples contains runnable diago examples. Subdirectories are
+// separate main packages; this file holds shared logging setup.
 package examples
 
 import (

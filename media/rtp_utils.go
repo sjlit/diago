@@ -11,11 +11,12 @@ import (
 	"time"
 )
 
-var ntpEpochOffset int64 = 2208988800
+const ntpEpochOffset int64 = 2208988800
 
 var rtpBufPool = sync.Pool{
 	New: func() any {
-		return make([]byte, RTPBufSize)
+		buf := make([]byte, RTPBufSize)
+		return &buf
 	},
 }
 

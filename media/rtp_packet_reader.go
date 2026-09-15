@@ -153,7 +153,7 @@ func (r *RTPPacketReader) Read(b []byte) (int, error) {
 			// Reason is we SetDeadline on Update but media session may not change connection
 			// TODO we may need to expose this
 			if ms, ok := newReader.(*MediaSession); ok {
-				ms.rtpConn.SetReadDeadline(time.Time{})
+				_ = ms.rtpConn.SetReadDeadline(time.Time{})
 			}
 			rtpN, err = newReader.ReadRTP(buf, pkt)
 		}
@@ -269,7 +269,7 @@ func (r *RTPPacketReader) UpdateRTPSession(rtpSess *RTPSession) {
 	r.UpdateReader(rtpSess)
 	if s, ok := old.(*RTPSession); ok {
 		if s.Sess.rtpConn != rtpSess.Sess.rtpConn {
-			s.Sess.rtpConn.SetReadDeadline(time.Now())
+			_ = s.Sess.rtpConn.SetReadDeadline(time.Now())
 		}
 	}
 }
@@ -278,7 +278,7 @@ func (r *RTPPacketReader) UpdateReader(reader RTPReader) {
 	r.mu.Lock()
 	// Make sure that current reading is stopped
 	if m, ok := r.reader.(*MediaSession); ok {
-		m.rtpConn.SetReadDeadline(time.Now())
+		_ = m.rtpConn.SetReadDeadline(time.Now())
 	}
 	r.reader = reader
 	// Maintain the interrupt poke target: session-owned readers are

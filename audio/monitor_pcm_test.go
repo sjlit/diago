@@ -9,20 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/rtp"
 	"github.com/sjlit/diago/v2/media"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type rtpBuffer struct {
-	buf []rtp.Packet
-}
-
-func (b *rtpBuffer) WriteRTP(p *rtp.Packet) error {
-	b.buf = append(b.buf, *p)
-	return nil
-}
 
 func TestMonitorPCMReaderWriter(t *testing.T) {
 	codecR := media.CodecAudioAlaw

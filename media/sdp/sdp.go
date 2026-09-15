@@ -107,14 +107,14 @@ func (sd SessionDescription) mediaDescriptionIdx(mediaType string) (MediaDescrip
 	}
 
 	if v == "" {
-		return md, idx, fmt.Errorf("Media not found for %q", mediaType)
+		return md, idx, fmt.Errorf("media not found for %q", mediaType)
 	}
 
 	fields := strings.Fields(v)
 	// RFC 4566 section 5.7: m=<media> <port> <proto> <fmt> - all four
 	// fields are mandatory
 	if len(fields) < 4 {
-		return md, idx, fmt.Errorf("Not enough fields in media description")
+		return md, idx, fmt.Errorf("not enough fields in media description")
 	}
 
 	md.MediaType = fields[0]
@@ -144,7 +144,7 @@ type ConnectionInformation struct {
 func (sd SessionDescription) ConnectionInformation() (ci ConnectionInformation, err error) {
 	v := sd.Value("c")
 	if v == "" {
-		return ci, fmt.Errorf("Connection information does not exists")
+		return ci, fmt.Errorf("connection information does not exist")
 	}
 	return parseConnectionInformation(v)
 }
@@ -185,13 +185,13 @@ func (sd SessionDescription) ConnectionInformationFor(mediaType string) (ci Conn
 			return parseConnectionInformation(values[i])
 		}
 	}
-	return ci, fmt.Errorf("Connection information does not exists for media %q", mediaType)
+	return ci, fmt.Errorf("connection information does not exist for media %q", mediaType)
 }
 
 func parseConnectionInformation(v string) (ci ConnectionInformation, err error) {
 	fields := strings.Fields(v)
 	if len(fields) < 3 {
-		return ci, fmt.Errorf("sdp - malformed connection line c=%s", v)
+		return ci, fmt.Errorf("sdp - malformed connection line c=%q", v)
 	}
 	ci.NetworkType = fields[0]
 	ci.AddressType = fields[1]
@@ -202,12 +202,12 @@ func parseConnectionInformation(v string) (ci ConnectionInformation, err error) 
 	case "IP4":
 		ci.IP = ci.IP.To4()
 		if ci.IP == nil {
-			return ci, fmt.Errorf("sdp - failed to convert to IP4 c=%s", v)
+			return ci, fmt.Errorf("sdp - failed to convert to IP4 c=%q", v)
 		}
 	case "IP6":
 		ci.IP = ci.IP.To16()
 		if ci.IP == nil {
-			return ci, fmt.Errorf("sdp - failed to convert to IP6 c=%s", v)
+			return ci, fmt.Errorf("sdp - failed to convert to IP6 c=%q", v)
 		}
 	}
 
@@ -233,11 +233,11 @@ type SessionInformation struct {
 func (sd SessionDescription) SessionInformation() (i SessionInformation, err error) {
 	v := sd.Value("o")
 	if v == "" {
-		return i, fmt.Errorf("Connection information does not exists")
+		return i, fmt.Errorf("connection information does not exist")
 	}
 	fields := strings.Fields(v)
 	if len(fields) < 6 {
-		return i, fmt.Errorf("Not enough session fields")
+		return i, fmt.Errorf("not enough session fields")
 	}
 	i.Origin = fields[0]
 	sessId, sessVersion := fields[1], fields[2]
@@ -333,6 +333,11 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 	reader.Reset()
 	reader.Write(data)
 
+	// The zero-value SessionDescription has a nil map; allocating here keeps
+	// the exported zero value usable instead of panicking on the first line.
+	if *sdptr == nil {
+		*sdptr = SessionDescription{}
+	}
 	sd := *sdptr
 	// mCount is the number of m= lines seen so far; it is the section number
 	// of the line being processed (0 = session level, before any m= line).
@@ -346,7 +351,7 @@ func Unmarshal(data []byte, sdptr *SessionDescription) error {
 		if len(line) >= 2 {
 			ind := strings.Index(line, "=")
 			if ind < 1 {
-				return fmt.Errorf("Not a type=value line found. line=%q", line)
+				return fmt.Errorf("not a type=value line found. line=%q", line)
 			}
 			key := line[:ind]
 			value := line[ind+1:]

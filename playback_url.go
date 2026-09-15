@@ -23,6 +23,20 @@ var (
 	DefaultPlaybackURLRangeSize int = 65536
 )
 
+// playbackHTTPClient returns the client used for playback URL requests. When
+// HTTPDebug is enabled it returns a dedicated client with the logging
+// transport instead of mutating the exported DefaultPlaybackHTTPClient. A
+// Transport set by the user on DefaultPlaybackHTTPClient takes precedence.
+func playbackHTTPClient() *http.Client {
+	if !HTTPDebug || DefaultPlaybackHTTPClient.Transport != nil {
+		return &DefaultPlaybackHTTPClient
+	}
+	return &http.Client{
+		Transport: &loggingTransport{},
+		Timeout:   DefaultPlaybackHTTPClient.Timeout,
+	}
+}
+
 // PlayURL plays wav content from url.
 //
 // Deprecated: Use PlayURLContext.
@@ -65,7 +79,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 	readSize := (DefaultPlaybackURLRangeSize / pcmSamples) * pcmSamples
 	req.Header.Add("Range", "bytes=0-"+strconv.Itoa(readSize-1)) // Try with range request
 
-	res, err := DefaultPlaybackHTTPClient.Do(req)
+	res, err := playbackHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -112,21 +126,21 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 			if err != nil {
 				return fmt.Errorf("reading chunk stopped: %w", err)
 			}
-			res.Body.Close()
+			_ = res.Body.Close()
 
 			if _, err := writer.Write(chunk); err != nil {
 				return err
 			}
 
-			var start int64 = size
-			var offset int64 = size * 2
+			start := size
+			offset := size * 2
 			for ; start < maxSize; start += offset {
 				end := min(start+offset-1, maxSize)
 				// Range is inclusive
 				rangeHDR := fmt.Sprintf("bytes=%d-%d", start, end)
 
 				req.Header.Set("Range", rangeHDR) // Try with range request
-				res, err = DefaultPlaybackHTTPClient.Do(req)
+				res, err = playbackHTTPClient().Do(req)
 				if err != nil {
 					return fmt.Errorf("failed to request range: %w", err)
 				}
@@ -143,7 +157,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 				if err != nil {
 					return fmt.Errorf("reading chunk stopped: %w", err)
 				}
-				res.Body.Close()
+				_ = res.Body.Close()
 
 				if _, err := writer.Write(chunk); err != nil {
 					return err
@@ -159,7 +173,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 		bufferReader := bufio.NewReaderSize(reader, readSize)
 		go func() {
 			err := httpPartial(res, writer, int64(readSize))
-			writer.Close()
+			_ = writer.Close()
 			httpErr <- err
 		}()
 
@@ -168,7 +182,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 		p.totalWritten += n
 
 		// Closing reader to stop writing routine
-		reader.Close()
+		_ = reader.Close()
 		// There is no reason having http goroutine still running
 		// First make sure http goroutine exited and join errors
 		err = errors.Join(<-httpErr, err)
@@ -180,7 +194,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 		return err
 	}
 
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	wavBuf := bytes.NewReader(samples)
 	n, err := p.streamWav(ctx, wavBuf, p.writer)

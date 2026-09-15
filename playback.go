@@ -131,10 +131,10 @@ func (p *AudioPlayback) PlayFileContext(ctx context.Context, filename string) (i
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if ext := path.Ext(file.Name()); ext != ".wav" {
-		return 0, fmt.Errorf("only playing wav file is now supported, but detected=%s", ext)
+		return 0, fmt.Errorf("only playing wav file is now supported, but detected=%q", ext)
 	}
 
 	// Using bufio to improve disk reading

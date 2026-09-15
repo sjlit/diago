@@ -170,12 +170,17 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 		t.Fatal("client dialog was not terminated by server Shutdown")
 	}
 
-	serverDialogs = 0
-	dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
-		serverDialogs++
-		return true
-	})
-	assert.Equal(t, 0, serverDialogs, "server cache must be drained")
+	// The framework evicts server dialogs from the cache in the INVITE
+	// handler's deferred cleanup, which runs after the user handler returns;
+	// allow that to settle instead of racing it.
+	require.Eventually(t, func() bool {
+		serverDialogs := 0
+		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
+			serverDialogs++
+			return true
+		})
+		return serverDialogs == 0
+	}, 2*time.Second, 10*time.Millisecond, "server cache must be drained")
 
 	// Client side shutdown tears down its (now ended) dialog state cleanly.
 	require.NoError(t, dgC.Shutdown(ctx))

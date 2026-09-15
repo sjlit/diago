@@ -170,8 +170,8 @@ func TestIntegrationBridging(t *testing.T) {
 		))
 		require.NoError(t, err)
 
-		err = dg.ServeBackground(context.Background(), func(ctx context.Context, d *DialogServerSession) error {
-			ctx = d.Context()
+		err = dg.ServeBackground(context.Background(), func(_ context.Context, d *DialogServerSession) error {
+			ctx := d.Context()
 			err = d.Answer(ctx)
 			require.NoError(t, err)
 

@@ -178,7 +178,9 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalPara
 	res, err := func() (*sip.Response, error) {
 		if contact.Address.Port == 0 && net.ParseIP(contact.Address.Host) != nil {
 
-			sipgo.ClientRequestRegisterBuild(client, req)
+			if err := sipgo.ClientRequestRegisterBuild(client, req); err != nil {
+				return nil, err
+			}
 
 			tx, err := client.TransactionLayer().NewClientTransaction(ctx, req)
 			if err != nil {
@@ -425,7 +427,7 @@ func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, p
 	if h := res.GetHeader("Expires"); h != nil {
 		val, err := strconv.Atoi(h.Value())
 		if err != nil {
-			return fmt.Errorf("Failed to parse server Expires value: %w", err)
+			return fmt.Errorf("failed to parse server Expires value: %w", err)
 		}
 		t.expiry = time.Duration(val) * time.Second
 	}

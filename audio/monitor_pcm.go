@@ -279,10 +279,10 @@ func (m *MonitorPCMStereo) Resume() {
 // multichannel codec would produce a wrongly laid out WAV.
 func (m *MonitorPCMStereo) Init(record io.Writer, readerCodec, writerCodec media.Codec, audioReader io.Reader, audioWriter io.Writer) error {
 	if readerCodec.SampleRate != writerCodec.SampleRate || readerCodec.SampleDur != writerCodec.SampleDur {
-		return fmt.Errorf("stereo timeline mismatch: reader codec %s vs writer codec %s (rate/duration must match)", readerCodec.Name, writerCodec.Name)
+		return fmt.Errorf("stereo timeline mismatch: reader codec %q vs writer codec %q (rate/duration must match)", readerCodec.Name, writerCodec.Name)
 	}
 	if readerCodec.NumChannels != 1 || writerCodec.NumChannels != 1 {
-		return fmt.Errorf("stereo monitor requires mono codecs: reader codec %s has %d channels, writer codec %s has %d channels", readerCodec.Name, readerCodec.NumChannels, writerCodec.Name, writerCodec.NumChannels)
+		return fmt.Errorf("stereo monitor requires mono codecs: reader codec %q has %d channels, writer codec %q has %d channels", readerCodec.Name, readerCodec.NumChannels, writerCodec.Name, writerCodec.NumChannels)
 	}
 	m.recording = record
 

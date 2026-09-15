@@ -260,7 +260,8 @@ func TestParseDTMFKeys(t *testing.T) {
 // sendDTMFInjection sends in band DTMF event as RTP payload
 func sendDTMFInjection(t *testing.T, conn *net.UDPConn, raddr *net.UDPAddr, seq *uint16, event rune) {
 	t.Helper()
-	events := media.RTPDTMFEncode8000(event)
+	events, err := media.RTPDTMFEncode(media.CodecTelephoneEvent8000, event, media.DTMFEncodeOptions{})
+	require.NoError(t, err)
 	ts := uint32(time.Now().UnixNano())
 	for i, ev := range events {
 		payload := media.DTMFEncode(ev)

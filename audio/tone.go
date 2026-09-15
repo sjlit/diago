@@ -194,7 +194,8 @@ func (r *ToneReader) nextSample() (int16, bool) {
 // RenderTonePCM renders a tone to a PCM16 little endian mono byte slice.
 func RenderTonePCM(tone Tone, sampleRate int) []byte {
 	buf := &bytes.Buffer{}
-	io.Copy(buf, NewToneReader(tone, sampleRate, 1))
+	// bytes.Buffer never fails writes; the copy cannot error.
+	_, _ = io.Copy(buf, NewToneReader(tone, sampleRate, 1))
 	return buf.Bytes()
 }
 

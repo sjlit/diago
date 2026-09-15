@@ -15,7 +15,7 @@ type OpusEncoder struct {
 }
 
 func (enc *OpusEncoder) Init(sampleRate int, numChannels int, samplesSize int) error {
-	return fmt.Errorf("Use with_opus_c tag to compile opus encoder")
+	return fmt.Errorf("use with_opus_c tag to compile opus encoder")
 }
 
 func (enc *OpusEncoder) EncodeTo(data []byte, lpcm []byte) (int, error) {
@@ -26,7 +26,7 @@ type OpusDecoder struct {
 }
 
 func (enc *OpusDecoder) Init(sampleRate int, numChannels int, samplesSize int) error {
-	return fmt.Errorf("Use with_opus_c tag to compile opus decoder")
+	return fmt.Errorf("use with_opus_c tag to compile opus decoder")
 }
 
 func (dec *OpusDecoder) DecodeTo(lpcm []byte, data []byte) (int, error) {

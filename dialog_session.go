@@ -100,23 +100,23 @@ func dialogHandleReferNotify(d DialogSession, req *sip.Request, tx sip.ServerTra
 	// TODO how to know this is refer
 	contentTypeHeader := req.ContentType()
 	if contentTypeHeader == nil {
-		tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
 	contentType := contentTypeHeader.Value()
 	// For now very basic check
 	if !strings.HasPrefix(contentType, "message/sipfrag") {
-		tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
 
 	frag := string(req.Body())
 	if len(frag) < len("SIP/2.0 100 xx") {
-		tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
 
-	tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
+	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 
 	// TODO: We need find better way to store this on refer.
 	// best case this would be dialogSIP
@@ -141,7 +141,7 @@ func dialogHandleReferNotify(d DialogSession, req *sip.Request, tx sip.ServerTra
 	if onNot != nil {
 		onNot(code)
 	} else if code >= 200 {
-		d.Hangup(context.TODO())
+		_ = d.Hangup(context.TODO())
 	}
 }
 
@@ -264,7 +264,7 @@ func dialogReferInvite(d DialogSession, dg *Diago, referToUri sip.Uri, remoteTar
 	if err != nil {
 		return err
 	}
-	defer referDialog.Close()
+	defer func() { _ = referDialog.Close() }()
 
 	if h := referReq.GetHeader("referred-by"); h != nil {
 		referDialog.InviteRequest.AppendHeader(sip.HeaderClone(h))

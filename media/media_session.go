@@ -659,7 +659,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		// SAVPF (RTCP feedback) is accepted as DTLS like SAVP; the answer
 		// stays SAVP (feedback optional). Do not break browsers offering SAVPF.
 	default:
-		return fmt.Errorf("unsupported media description protocol proto=%s", md.Proto)
+		return fmt.Errorf("unsupported media description protocol proto=%q", md.Proto)
 	}
 	s.remoteProto = md.Proto
 
@@ -668,7 +668,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	// callers map these errors to 488.
 	isDTLSRemote := md.Proto == "UDP/TLS/RTP/SAVP" || md.Proto == "UDP/TLS/RTP/SAVPF"
 	if s.SecureRTP == 2 && !isDTLSRemote {
-		return fmt.Errorf("sdp: proto mismatch: DTLS-SRTP configured but remote offered proto=%s", md.Proto)
+		return fmt.Errorf("sdp: proto mismatch: DTLS-SRTP configured but remote offered proto=%q", md.Proto)
 	}
 	if s.SecureRTP != 2 && isDTLSRemote {
 		return fmt.Errorf("sdp: proto mismatch: remote offered DTLS-SRTP but local SecureRTP=%d", s.SecureRTP)
@@ -682,8 +682,10 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 			// Nothing parsed, break
 			return err
 		}
-
-		return fmt.Errorf("reading codecs from SDP was not full: %w", err)
+		// Partial parse: a malformed attribute on one format must not reject
+		// the whole offer (RFC 3264 allows answering with a subset). Keep the
+		// codecs that parsed and surface the rest for debugging.
+		s.logger().Warn("reading codecs from SDP was not full", "error", err)
 	}
 	if n == 0 {
 		return fmt.Errorf("no codecs found in SDP")
@@ -793,7 +795,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		}
 
 		if setup == "" {
-			return fmt.Errorf("Empty a=setup value attribute for dtls")
+			return fmt.Errorf("empty a=setup value attribute for dtls")
 		}
 
 		// N7 (RFC 5763): DTLS-SRTP without any a=fingerprint must be
@@ -898,7 +900,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 			}
 
 			if s.localCtxSRTP == nil && s.remoteCtxSRTP == nil {
-				panic("no context setup")
+				return fmt.Errorf("dtls - no SRTP context was set up")
 			}
 
 			s.dtlsEstablished = true
@@ -915,7 +917,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	}
 
 	if secureRequest && s.remoteCtxSRTP == nil {
-		return fmt.Errorf("remote requested secure RTP, but no context is created proto=%s", md.Proto)
+		return fmt.Errorf("remote requested secure RTP, but no context is created proto=%q", md.Proto)
 	}
 	return nil
 }
@@ -1087,7 +1089,7 @@ func (s *MediaSession) listenRTPandRTCP(laddr *net.UDPAddr) error {
 
 	s.rtcpConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: laddr.IP, Port: laddr.Port + 1})
 	if err != nil {
-		s.rtpConn.Close()
+		_ = s.rtpConn.Close()
 		return err
 	}
 
@@ -1184,7 +1186,7 @@ func (m *MediaSession) ReadRTPRaw(buf []byte) (int, error) {
 // Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
 // gates on RTPPacketReader (PauseRead, ReadContext).
 func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) {
-	m.rtpConn.SetReadDeadline(t)
+	_ = m.rtpConn.SetReadDeadline(t)
 	return m.ReadRTPRaw(buf)
 }
 
@@ -1335,8 +1337,9 @@ func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
 	// WriteRTP calls (user IO racing a pipeline component) would otherwise
 	// marshal over each other's packet bytes. Steady state hits the pool, so
 	// the hot path stays allocation free.
-	writeBuf := rtpBufPool.Get().([]byte)
-	defer rtpBufPool.Put(writeBuf)
+	writeBufPtr := rtpBufPool.Get().(*[]byte)
+	defer rtpBufPool.Put(writeBufPtr)
+	writeBuf := *writeBufPtr
 
 	n, err := p.MarshalTo(writeBuf)
 	if err != nil {
@@ -1390,9 +1393,9 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 		// sync pool may not be best option and needs benchmarks.
 		// but as RTCP is not realtime this can reduce allocations
 		// TODO: should be reusable with above marshaling
-		wbuf := rtpBufPool.Get()
+		wbuf := rtpBufPool.Get().(*[]byte)
 		defer rtpBufPool.Put(wbuf)
-		writeBuf := wbuf.([]byte)
+		writeBuf := *wbuf
 
 		data, err = m.localCtxSRTP.EncryptRTCP(writeBuf, data, nil)
 		if err != nil {
@@ -1416,7 +1419,7 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 // Deprecated: Use RTPPacketWriter (stable handle) for writing; deadline pokes
 // from component code are forbidden.
 func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) error {
-	m.rtcpConn.SetWriteDeadline(deadline)
+	_ = m.rtcpConn.SetWriteDeadline(deadline)
 	return m.WriteRTCP(p)
 }
 
@@ -1457,28 +1460,30 @@ func StringRTCP(p rtcp.Packet) string {
 	switch r := p.(type) {
 	case *rtcp.SenderReport:
 		h := r.Header()
-		out := fmt.Sprintf("SenderReport from %x\n", r.SSRC)
-		out += fmt.Sprintf("\tHeader: Count:%d Length:%d Type:%d\n", h.Count, h.Length, h.Type)
-		out += fmt.Sprintf("\tNTPTime:\t%d\n", r.NTPTime)
-		out += fmt.Sprintf("\tRTPTIme:\t%d\n", r.RTPTime)
-		out += fmt.Sprintf("\tPacketCount:\t%d\n", r.PacketCount)
-		out += fmt.Sprintf("\tOctetCount:\t%d\n", r.OctetCount)
+		var out strings.Builder
+		fmt.Fprintf(&out, "SenderReport from %x\n", r.SSRC)
+		fmt.Fprintf(&out, "\tHeader: Count:%d Length:%d Type:%d\n", h.Count, h.Length, h.Type)
+		fmt.Fprintf(&out, "\tNTPTime:\t%d\n", r.NTPTime)
+		fmt.Fprintf(&out, "\tRTPTIme:\t%d\n", r.RTPTime)
+		fmt.Fprintf(&out, "\tPacketCount:\t%d\n", r.PacketCount)
+		fmt.Fprintf(&out, "\tOctetCount:\t%d\n", r.OctetCount)
 
 		for _, i := range r.Reports {
-			out += fmt.Sprintf("\tSSRC: %x Lost: %d/%d  LastSeq: %d LSR: %d.%d DLSR: %d\n", i.SSRC, i.FractionLost, i.TotalLost, i.LastSequenceNumber, i.LastSenderReport&0xFFFF0000, i.LastSenderReport&0x0000FFFF, i.Delay)
+			fmt.Fprintf(&out, "\tSSRC: %x Lost: %d/%d  LastSeq: %d LSR: %d.%d DLSR: %d\n", i.SSRC, i.FractionLost, i.TotalLost, i.LastSequenceNumber, i.LastSenderReport&0xFFFF0000, i.LastSenderReport&0x0000FFFF, i.Delay)
 		}
-		out += fmt.Sprintf("\tProfile Extension Data: %v\n", r.ProfileExtensions)
+		fmt.Fprintf(&out, "\tProfile Extension Data: %v\n", r.ProfileExtensions)
 
-		return out
+		return out.String()
 	case *rtcp.ReceiverReport:
 		h := r.Header()
-		out := fmt.Sprintf("ReceiverReport from %x\n", r.SSRC)
-		out += fmt.Sprintf("\tHeader: Count:%d Length:%d Type:%d\n", h.Count, h.Length, h.Type)
+		var out strings.Builder
+		fmt.Fprintf(&out, "ReceiverReport from %x\n", r.SSRC)
+		fmt.Fprintf(&out, "\tHeader: Count:%d Length:%d Type:%d\n", h.Count, h.Length, h.Type)
 		for _, i := range r.Reports {
-			out += fmt.Sprintf("SSRC: %x\tLost: %d/%d\t LastSeq: %d\tLSR: %d.%d\tDLSR: %d\n", i.SSRC, i.FractionLost, i.TotalLost, i.LastSequenceNumber, i.LastSenderReport&0xFFFF0000, i.LastSenderReport&0x0000FFFF, i.Delay)
+			fmt.Fprintf(&out, "SSRC: %x\tLost: %d/%d\t LastSeq: %d\tLSR: %d.%d\tDLSR: %d\n", i.SSRC, i.FractionLost, i.TotalLost, i.LastSequenceNumber, i.LastSenderReport&0xFFFF0000, i.LastSenderReport&0x0000FFFF, i.Delay)
 		}
-		out += fmt.Sprintf("\tProfile Extension Data: %v\n", r.ProfileExtensions)
-		return out
+		fmt.Fprintf(&out, "\tProfile Extension Data: %v\n", r.ProfileExtensions)
+		return out.String()
 	}
 
 	if s, ok := p.(fmt.Stringer); ok {

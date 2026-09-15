@@ -172,7 +172,7 @@ func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto
 		d.logger().Warn("Music on hold started while the negotiated direction prevents sending; audio is dropped until the dialog is unheld", "direction", dir)
 	}
 
-	go d.mohLoop(m, tone, m.ctx)
+	go d.mohLoop(m.ctx, m, tone)
 	return m, nil
 }
 
@@ -230,7 +230,7 @@ func (d *DialogMedia) mohAutoStop() {
 //
 // Lock order: the loop takes d.mu per frame via audioWriterProps. Nothing may
 // hold d.mu while waiting on this loop; DialogMedia.Close only cancels.
-func (d *DialogMedia) mohLoop(m *MusicOnHold, tone audio.Tone, ctx context.Context) {
+func (d *DialogMedia) mohLoop(ctx context.Context, m *MusicOnHold, tone audio.Tone) {
 	defer func() {
 		d.mu.Lock()
 		if d.moh == m {

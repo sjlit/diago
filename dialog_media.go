@@ -30,12 +30,6 @@ var (
 	}
 )
 
-func init() {
-	if HTTPDebug {
-		DefaultPlaybackHTTPClient.Transport = &loggingTransport{}
-	}
-}
-
 // DialogMedia is the media half shared by server and client dialog sessions.
 //
 // Ownership contract: DialogMedia is the sole owner of
@@ -533,7 +527,10 @@ func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderO
 			return fmt.Errorf("no RTP reader setup")
 		}
 
-		jitter := media.NewRTPJitterBuffer(reader, codec.SampleDur, opts)
+		jitter, err := media.NewRTPJitterBuffer(reader, codec.SampleDur, opts)
+		if err != nil {
+			return err
+		}
 		d.rtpPacketReader.UpdateReader(jitter)
 
 		// UpdateReader interrupts a potentially blocked RTPSession read. The new
@@ -1027,7 +1024,9 @@ func (d *DialogMedia) ListenBackground() (stop StopFunc, err error) {
 			return err
 		}
 		wg.Wait() // This makes sure we have exited reading
-		release()
+		if releaseErr := release(); releaseErr != nil {
+			return errors.Join(readErr, releaseErr)
+		}
 		if errors.Is(readErr, media.ErrReadPaused) {
 			return nil
 		}
@@ -1222,14 +1221,15 @@ func (d *DTMFReader) readDeadline(buf []byte, dur time.Duration) (n int, err err
 		if ms == nil {
 			return 0, ErrDialogNotAnswered
 		}
-		// Stop RTP reads after dur
-		ms.StopRTP(1, dur)
+		// Stop RTP reads after dur. Both deadline pokes are best effort: the
+		// read below surfaces the deadline error regardless.
+		_ = ms.StopRTP(1, dur)
 		defer func() {
 			// Restore reading. Resolve again: media may have been replaced
 			// while the read was blocked (same underlying conn, but the
 			// current session is the authoritative handle).
 			if cur := d.dm.currentMediaSession(); cur != nil {
-				cur.StartRTP(1)
+				_ = cur.StartRTP(1)
 			}
 		}()
 	}

@@ -231,7 +231,7 @@ func TestRTPPacketReaderPauseWithJitter(t *testing.T) {
 
 	// Install a jitter buffer over the RTP session, like
 	// WithAudioReaderJitterBuffer does.
-	jitter := NewRTPJitterBuffer(reader.Reader(), 20*time.Millisecond, RTPJitterBufferOptions{
+	jitter := mustNewRTPJitterBuffer(t, reader.Reader(), 20*time.Millisecond, RTPJitterBufferOptions{
 		DelayPackets: 2,
 		MaxPackets:   4,
 	})

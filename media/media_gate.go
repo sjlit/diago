@@ -41,14 +41,16 @@ func (s *MediaSession) pokeReadDeadline() {
 	if s.rtpConn == nil {
 		return
 	}
-	s.rtpConn.SetReadDeadline(time.Now())
+	// Deadline pokes are best effort: the blocked read below surfaces the
+	// deadline error regardless.
+	_ = s.rtpConn.SetReadDeadline(time.Now())
 }
 
 func (s *MediaSession) clearReadDeadline() {
 	if s.rtpConn == nil {
 		return
 	}
-	s.rtpConn.SetReadDeadline(time.Time{})
+	_ = s.rtpConn.SetReadDeadline(time.Time{})
 }
 
 // readPauser is implemented by RTP readers that can surface ErrReadPaused

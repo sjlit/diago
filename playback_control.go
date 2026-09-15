@@ -179,15 +179,15 @@ func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename str
 			return written, err
 		}
 		if ext := path.Ext(filename); ext != ".wav" {
-			file.Close()
-			return written, fmt.Errorf("only playing wav file is now supported, but detected=%s", ext)
+			_ = file.Close()
+			return written, fmt.Errorf("only playing wav file is now supported, but detected=%q", ext)
 		}
 
 		// Using bufio to improve disk reading
 		fileReader := bufio.NewReaderSize(file, 64*1024)
 		n, err := p.AudioPlayback.PlayContext(ctx, fileReader, "audio/wav")
 		written += n
-		file.Close()
+		_ = file.Close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return written, ctxErr
 		}
@@ -238,6 +238,9 @@ type audioControl struct {
 	Writer io.Writer // Must be set if used as writer
 
 	muted atomic.Bool
+	// muteBuf backs muted writes so the caller's buffer stays untouched.
+	// Written only from the playback goroutine.
+	muteBuf []byte
 	// gate blocks writes while paused. nil means not paused, non-nil points
 	// to channel closed on resume.
 	gate atomic.Pointer[chan struct{}]
@@ -303,9 +306,12 @@ func (c *audioControl) Write(b []byte) (n int, err error) {
 	}
 
 	if c.muted.Load() {
-		for i := range b {
-			b[i] = 0
+		// io.Writer must not modify the caller's buffer; write from a
+		// reusable zero-filled buffer instead.
+		if cap(c.muteBuf) < len(b) {
+			c.muteBuf = make([]byte, len(b))
 		}
+		b = c.muteBuf[:len(b)]
 	}
 
 	return c.Writer.Write(b)

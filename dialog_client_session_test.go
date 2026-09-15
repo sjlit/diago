@@ -28,20 +28,6 @@ func newDialer(t *testing.T, ua *sipgo.UserAgent) *Diago {
 	return dg
 }
 
-func newDiagoClientTest(t *testing.T, ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Response) *Diago {
-	t.Helper()
-	// Create client transaction request
-	cTxReq := &clientTxRequester{
-		onRequest: onRequest,
-	}
-
-	client, _ := sipgo.NewClient(ua)
-	client.TxRequester = cTxReq
-	dg, err := NewDiago(ua, WithDefaultTransport(), WithClient(client))
-	require.NoError(t, err)
-	return dg
-}
-
 func dialogEcho(sess DialogSession) error {
 	audioR, err := sess.DialogMedia().AudioReader()
 	if err != nil {
@@ -195,8 +181,8 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 	))
 	require.NoError(t, err)
 
-	dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
-		ctx = d.Context()
+	dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+		ctx := d.Context()
 		d.Trying(ctx)
 		d.Ringing(ctx)
 

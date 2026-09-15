@@ -62,6 +62,6 @@ func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
 	if err != nil {
 		return err
 	}
-	_, err = pb.Play(playfile, "audio/wav")
+	_, err = pb.PlayContext(ctx, playfile, "audio/wav")
 	return err
 }

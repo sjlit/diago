@@ -1,0 +1,37 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    staticcheck:
+      checks:
+        # Style-only checks are waived: this codebase keeps legacy protocol
+        # constants (ST1003), file-local receiver names (ST1016) and terse doc
+        # comments (ST1020-ST1022). SA4023 is waived for readRTCP, which is
+        # intentionally a loop-until-error function whose only exit is an error.
+        - all
+        - -QF1008
+        - -SA4023
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+
+  exclusions:
+    rules:
+      # errcheck noise in tests and examples is accepted (cleanup Close calls,
+      # response helpers). Every other enabled linter still runs on them.
+      - path: _test\.go
+        linters:
+          - errcheck
+      - path: ^examples/
+        linters:
+          - errcheck

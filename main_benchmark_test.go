@@ -6,12 +6,10 @@ package diago
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
 	"math/big"
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,11 +58,11 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 	srv, err := NewDiago(ua, WithTransport(tran))
 	require.NoError(t, err)
 
-	err = srv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = srv.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		wg.Add(1)
 		defer wg.Done()
 
-		ctx = d.Context()
+		ctx := d.Context()
 
 		err := d.Answer(ctx)
 		if err != nil {
@@ -202,29 +200,4 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 			// t.ReportMetric(float64(t.N)/max(t.Elapsed().Seconds(), 1), "req/s")
 		})
 	}
-}
-
-func createTestInvite(t testing.TB, targetSipUri string, transport, addr string) (*sip.Request, string, string) {
-	branch := sip.GenerateBranch()
-	callid := "gotest-" + time.Now().Format(time.RFC3339Nano)
-	ftag := fmt.Sprintf("%d", time.Now().UnixNano())
-	return testCreateMessage(t, []string{
-		"INVITE " + targetSipUri + " SIP/2.0",
-		"Via: SIP/2.0/" + transport + " " + addr + ";branch=" + branch,
-		"From: \"Alice\" <sip:alice@" + addr + ">;tag=" + ftag,
-		"To: \"Bob\" <" + targetSipUri + ">",
-		"Call-ID: " + callid,
-		"CSeq: 1 INVITE",
-		"Content-Length: 0",
-		"",
-		"",
-	}).(*sip.Request), callid, ftag
-}
-
-func testCreateMessage(t testing.TB, rawMsg []string) sip.Message {
-	msg, err := sip.ParseMessage([]byte(strings.Join(rawMsg, "\r\n")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return msg
 }

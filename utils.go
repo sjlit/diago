@@ -4,7 +4,6 @@
 package diago
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,17 +37,19 @@ func closeAndLog(log *slog.Logger, closer io.Closer, msg string) {
 type loggingTransport struct{}
 
 func (s *loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	bytes, _ := httputil.DumpRequestOut(r, false)
+	reqBytes, _ := httputil.DumpRequestOut(r, false)
 
 	resp, err := http.DefaultTransport.RoundTrip(r)
-	// err is returned after dumping the response
+	if err != nil {
+		slog.Debug("HTTP Debug", "request", string(reqBytes), "error", err)
+		return nil, err
+	}
 
 	respBytes, _ := httputil.DumpResponse(resp, false)
-	bytes = append(bytes, respBytes...)
 
-	slog.Debug(fmt.Sprintf("HTTP Debug:\n%s\n", bytes))
+	slog.Debug("HTTP Debug", "request", string(reqBytes), "response", string(respBytes))
 
-	return resp, err
+	return resp, nil
 }
 
 func uri2Header(uri sip.Uri) string {

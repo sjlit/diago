@@ -225,9 +225,8 @@ func ackWaitFailure(state sip.DialogState, err error) error {
 // sipgo's select can take the 64*T1 timeout branch even though the ACK was
 // already delivered to diago's OnAck path (which closes the channel right
 // before calling readAck). The ACK is ground truth, so this small window
-// turns that race into success. It is a variable so tests can control it
-// without wall-clock waits.
-var ackGraceWindow = 100 * time.Millisecond
+// turns that race into success.
+const ackGraceWindow = 100 * time.Millisecond
 
 // waitAckOrGrace reports whether the ACK was observed before the grace window
 // elapsed or ctx was canceled. An already-closed channel wins immediately: a
@@ -804,11 +803,13 @@ func (d *DialogServerSession) handleRefer(dg *Diago, req *sip.Request, tx sip.Se
 	onRefDialog := d.onReferDialog
 	d.mu.Unlock()
 	if onRefDialog == nil {
-		tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
 		return
 	}
 
-	dialogHandleRefer(d, dg, req, tx, onRefDialog)
+	if err := dialogHandleRefer(d, dg, req, tx, onRefDialog); err != nil {
+		dg.log.Error("Failed to handle REFER", "error", err)
+	}
 }
 
 func (d *DialogServerSession) handleReInvite(req *sip.Request, tx sip.ServerTransaction) error {

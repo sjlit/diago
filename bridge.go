@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -269,6 +270,7 @@ func (b *Bridge) RemoveDialogSession(d DialogSession) error {
 	b.mu.Unlock()
 
 	var releases []StopFunc
+	var releaseErr error
 	if running {
 		releases = interruptBridgeProxy(snapshot)
 		select {
@@ -276,7 +278,7 @@ func (b *Bridge) RemoveDialogSession(d DialogSession) error {
 		case <-time.After(5 * time.Second):
 		}
 		for _, release := range releases {
-			release()
+			releaseErr = errors.Join(releaseErr, release())
 		}
 	}
 
@@ -295,7 +297,7 @@ func (b *Bridge) RemoveDialogSession(d DialogSession) error {
 			b.Originator = nil
 		}
 	}
-	return nil
+	return releaseErr
 }
 
 // Close stops any running proxy and clears the bridge. Idempotent; Add after
@@ -313,6 +315,7 @@ func (b *Bridge) Close() error {
 	snapshot := slices.Clone(b.dialogs)
 	b.mu.Unlock()
 
+	var releaseErr error
 	if running {
 		releases := interruptBridgeProxy(snapshot)
 		select {
@@ -320,7 +323,7 @@ func (b *Bridge) Close() error {
 		case <-time.After(5 * time.Second):
 		}
 		for _, release := range releases {
-			release()
+			releaseErr = errors.Join(releaseErr, release())
 		}
 	}
 
@@ -328,7 +331,7 @@ func (b *Bridge) Close() error {
 	defer b.mu.Unlock()
 	b.dialogs = nil
 	b.Originator = nil
-	return nil
+	return releaseErr
 }
 
 // interruptBridgeProxy pauses writers to surface media.ErrWritePaused in the
@@ -433,7 +436,7 @@ func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
 		// Wait goroutine termination
 		err := <-proxyErr
 		for _, release := range rels {
-			release()
+			pauseErrs = errors.Join(pauseErrs, release())
 		}
 		return errors.Join(pauseErrs, err)
 	}
@@ -656,13 +659,15 @@ func (b *BridgeMix) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	str := fmt.Sprintf("state: %d", b.mixState)
-	str += " dialogs:["
+	var str strings.Builder
+	fmt.Fprintf(&str, "state: %d", b.mixState)
+	str.WriteString(" dialogs:[")
 	for _, d := range b.dialogs {
-		str += " " + d.ID()
+		str.WriteString(" ")
+		str.WriteString(d.ID())
 	}
-	str += "]"
-	return str
+	str.WriteString("]")
+	return str.String()
 }
 
 // DialogSessionsList returns list of dialogs in bridge
@@ -797,7 +802,7 @@ func (b *BridgeMix) mixStopWait() error {
 	// Release read pauses (mixStop paused the dialogs to stop the mix)
 	var allErros error
 	for _, release := range b.pauseReleases {
-		release()
+		allErros = errors.Join(allErros, release())
 	}
 	b.pauseReleases = nil
 	if stopErr != nil {
@@ -987,7 +992,6 @@ type bridgePCMStream struct {
 func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream *bridgePCMStream, wg *sync.WaitGroup, firstDialogCodec *media.Codec, poll bool) error {
 	m := d.DialogMedia()
 
-	p := MediaProps{}
 	r, p, err := m.ReaderWithProps()
 	if err != nil {
 		return err
@@ -1001,19 +1005,25 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 		return fmt.Errorf("Codec missmatch. Resampling or transcoding is not supported")
 	}
 
-	rtr := func() io.Reader {
+	rtr, err := func() (io.Reader, error) {
 		if !b.RealtimeReader {
-			return r
+			return r, nil
 		}
 
 		if rtr, ok := r.(*media.RTPRealTimeReader); ok {
-			return rtr
+			return rtr, nil
 		}
 
-		rtr := media.NewRTPRealTimeReader(r, m.rtpPacketReader, p.Codec)
+		rtr, err := media.NewRTPRealTimeReader(r, m.rtpPacketReader, p.Codec)
+		if err != nil {
+			return nil, err
+		}
 		m.setAudioReader(rtr)
-		return rtr
+		return rtr, nil
 	}()
+	if err != nil {
+		return err
+	}
 
 	// Attach PCM decoder
 	pcmReader := audio.PCMDecoderReader{}
@@ -1094,7 +1104,9 @@ func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte,
 				if ms == nil {
 					continue
 				}
-				ms.StopRTP(1, 1*time.Millisecond)
+				// Best effort: the direct read below tolerates an already
+				// stopped reader.
+				_ = ms.StopRTP(1, 1*time.Millisecond)
 
 				// Mostly PCM sample size should be same or less our sampling
 				// but we should keep same sampling or deal this per writer?

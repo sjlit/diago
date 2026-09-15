@@ -48,7 +48,7 @@ func WavWrite(w io.Writer, audio []byte, opts WavWriteOpts) (int, error) {
 	fileSize := len(audio) + headerSize - 8
 
 	// Create the header
-	header := make([]byte, headerSize)
+	header := make([]byte, headerSize, headerSize+len(audio))
 	copy(header[0:4], []byte("RIFF"))
 	binary.LittleEndian.PutUint32(header[4:8], uint32(fileSize))
 	copy(header[8:12], []byte("WAVE"))
@@ -70,9 +70,12 @@ func WavWrite(w io.Writer, audio []byte, opts WavWriteOpts) (int, error) {
 	// Combine header and audio payload
 	wavFile := append(header, audio...)
 	for N := 0; N < len(wavFile); {
-		n, err := w.Write(wavFile)
+		n, err := w.Write(wavFile[N:])
 		if err != nil {
 			return 0, err
+		}
+		if n == 0 {
+			return 0, io.ErrShortWrite
 		}
 		N += n
 	}

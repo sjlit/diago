@@ -6,7 +6,6 @@ package audio
 import (
 	"bytes"
 	"encoding/binary"
-	"io/ioutil"
 	"math"
 	"testing"
 
@@ -130,25 +129,6 @@ func TestPCMDecoderRead(t *testing.T) {
 			assert.Equal(t, tt.expected, decodedPCM)
 		})
 	}
-}
-
-// Extract raw pcm data from .wav file
-func extractWavPcm(t *testing.T, fname string) []int16 {
-	bytes, err := ioutil.ReadFile(fname)
-	if err != nil {
-		t.Fatalf("Error reading file data from %s: %v", fname, err)
-	}
-	const wavHeaderSize = 44
-	if (len(bytes)-wavHeaderSize)%2 == 1 {
-		t.Fatalf("Illegal wav data: payload must be encoded in byte pairs")
-	}
-	numSamples := (len(bytes) - wavHeaderSize) / 2
-	samples := make([]int16, numSamples)
-	for i := 0; i < numSamples; i++ {
-		samples[i] += int16(bytes[wavHeaderSize+i*2])
-		samples[i] += int16(bytes[wavHeaderSize+i*2+1]) << 8
-	}
-	return samples
 }
 
 func TestPCM16ToByte(t *testing.T) {

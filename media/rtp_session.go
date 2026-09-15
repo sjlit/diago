@@ -348,7 +348,7 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 		}
 		stats.lastSeq.InitSeq(readPkt.SequenceNumber)
 	} else {
-		stats.lastSeq.UpdateSeq(readPkt.SequenceNumber)
+		_ = stats.lastSeq.UpdateSeq(readPkt.SequenceNumber)
 
 		if stats.clockReset {
 			stats.firstRTPTime = now
@@ -435,6 +435,8 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	}
 
 	s.rtcpMU.Lock()
+	defer s.rtcpMU.Unlock()
+
 	writeStats := &s.writeStats
 	// For now we only track latest SSRC
 	if writeStats.SSRC != pkt.SSRC {
@@ -456,7 +458,6 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	writeStats.lastPacketTime = time.Now()
 	writeStats.lastPacketTimestamp = pkt.Timestamp
 
-	s.rtcpMU.Unlock()
 	return nil
 }
 

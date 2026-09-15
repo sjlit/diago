@@ -762,6 +762,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 			defer dg.serveWG.Done()
 			defer settle()
 			// Update transport
+			//nolint:staticcheck // sipgo exposes ListenReadyCtxKey as an untyped string key.
 			ctx := context.WithValue(serveCtx, sipgo.ListenReadyCtxKey, sipgo.ListenReadyFuncCtxValue(func(network, addr string) {
 				// This now fixes port for empheral binding
 				// Alternative to use is tp.GetListenPort but it squashes networks
@@ -898,14 +899,18 @@ func (dg *Diago) Shutdown(ctx context.Context) error {
 
 func (dg *Diago) shutdownDialogs(ctx context.Context) []error {
 	var errs []error
-	dg.cache.server.rangeDialogs(ctx, func(id string, d *DialogServerSession) bool {
+	if err := dg.cache.server.rangeDialogs(ctx, func(id string, d *DialogServerSession) bool {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
-	})
-	dg.cache.client.rangeDialogs(ctx, func(id string, d *DialogClientSession) bool {
+	}); err != nil {
+		errs = append(errs, err)
+	}
+	if err := dg.cache.client.rangeDialogs(ctx, func(id string, d *DialogClientSession) bool {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
-	})
+	}); err != nil {
+		errs = append(errs, err)
+	}
 	return errs
 }
 
@@ -914,10 +919,10 @@ func shutdownDialog(ctx context.Context, id string, d DialogSession) []error {
 	hctx, cancel := context.WithTimeout(ctx, shutdownDialogHangupTimeout)
 	defer cancel()
 	if err := d.Hangup(hctx); err != nil {
-		errs = append(errs, fmt.Errorf("hangup dialog %s: %w", id, err))
+		errs = append(errs, fmt.Errorf("hangup dialog %q: %w", id, err))
 	}
 	if err := d.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("close dialog %s: %w", id, err))
+		errs = append(errs, fmt.Errorf("close dialog %q: %w", id, err))
 	}
 	return errs
 }
@@ -993,13 +998,11 @@ func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridg
 
 	// Do bridging now
 	if err := bridge.AddDialogSession(d); err != nil {
-		d.Close()
-		return nil, err
+		return nil, errors.Join(err, d.Close())
 	}
 
 	if err := d.Ack(ctx); err != nil {
-		d.Close()
-		return nil, err
+		return nil, errors.Join(err, d.Close())
 	}
 	return d, nil
 }
@@ -1040,7 +1043,7 @@ func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *signalParams) (d
 	}
 	tran, exists := dg.findTransport(transport, transportID)
 	if !exists {
-		return nil, fmt.Errorf("transport %s does not exists", transport)
+		return nil, fmt.Errorf("transport %q does not exists", transport)
 	}
 
 	return dg.newSipDialog(recipient, tran, contact)
@@ -1253,7 +1256,7 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...Signal
 		dg.log.Debug("Qualify sent", "n", i)
 		err := t.QualifyLoop(ctx)
 
-		var retryAfter = 5 * time.Second
+		retryAfter := 5 * time.Second
 		var rr *RegisterResponseError
 		if errors.As(err, &rr) {
 			resCode := rr.RegisterRes.StatusCode
@@ -1296,7 +1299,7 @@ func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opt
 	}
 	tran, exists := dg.getTransport(transport)
 	if !exists {
-		return nil, fmt.Errorf("transport=%s does not exists", transport)
+		return nil, fmt.Errorf("transport=%q does not exists", transport)
 	}
 
 	contactHDR := sip.ContactHeader{}
