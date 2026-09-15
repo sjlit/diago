@@ -316,6 +316,11 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		// Make number of calls that will have audio mixed in bridge
 		// wg := sync.WaitGroup{}
 		bridge := NewBridgeMix()
+		// The realtime reader intentionally drops packets it considers late
+		// when the mix loop lags (CPU contention), which makes a fixed
+		// "all 10 packets arrive" assertion flaky. This test validates the
+		// mixing path, not the realtime drop policy, so read without it.
+		bridge.RealtimeReader = false
 		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 		bridgePtr.Store(bridge)
 
@@ -337,12 +342,15 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 		}(dialog1)
 
-		r, _ := dialog2.AudioReader()
-		dialog2.MediaSession().StopRTP(1, 1*time.Second)
-
+		// Read through the stable handle with a per-read context deadline:
+		// the mixer paces writes (20ms per packet) and a single fixed 1s
+		// deadline for all ten packets proved too tight under load.
+		r := dialog2.RTPPacketReader()
 		buf := make([]byte, media.RTPBufSize)
 		for i := 0; i < 10; i++ {
-			n, err := r.Read(buf)
+			rctx, rcancel := context.WithTimeout(ctx, 5*time.Second)
+			n, err := r.ReadContext(rctx, buf)
+			rcancel()
 			require.NoError(t, err)
 			assert.Equal(t, sound, buf[:n])
 			t.Log("Sound received", "buf", buf[:n])

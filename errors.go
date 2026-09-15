@@ -25,6 +25,13 @@ var (
 	// closed it).
 	ErrDialogClosed = errors.New("dialog media closed")
 
+	// ErrDialogEnded is returned (joined with the underlying cause) when an
+	// operation waiting on the dialog is aborted because the dialog
+	// terminated first — for example a BYE processed while a 2xx response was
+	// still waiting for its ACK. Callers can use errors.Is to distinguish
+	// this from a genuine transport or ACK-wait failure.
+	ErrDialogEnded = errors.New("dialog ended")
+
 	// ErrSDPMissing is returned when an SDP body is required but absent:
 	// an INVITE without an offer, a 2xx answering an offer without SDP, or a
 	// delayed-offer flow missing the answer. Callers can use errors.Is to

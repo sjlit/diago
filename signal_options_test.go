@@ -220,6 +220,20 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, dialog.Ack(ctx))
 
+	// The server's Answer blocks until its ACK is processed. Wait for the
+	// server dialog to reach Confirmed before any in-dialog teardown:
+	// otherwise a locally fast Hangup can win the race against ACK
+	// processing and Answer surfaces the upstream "No ACK received" error
+	// even though the call was answered.
+	require.Eventually(t, func() bool {
+		confirmed := false
+		dgSrv.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
+			confirmed = dd.LoadState() == sip.DialogStateConfirmed
+			return false
+		})
+		return confirmed
+	}, 5*time.Second, 10*time.Millisecond)
+
 	t.Run("ClientInviteOptions", func(t *testing.T) {
 		mu.Lock()
 		inv := inviteReq

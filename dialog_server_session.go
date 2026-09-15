@@ -200,6 +200,22 @@ func (d *DialogServerSession) respondSignal(ctx context.Context, statusCode int,
 		if waitAckOrGrace(ctx, ackCh, ackGraceWindow) {
 			return nil
 		}
+		// The same upstream error is raised when the dialog was terminated
+		// while the ACK was still in flight (a BYE processed first wakes the
+		// wait loop with DialogStateEnded). Map that case to a sentinel so
+		// callers do not have to parse the sipgo message.
+		return ackWaitFailure(d.LoadState(), err)
+	}
+	return err
+}
+
+// ackWaitFailure maps a 2xx ACK-wait failure to ErrDialogEnded when the wait
+// ended because the dialog itself terminated instead of an ACK timeout.
+// sipgo reports both with the same "No ACK received" string; the dialog state
+// distinguishes them.
+func ackWaitFailure(state sip.DialogState, err error) error {
+	if state >= sip.DialogStateEnded {
+		return errors.Join(ErrDialogEnded, err)
 	}
 	return err
 }

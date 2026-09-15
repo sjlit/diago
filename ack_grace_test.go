@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -62,4 +63,20 @@ func TestIsAckWaitRaceError(t *testing.T) {
 	assert.True(t, isAckWaitRaceError(errors.New("No ACK received")))
 	assert.True(t, isAckWaitRaceError(errors.New("wrap: No ACK received: more")))
 	assert.False(t, isAckWaitRaceError(errors.New("transport closed")))
+}
+
+func TestAckWaitFailure(t *testing.T) {
+	base := errors.New("No ACK received")
+
+	t.Run("EndedDialogMapsToSentinel", func(t *testing.T) {
+		err := ackWaitFailure(sip.DialogStateEnded, base)
+		assert.ErrorIs(t, err, ErrDialogEnded)
+		assert.ErrorIs(t, err, base)
+	})
+
+	t.Run("EstablishedDialogKeepsError", func(t *testing.T) {
+		err := ackWaitFailure(sip.DialogStateEstablished, base)
+		assert.NotErrorIs(t, err, ErrDialogEnded)
+		assert.ErrorIs(t, err, base)
+	})
 }
