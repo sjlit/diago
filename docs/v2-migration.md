@@ -1,8 +1,9 @@
 # Diago v2 Migration Guide
 
-Status: draft covering the planned v2 changes. See [v2-plan.md](v2-plan.md)
-for the phased work plan. v2 allows breaking changes; this document maps every
-user-visible rename, removal, and behavior change.
+Status: v2 is implemented on the `v2` branch (module
+`github.com/sjlit/diago/v2`). See [v2-plan.md](v2-plan.md) for the phased work
+plan. v2 allows breaking changes; this document maps every user-visible
+rename, removal, and behavior change.
 
 ## 1. Module and initialization
 
@@ -19,6 +20,7 @@ user-visible rename, removal, and behavior change.
 | v1 | v2 |
 |---|---|
 | `Serve(ctx, func(d *DialogServerSession))` | `Serve(ctx, func(ctx context.Context, d *DialogServerSession) error)` |
+| `type ServeDialogFunc` | `type DialogHandler` (same signature as above) |
 | `dg.HandleFunc(f)` | Removed; pass the handler to `Serve` |
 | Handler return -> framework sends `Hangup` | Return `nil` -> `Hangup`; return `error` -> mapped response + teardown |
 | — | `ErrDecline` -> 480, `ErrBusy` -> 486, `ErrNotFound` -> 404, `ErrResponseSent` -> no second response, `*ResponseError{Code,Reason,Headers}` -> custom; a confirmed call gets BYE with a Reason header instead |
@@ -47,7 +49,7 @@ user-visible rename, removal, and behavior change.
 | `WithMediaSDPSessionName` | `WithSDPSessionName` |
 | `WithAuthCredentials("", "")` accepted | Rejected (as are empty `WithCodecs`, `WithBody(nil)`, `WithHeader("", ...)`, nil callback options, out-of-range `WithRTPNAT`, negative REGISTER durations) |
 | `MediaConfig.SDPSessionName == ""` | Unchanged: empty keeps the library default; `WithSDPSessionName("")` is rejected |
-| `SignalParams` exported | Unexported; use the `With*` constructors |
+| `SignalParams` exported | Unexported; use the `With*` constructors (the `SignalDialogParams`/`SignalMediaParams`/`SignalMsgParams`/`SignalRegisterParams` sub-structs go away with it) |
 | Custom `SignalOption(func(p *SignalParams))` closures | Not possible (`signalParams` is unexported); use `WithRequestMutator`/`WithResponseMutator` |
 | `AnswerOptions` wrapper method | Removed; `Answer(ctx, ...SignalOption)` |
 
@@ -106,7 +108,45 @@ user-visible rename, removal, and behavior change.
    drop any manual `SecureRTP`/DTLS mode pairing (now automatic).
 8. Replace `DialogCacheServer/Client` usage with `MatchDialog`.
 9. Configure at least one transport explicitly (the loopback default is gone).
-10. Run the codemod for renames, then `go build ./...` to catch the rest.
+10. Run the codemod (§9), then `go build ./...` to catch the rest.
 
-Renames are codemod-able with `gofmt -r`; the handler signature, option
-structs, and config literals require manual edits.
+Renames that keep the same arity are codemod-able with `gofmt -r`; the handler
+signature, option structs, and config literals require manual edits.
+
+## 9. Codemod
+
+`gofmt -r` accepts a single rewrite rule per run and rewrites the whole tree
+(`-w .`). Apply one rule at a time and review the diff.
+
+Safe rules:
+
+```sh
+gofmt -r 'x.Media() -> x.DialogMedia()' -w .
+gofmt -r 'x.WithMediaSDPSessionName(s) -> x.WithSDPSessionName(s)' -w .
+gofmt -r 'ServeDialogFunc -> DialogHandler' -w .
+```
+
+The `WithMediaSDPSessionName` rule targets qualified calls
+(`diago.WithMediaSDPSessionName(...)`, the common form). For dot-imports use
+the unqualified variant
+`gofmt -r 'WithMediaSDPSessionName(s) -> WithSDPSessionName(s)' -w .`.
+
+`x.Media() -> x.DialogMedia()` rewrites every zero-argument `Media()` call, so
+check the diff if your code has an unrelated type with that method.
+
+Do **not** codemod the stable-handle fields with
+`x.RTPPacketReader -> x.RTPPacketReader()`: the pattern also matches type
+selectors (`media.RTPPacketReader`) and produces invalid code. Rename those
+compile-driven instead (`sess.RTPPacketReader` -> `sess.RTPPacketReader()`).
+
+Everything that changes call arity or return shape is not codemod-able:
+
+- `ctx` parameters added to handlers and signaling calls,
+- `Invite -> Dial` / `InviteBridge -> DialBridge` (variadic options),
+- removed option structs (`InviteOptions`, `AnswerOptions`, ...),
+- `CreatePlayback*` now returning pointers,
+- `PauseAudioRead/Write` releases now returning `StopFunc`,
+- `NewDiago` now returning an error.
+
+Migrate those by running `go build ./...` and fixing the reported call sites
+one by one.

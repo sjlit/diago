@@ -10,9 +10,9 @@ import (
 	"os/signal"
 
 	"github.com/emiago/sipgo"
-	"github.com/sjlit/diago"
-	"github.com/sjlit/diago/examples"
-	"github.com/sjlit/diago/testdata"
+	"github.com/sjlit/diago/v2"
+	"github.com/sjlit/diago/v2/examples"
+	"github.com/sjlit/diago/v2/testdata"
 )
 
 // Dial this app with
@@ -85,12 +85,12 @@ func PlaybackDTMF(ctx context.Context, inDialog *diago.DialogServerSession) erro
 
 	if dtmf != '*' {
 		slog.Info("Finishing call", "dtmf", string(dtmf))
-		return inDialog.Hangup(context.TODO())
+		return inDialog.Hangup(ctx)
 	}
 
 	// Playback is being replayed with * key. Wait next caller decision
 	slog.Info("Prompt replayed. Press any key to continue")
 	dtmf = <-pb.DTMF()
 	slog.Info("Caller pressed", "dtmf", string(dtmf))
-	return inDialog.Hangup(context.TODO())
+	return inDialog.Hangup(ctx)
 }

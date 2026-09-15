@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/emiago/dtls/v3"
-	"github.com/sjlit/diago/testdata"
+	"github.com/sjlit/diago/v2/testdata"
 	"github.com/stretchr/testify/require"
 )
 

@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/emiago/sipgo/sip"
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/media/sdp"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/media"
+	"github.com/sjlit/diago/v2/media/sdp"
 )
 
 var (

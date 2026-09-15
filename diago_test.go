@@ -17,11 +17,11 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/examples"
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/media/sdp"
-	"github.com/sjlit/diago/testdata"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/examples"
+	"github.com/sjlit/diago/v2/media"
+	"github.com/sjlit/diago/v2/media/sdp"
+	"github.com/sjlit/diago/v2/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

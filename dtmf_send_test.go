@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 func dtmfEvents(sink *capturedRTPWriter) []media.DTMFEvent {

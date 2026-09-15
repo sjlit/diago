@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/emiago/sipgo/sip"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 func SetupLogger() {

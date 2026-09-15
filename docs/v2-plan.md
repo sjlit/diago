@@ -314,6 +314,18 @@ public surface).
 | 6.5 | Regression | `go test -race ./...` + `go vet` + examples build; add integration tests for handler error mapping, SRTP, REGISTER retry |
 | 6.6 | Release | `v2.0.0-rc.1` -> `v2.0.0`; v1 branch maintenance window (suggest 6 months) |
 
+Status: implemented on the `v2` branch. The module path is now
+`github.com/sjlit/diago/v2` (all Go imports, examples and docs updated), CI
+runs on both `main` and `v2`, and the README quick usage was rewritten for
+v2 (the stale WebRTC "media API change" note was removed). `v2-migration.md`
+carries the full v1 -> v2 table plus a codemod section with the safe
+`gofmt -r` rules and the explicit not-codemod-able list. Regression coverage
+was verified for handler error mapping (`TestIntegrationHandlerErrorMapping`
+and the digest `Authorize` tests), SDES/DTLS
+(`TestIntegrationDiagoSRTPCall`, `TestIntegrationDTLSAutoNegotiation`) and
+REGISTER retry (`register_retry_test.go`). Remaining release actions: tag
+`v2.0.0-rc.1` -> `v2.0.0` and announce the v1 maintenance window.
+
 ## Execution order and dependencies
 
 ```

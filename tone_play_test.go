@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/media"
 )
 
 type capturedRTPWriter struct {

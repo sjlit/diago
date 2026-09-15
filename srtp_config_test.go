@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/emiago/sipgo"
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/testdata"
+	"github.com/sjlit/diago/v2/media"
+	"github.com/sjlit/diago/v2/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

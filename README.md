@@ -13,6 +13,13 @@ It is offering High Level APIs to make **telephony easier** while you can go low
 
 **Media state ownership and dialog lifecycle contracts are documented in [docs/contracts.md](docs/contracts.md).**
 
+> This branch hosts **diago v2**. It is a breaking release: the module path
+> becomes `github.com/sjlit/diago/v2`, transports must be configured
+> explicitly, serve handlers return errors, and the media configuration moved
+> into grouped sub-structs. See [docs/v2-migration.md](docs/v2-migration.md)
+> for the full v1 -> v2 mapping and [docs/v2-plan.md](docs/v2-plan.md) for the
+> phased plan.
+
 *Diago is mainly project driven lib, so lot of API design will/should be challenged with real working apps needs*
 
 **For more information and documentation visit [the website](https://emiago.github.io/diago/docs)**
@@ -21,21 +28,8 @@ Quick links:
 - [Getting started](https://emiago.github.io/diago/docs/getting_started/)
 - [Demo Examples](https://emiago.github.io/diago/docs/examples/)
 - [API Docs](https://emiago.github.io/diago/docs/api_docs/)
-- [GO Docs](https://pkg.go.dev/github.com/sjlit/diago)
+- [GO Docs](https://pkg.go.dev/github.com/sjlit/diago/v2)
 - [Roadmap](https://emiago.github.io/diago/docs/#core-roadmap)
-
-## Important media API change
-
-`Answer` and `Invite` now return the media stack. Keep and use the returned media
-object for media operations instead of accessing media through the dialog
-session.
-
-**Everyone is encouraged to try the [`media-webrtc-pion` branch](https://github.com/sjlit/diago/tree/media-webrtc-pion)
-and test the new returned-media API.**
-
-See [WEBRTC_PION_CHANGES.md](https://github.com/sjlit/diago/blob/webrtc-pion/WEBRTC_PION_CHANGES.md)
-for the API migration details. WebRTC is not the primary focus yet; this work
-will also bring the Pion media stack into Diago.
 
 ## Media security (SDES / DTLS-SRTP)
 
@@ -99,25 +93,40 @@ Please avoid following:
 Checkout more on [Getting started](https://emiago.github.io/diago/docs/getting_started/), but for quick view here is echotest (hello world) example.
 ```go 
 ua, _ := sipgo.NewUA()
-dg := diago.NewDiago(ua)
+defer ua.Close()
 
-dg.Serve(ctx, func(inDialog *diago.DialogServerSession) {
-	inDialog.Trying() // 100 Trying
-	inDialog.Answer(); // Answer - 200 OK SDP
+dg, err := diago.NewDiago(ua, diago.WithDefaultTransport()) // 127.0.0.1:5060
+if err != nil {
+	log.Fatal(err)
+}
+
+ctx := context.Background()
+err = dg.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	inDialog.Trying(ctx) // 100 Trying
+	// Answer -> 200 OK with SDP
+	if err := inDialog.Answer(ctx); err != nil {
+		return err
+	}
 
 	// Make sure file below exists in work dir
 	playfile, err := os.Open("demo-echotest.wav")
 	if err != nil {
-		fmt.Println("Failed to open file", err)
-		return
+		return fmt.Errorf("open file: %w", err)
 	}
 	defer playfile.Close()
 
 	// Create playback and play file.
-	pb, _ := inDialog.CreatePlayback()
-	if err := pb.Play(playfile, "audio/wav"); err != nil {
-		fmt.Println("Playing failed", err)
+	pb, err := inDialog.CreatePlayback()
+	if err != nil {
+		return err
 	}
+	if _, err := pb.Play(playfile, "audio/wav"); err != nil {
+		return fmt.Errorf("playing failed: %w", err)
+	}
+	return nil
+})
+if err != nil {
+	log.Fatal(err)
 }
 ```
 

@@ -15,7 +15,7 @@ import (
 	"github.com/emiago/sipgo/siptest"
 	"github.com/pion/rtp"
 
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 func TestParseDTMFRelay(t *testing.T) {

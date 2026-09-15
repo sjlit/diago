@@ -10,8 +10,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/media"
 )
 
 type toneConfig struct {

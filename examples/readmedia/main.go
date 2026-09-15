@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/emiago/sipgo"
-	"github.com/sjlit/diago"
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/examples"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/examples"
+	"github.com/sjlit/diago/v2/media"
 )
 
 func main() {

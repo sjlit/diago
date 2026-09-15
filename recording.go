@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/sjlit/diago/audio"
+	"github.com/sjlit/diago/v2/audio"
 )
 
 type AudioStereoRecordingWav struct {

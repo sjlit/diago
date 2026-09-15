@@ -1,4 +1,4 @@
-module github.com/sjlit/diago
+module github.com/sjlit/diago/v2
 
 go 1.23.0
 

@@ -11,7 +11,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 // packetReadStub returns one payload per Read call, like the per-RTP-packet

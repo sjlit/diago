@@ -21,7 +21,7 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/srtp/v3"
-	"github.com/sjlit/diago/media/sdp"
+	"github.com/sjlit/diago/v2/media/sdp"
 )
 
 // RTPTracer receives decoded RTP packets when RTPDebug is enabled.

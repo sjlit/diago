@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 var (

@@ -9,7 +9,7 @@ import (
 
 	"github.com/pion/rtp"
 	"github.com/pion/srtp/v3"
-	"github.com/sjlit/diago/media/sdp"
+	"github.com/sjlit/diago/v2/media/sdp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

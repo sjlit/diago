@@ -6,7 +6,7 @@ package audio
 import (
 	"testing"
 
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 func TestRingtoneBeepPCM(t *testing.T) {

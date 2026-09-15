@@ -14,7 +14,7 @@ import (
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/pion/rtp"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 var rtpBufPool = sync.Pool{

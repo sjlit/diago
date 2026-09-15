@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/media"
 )
 
 // DTMFMethod selects how SendDTMF delivers digits. SIP INFO (RFC 2926) is

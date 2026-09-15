@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

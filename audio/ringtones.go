@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/media"
 )
 
 var (

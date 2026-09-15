@@ -11,7 +11,7 @@ import (
 
 	"github.com/emiago/sipgo/fakes"
 	"github.com/pion/rtp"
-	"github.com/sjlit/diago/media/sdp"
+	"github.com/sjlit/diago/v2/media/sdp"
 	"github.com/stretchr/testify/require"
 )
 

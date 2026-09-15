@@ -12,8 +12,8 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
-	"github.com/sjlit/diago/media"
-	"github.com/sjlit/diago/media/sdp"
+	"github.com/sjlit/diago/v2/media"
+	"github.com/sjlit/diago/v2/media/sdp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

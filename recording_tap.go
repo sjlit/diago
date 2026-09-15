@@ -8,8 +8,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/sjlit/diago/audio"
-	"github.com/sjlit/diago/media"
+	"github.com/sjlit/diago/v2/audio"
+	"github.com/sjlit/diago/v2/media"
 )
 
 // ErrRecordingClosed is returned by StereoRecording operations issued after
