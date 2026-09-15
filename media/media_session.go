@@ -35,8 +35,11 @@ type RTPTracer interface {
 
 var (
 	// RTPPortStart and RTPPortEnd allows defining rtp port range for media.
-	// They are the process-wide fallback: MediaConfig.RTPPortStart/RTPPortEnd
-	// (and the per-session fields set from it) take precedence when non-zero.
+	//
+	// Deprecated: configure diago.MediaConfig.Network.RTPPortStart/RTPPortEnd
+	// (or MediaSession.RTPPortStart/RTPPortEnd) instead. These globals are
+	// only a process-wide fallback for sessions that leave the per-session
+	// value at zero.
 	RTPPortStart  = 0
 	RTPPortEnd    = 0
 	rtpPortOffset = atomic.Int32{}
@@ -64,8 +67,11 @@ var (
 	// SDP codec exchanges
 	// 0 (Default) - answerer prefers offerer order recomended by rfc
 	// 1 - answerer prefers local order
-	// Process-wide fallback: MediaConfig.SDPCodecPreferLocalOrder (and the
-	// per-session field set from it) takes precedence when non-zero.
+	//
+	// Deprecated: configure diago.MediaConfig.SDP.CodecPreferLocalOrder (or
+	// MediaSession.SDPCodecPreferLocalOrder) instead. This global is only a
+	// process-wide fallback for sessions that leave the per-session value at
+	// zero.
 	SDPCodecPreferLocalOrder int = 0
 )
 

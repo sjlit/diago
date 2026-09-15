@@ -17,17 +17,17 @@ import (
 func TestTransportSecureRTPValidation(t *testing.T) {
 	t.Run("InvalidModeRejected", func(t *testing.T) {
 		dm := &DialogMedia{}
-		err := dm.initMediaSessionFromConf(MediaConfig{SecureRTP: 99})
+		err := dm.initMediaSessionFromConf(MediaConfig{SRTP: SRTPConfig{Mode: 99}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid SRTP mode")
 	})
 
 	t.Run("ValidModesAccepted", func(t *testing.T) {
-		for _, mode := range []int{SecureRTPNone, SecureRTPSDES, SecureRTPDTLS} {
+		for _, mode := range []SecureRTP{SecureRTPNone, SecureRTPSDES, SecureRTPDTLS} {
 			dm := &DialogMedia{}
 			err := dm.initMediaSessionFromConf(MediaConfig{
-				SecureRTP: mode,
-				Codecs:    []media.Codec{media.CodecAudioUlaw},
+				SRTP:   SRTPConfig{Mode: mode},
+				Codecs: []media.Codec{media.CodecAudioUlaw},
 			})
 			require.NoError(t, err, "mode %d", mode)
 			require.NoError(t, dm.Close())
@@ -41,20 +41,62 @@ func TestMediaConfigDTLSAutoEnable(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	dtlsConf := media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}}
-	dg := NewDiago(ua)
+	dg, err := NewDiago(ua, WithDefaultTransport())
+	require.NoError(t, err)
 
-	conf := dg.mediaConfigForTransport(&Transport{Transport: "udp", MediaDTLSConf: dtlsConf})
-	assert.Equal(t, SecureRTPDTLS, conf.SecureRTP, "DTLSConf must auto-enable DTLS-SRTP")
+	conf := dg.mediaConfigForTransport(&Transport{
+		Transport: "udp",
+		Media:     TransportMediaConfig{SRTP: SRTPConfig{DTLS: dtlsConf}},
+	})
+	assert.Equal(t, SecureRTPDTLS, conf.SRTP.Mode, "DTLS config must auto-enable DTLS-SRTP")
 
 	plain := dg.mediaConfigForTransport(&Transport{Transport: "udp"})
-	assert.Equal(t, SecureRTPNone, plain.SecureRTP)
+	assert.Equal(t, SecureRTPNone, plain.SRTP.Mode)
 
 	explicitSDES := dg.mediaConfigForTransport(&Transport{
-		Transport:     "udp",
-		MediaSRTP:     SecureRTPSDES,
-		MediaDTLSConf: dtlsConf,
+		Transport: "udp",
+		Media: TransportMediaConfig{SRTP: SRTPConfig{
+			Mode: SecureRTPSDES,
+			DTLS: dtlsConf,
+		}},
 	})
-	assert.Equal(t, SecureRTPSDES, explicitSDES.SecureRTP, "explicit mode must win over auto-DTLS")
+	assert.Equal(t, SecureRTPSDES, explicitSDES.SRTP.Mode, "explicit mode must win over auto-DTLS")
+}
+
+// TestWithMediaDTLSOptionEnablesDTLS locks the per-call path end to end:
+// WithMediaDTLS must not only store the DTLS config, it must also flip the
+// session to DTLS-SRTP (the old behavior silently kept plain RTP).
+func TestWithMediaDTLSOptionEnablesDTLS(t *testing.T) {
+	p, err := newTestParams([]SignalOption{WithMediaDTLS(media.DTLSConfig{
+		Certificates: []tls.Certificate{testdata.ServerCertificate()},
+	})})
+	require.NoError(t, err)
+
+	conf := signalMediaConfig(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}}, p)
+	dm := &DialogMedia{}
+	require.NoError(t, dm.initMediaSessionFromConf(conf))
+	defer dm.Close()
+
+	require.NotNil(t, dm.mediaSession)
+	assert.Equal(t, int(SecureRTPDTLS), dm.mediaSession.SecureRTP)
+}
+
+// TestMediaConfigDTLSAutoEnableOnSession locks that a DTLS configuration with
+// Mode left at SecureRTPNone enables DTLS at session init, not only in the
+// transport merge. Regression: WithMediaDTLS on Answer stored the DTLS config
+// but media stayed plain RTP.
+func TestMediaConfigDTLSAutoEnableOnSession(t *testing.T) {
+	dm := &DialogMedia{}
+	require.NoError(t, dm.initMediaSessionFromConf(MediaConfig{
+		Codecs: []media.Codec{media.CodecAudioUlaw},
+		SRTP: SRTPConfig{
+			DTLS: media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
+		},
+	}))
+	defer dm.Close()
+
+	require.NotNil(t, dm.mediaSession)
+	assert.Equal(t, int(SecureRTPDTLS), dm.mediaSession.SecureRTP)
 }
 
 // TestIntegrationDTLSAutoNegotiation drives the auto-enabled DTLS mode through
@@ -63,17 +105,21 @@ func TestMediaConfigDTLSAutoEnable(t *testing.T) {
 func TestIntegrationDTLSAutoNegotiation(t *testing.T) {
 	offerer := &DialogMedia{}
 	require.NoError(t, offerer.initMediaSessionFromConf(MediaConfig{
-		Codecs:    []media.Codec{media.CodecAudioUlaw},
-		SecureRTP: SecureRTPDTLS,
-		DTLSConf:  media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
+		Codecs: []media.Codec{media.CodecAudioUlaw},
+		SRTP: SRTPConfig{
+			Mode: SecureRTPDTLS,
+			DTLS: media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
+		},
 	}))
 	defer offerer.Close()
 
 	answerer := &DialogMedia{}
 	require.NoError(t, answerer.initMediaSessionFromConf(MediaConfig{
-		Codecs:    []media.Codec{media.CodecAudioUlaw},
-		SecureRTP: SecureRTPDTLS,
-		DTLSConf:  media.DTLSConfig{Certificates: []tls.Certificate{testdata.ClientCertificate()}},
+		Codecs: []media.Codec{media.CodecAudioUlaw},
+		SRTP: SRTPConfig{
+			Mode: SecureRTPDTLS,
+			DTLS: media.DTLSConfig{Certificates: []tls.Certificate{testdata.ClientCertificate()}},
+		},
 	}))
 	defer answerer.Close()
 

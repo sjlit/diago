@@ -45,7 +45,10 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	d := diago.NewDiago(ua)
+	d, err := diago.NewDiago(ua, diago.WithDefaultTransport())
+	if err != nil {
+		return err
+	}
 	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		BridgeCall(ctx, d, inDialog)
 

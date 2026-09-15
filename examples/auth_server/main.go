@@ -33,7 +33,10 @@ func main() {
 
 func start(ctx context.Context) error {
 	ua, _ := sipgo.NewUA()
-	dg := diago.NewDiago(ua)
+	dg, err := diago.NewDiago(ua, diago.WithDefaultTransport())
+	if err != nil {
+		return err
+	}
 
 	// Nonce store for the digest challenges. Close it on shutdown.
 	authServer := diago.NewDigestServer()

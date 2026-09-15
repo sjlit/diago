@@ -39,8 +39,10 @@ func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Respons
 		ua.Close()
 	})
 
-	opts = append(opts, WithClient(client))
-	return NewDiago(ua, opts...)
+	opts = append(opts, WithDefaultTransport(), WithClient(client))
+	dg, err := NewDiago(ua, opts...)
+	require.NoError(t, err)
+	return dg
 }
 
 func TestMain(m *testing.M) {
@@ -374,11 +376,13 @@ func TestDiagoTransportConfs(t *testing.T) {
 	t.Run("ExternalHostFQDNExternalMedia", func(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
-				Transport:       "udp",
-				BindHost:        "127.0.0.1",
-				BindPort:        15060,
-				ExternalHost:    "myhost.pbx.com",
-				MediaExternalIP: net.IPv4(1, 2, 3, 4),
+				Transport:    "udp",
+				BindHost:     "127.0.0.1",
+				BindPort:     15060,
+				ExternalHost: "myhost.pbx.com",
+				Media: TransportMediaConfig{
+					Network: NetworkConfig{ExternalIP: net.IPv4(1, 2, 3, 4)},
+				},
 			},
 			expectedContactHostPort: "myhost.pbx.com:15060",
 			expectedMediaHost:       "1.2.3.4", // Hosts are not resolved so it goes with bind
@@ -442,9 +446,10 @@ func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := NewDiago(ua, WithTransport(tran))
+	dg, err := NewDiago(ua, WithTransport(tran))
+	require.NoError(t, err)
 
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
+	err = dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -471,7 +476,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := NewDiago(ua,
+		dg, err := NewDiago(ua,
 			WithTransport(
 				Transport{
 					ID:        "tcp",
@@ -485,8 +490,9 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 					Codecs: []media.Codec{l16Codec, media.CodecAudioAlaw},
 				},
 			))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				panic(err)
@@ -502,7 +508,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg := NewDiago(ua,
+	dg, err := NewDiago(ua,
 		WithTransport(
 			Transport{
 				ID:        "tcp",
@@ -515,6 +521,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 				Codecs: []media.Codec{l16Codec, media.CodecAudioAlaw},
 			},
 		))
+	require.NoError(t, err)
 
 	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
@@ -539,14 +546,16 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := NewDiago(ua,
+		dg, err := NewDiago(ua,
 			WithTransport(
 				Transport{
 					ID:        "tcp",
 					Transport: "tcp",
 					BindHost:  "127.0.0.1",
 					BindPort:  15443,
-					MediaSRTP: 1, // This enables SRTP
+					Media: TransportMediaConfig{
+						SRTP: SRTPConfig{Mode: SecureRTPSDES}, // This enables SRTP
+					},
 				},
 			),
 			WithMediaConfig(
@@ -554,8 +563,9 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 					Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 				},
 			))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				panic(err)
@@ -571,14 +581,16 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg := NewDiago(ua,
+	dg, err := NewDiago(ua,
 		WithTransport(
 			Transport{
 				ID:        "tcp",
 				Transport: "tcp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15441,
-				MediaSRTP: 1, // USE SRTP
+				Media: TransportMediaConfig{
+					SRTP: SRTPConfig{Mode: SecureRTPSDES}, // USE SRTP
+				},
 			},
 		),
 		WithMediaConfig(
@@ -586,6 +598,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			},
 		))
+	require.NoError(t, err)
 
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)
@@ -621,17 +634,21 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := NewDiago(ua,
+		dg, err := NewDiago(ua,
 			WithTransport(
 				Transport{
 					ID:        "tcp",
 					Transport: "tcp",
 					BindHost:  "127.0.0.1",
 					BindPort:  16443,
-					MediaSRTP: 2, // This enables SRTP DTLS
-					MediaDTLSConf: media.DTLSConfig{
-						Certificates:     []tls.Certificate{testdata.ServerCertificate()},
-						ServerClientAuth: media.ServerClientAuthNoCert,
+					Media: TransportMediaConfig{
+						SRTP: SRTPConfig{ // This enables SRTP DTLS
+							Mode: SecureRTPDTLS,
+							DTLS: media.DTLSConfig{
+								Certificates:     []tls.Certificate{testdata.ServerCertificate()},
+								ServerClientAuth: media.ServerClientAuthNoCert,
+							},
+						},
 					},
 				},
 			),
@@ -640,8 +657,9 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 					Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 				},
 			))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				panic(err)
@@ -657,17 +675,21 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg := NewDiago(ua,
+	dg, err := NewDiago(ua,
 		WithTransport(
 			Transport{
 				ID:        "tcp",
 				Transport: "tcp",
 				BindHost:  "127.0.0.1",
 				BindPort:  16441,
-				MediaSRTP: 2, // USE DTLS
-				// DTLS-SRTP requires both sides to present certificates (RFC 5763 §5).
-				MediaDTLSConf: media.DTLSConfig{
-					Certificates: []tls.Certificate{testdata.ClientCertificate()},
+				Media: TransportMediaConfig{
+					SRTP: SRTPConfig{ // USE DTLS
+						Mode: SecureRTPDTLS,
+						// DTLS-SRTP requires both sides to present certificates (RFC 5763 §5).
+						DTLS: media.DTLSConfig{
+							Certificates: []tls.Certificate{testdata.ClientCertificate()},
+						},
+					},
 				},
 			},
 		),
@@ -676,6 +698,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			},
 		))
+	require.NoError(t, err)
 
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)

@@ -166,7 +166,7 @@ type signalMsgParams struct {
 // caller takes full ownership of the session.
 type signalMediaParams struct {
 	Codecs          []media.Codec
-	RTPNAT          *int
+	RTPNAT          *RTPNATMode
 	MediaBindIP     net.IP
 	MediaExternalIP net.IP
 	MediaDTLSConf   *media.DTLSConfig
@@ -285,19 +285,19 @@ func signalMediaConfig(base MediaConfig, p *signalParams) MediaConfig {
 		conf.Codecs = p.Media.Codecs
 	}
 	if p.Media.RTPNAT != nil {
-		conf.RTPNAT = *p.Media.RTPNAT
+		conf.Network.RTPNAT = *p.Media.RTPNAT
 	}
 	if p.Media.MediaBindIP != nil {
-		conf.BindIP = p.Media.MediaBindIP
+		conf.Network.BindIP = p.Media.MediaBindIP
 	}
 	if p.Media.MediaExternalIP != nil {
-		conf.ExternalIP = p.Media.MediaExternalIP
+		conf.Network.ExternalIP = p.Media.MediaExternalIP
 	}
 	if p.Media.MediaDTLSConf != nil {
-		conf.DTLSConf = *p.Media.MediaDTLSConf
+		conf.SRTP.DTLS = *p.Media.MediaDTLSConf
 	}
 	if p.Media.SDPSessionName != "" {
-		conf.SDPSessionName = p.Media.SDPSessionName
+		conf.SDP.SessionName = p.Media.SDPSessionName
 	}
 	if p.Media.MusicOnHold != nil {
 		conf.MusicOnHold = *p.Media.MusicOnHold
@@ -434,12 +434,12 @@ func WithCodecs(codecs ...media.Codec) SignalOption {
 	}
 }
 
-// WithRTPNAT sets media.MediaSession.RTPNAT for this call.
-// Check media.RTPNAT options.
-func WithRTPNAT(n int) SignalOption {
+// WithRTPNAT sets the RTP NAT mode for this call
+// (RTPNATDisabled or RTPNATLearnSource).
+func WithRTPNAT(n RTPNATMode) SignalOption {
 	return func(p *signalParams) error {
 		p.mark("WithRTPNAT", scopeRTPNAT)
-		if n != media.RTPNATDisabled && n != media.RTPNATSymetric {
+		if n != RTPNATDisabled && n != RTPNATLearnSource {
 			return fmt.Errorf("WithRTPNAT: invalid mode %d", n)
 		}
 		v := n
@@ -472,7 +472,8 @@ func WithMediaExternalIP(ip net.IP) SignalOption {
 	}
 }
 
-// WithMediaDTLS overrides the DTLS configuration for this call.
+// WithMediaDTLS overrides the DTLS configuration for this call. A non-empty
+// configuration also enables DTLS-SRTP when the call is not using SRTP yet.
 func WithMediaDTLS(conf media.DTLSConfig) SignalOption {
 	return func(p *signalParams) error {
 		p.mark("WithMediaDTLS", scopeMediaDTLS)

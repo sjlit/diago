@@ -28,9 +28,11 @@ func newTestParams(opts []SignalOption) (*signalParams, error) {
 
 func TestSignalMediaConfigOverlay(t *testing.T) {
 	base := MediaConfig{
-		Codecs:     []media.Codec{media.CodecAudioUlaw},
-		BindIP:     net.IPv4(10, 0, 0, 1),
-		ExternalIP: net.IPv4(1, 1, 1, 1),
+		Codecs: []media.Codec{media.CodecAudioUlaw},
+		Network: NetworkConfig{
+			BindIP:     net.IPv4(10, 0, 0, 1),
+			ExternalIP: net.IPv4(1, 1, 1, 1),
+		},
 	}
 
 	p, err := newTestParams(nil)
@@ -38,7 +40,7 @@ func TestSignalMediaConfigOverlay(t *testing.T) {
 	got := signalMediaConfig(base, p)
 	assert.Equal(t, base, got)
 
-	nat := 1
+	nat := RTPNATLearnSource
 	p, err = newTestParams([]SignalOption{
 		nil, // nil options are ignored
 		WithCodecs(media.CodecAudioAlaw),
@@ -50,12 +52,12 @@ func TestSignalMediaConfigOverlay(t *testing.T) {
 
 	got = signalMediaConfig(base, p)
 	assert.Equal(t, []media.Codec{media.CodecAudioAlaw}, got.Codecs)
-	assert.Equal(t, 1, got.RTPNAT)
-	assert.Equal(t, "10.0.0.2", got.BindIP.String())
-	assert.Equal(t, "2.2.2.2", got.ExternalIP.String())
+	assert.Equal(t, RTPNATLearnSource, got.Network.RTPNAT)
+	assert.Equal(t, "10.0.0.2", got.Network.BindIP.String())
+	assert.Equal(t, "2.2.2.2", got.Network.ExternalIP.String())
 
 	// Base config must not be mutated
-	assert.Equal(t, "1.1.1.1", base.ExternalIP.String())
+	assert.Equal(t, "1.1.1.1", base.Network.ExternalIP.String())
 	assert.Equal(t, []media.Codec{media.CodecAudioUlaw}, base.Codecs)
 
 	// Invalid options are reported
@@ -68,8 +70,8 @@ func TestSignalMediaConfigOverlay(t *testing.T) {
 func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
 	t.Run("OverrideBaseConfig", func(t *testing.T) {
 		base := MediaConfig{
-			Codecs:         []media.Codec{media.CodecAudioUlaw},
-			SDPSessionName: "BaseName",
+			Codecs: []media.Codec{media.CodecAudioUlaw},
+			SDP:    SDPConfig{SessionName: "BaseName"},
 		}
 		p, err := newTestParams([]SignalOption{
 			WithSDPSessionName("OverrideName"),
@@ -77,21 +79,21 @@ func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
 		require.NoError(t, err)
 
 		got := signalMediaConfig(base, p)
-		assert.Equal(t, "OverrideName", got.SDPSessionName)
+		assert.Equal(t, "OverrideName", got.SDP.SessionName)
 		// Base config must not be mutated
-		assert.Equal(t, "BaseName", base.SDPSessionName)
+		assert.Equal(t, "BaseName", base.SDP.SessionName)
 	})
 
 	t.Run("UnsetLeavesBaseIntact", func(t *testing.T) {
 		base := MediaConfig{
-			Codecs:         []media.Codec{media.CodecAudioUlaw},
-			SDPSessionName: "BaseName",
+			Codecs: []media.Codec{media.CodecAudioUlaw},
+			SDP:    SDPConfig{SessionName: "BaseName"},
 		}
 		p, err := newTestParams(nil)
 		require.NoError(t, err)
 
 		got := signalMediaConfig(base, p)
-		assert.Equal(t, "BaseName", got.SDPSessionName)
+		assert.Equal(t, "BaseName", got.SDP.SessionName)
 	})
 
 	t.Run("EmptyStringRejected", func(t *testing.T) {
@@ -123,7 +125,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 	defer uaSrv.Close()
 
-	dgSrv := NewDiago(uaSrv,
+	dgSrv, err := NewDiago(uaSrv,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15091}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
@@ -141,8 +143,9 @@ func TestIntegrationSignalOptions(t *testing.T) {
 			}
 		}),
 	)
+	require.NoError(t, err)
 
-	err := dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		if err := d.Trying(ctx); err != nil {
 			t.Error(err)
 			return nil
@@ -174,7 +177,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	uaCli, _ := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	defer uaCli.Close()
 
-	dgCli := newDialer(uaCli)
+	dgCli := newDialer(t, uaCli)
 	err = dgCli.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})

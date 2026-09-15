@@ -38,14 +38,15 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
-	uas := NewDiago(ua,
+	uas, err := NewDiago(ua,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15082}),
 		WithMediaConfig(MediaConfig{
 			Codecs:      []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 			MusicOnHold: mohTone,
 		}),
 	)
-	err := uas.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, err)
+	err = uas.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		require.NoError(t, d.Answer(ctx))
 		uasCh <- d
 		<-d.Context().Done()
@@ -55,7 +56,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 
 	ua2, _ := sipgo.NewUA()
 	defer ua2.Close()
-	caller := newDialer(ua2)
+	caller := newDialer(t, ua2)
 	// The UAC needs a SIP server registered so it can answer re-INVITEs from
 	// the UAS after our Hold. ServeBackground with an empty handler is the
 	// minimal hook.
@@ -107,10 +108,11 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
-	uas := NewDiago(ua,
+	uas, err := NewDiago(ua,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15084}),
 	)
-	err := uas.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, err)
+	err = uas.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		heldCb := func(dm *DialogMedia) {
 			// Negotiated recvonly means the remote put us on hold.
 			if dm.IsRemoteHeld() {
@@ -127,7 +129,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 
 	ua2, _ := sipgo.NewUA()
 	defer ua2.Close()
-	caller := newDialer(ua2)
+	caller := newDialer(t, ua2)
 
 	dialog, err := caller.Dial(ctx, sip.Uri{User: "bob", Host: "127.0.0.1", Port: 15084})
 	require.NoError(t, err)

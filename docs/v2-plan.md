@@ -255,6 +255,23 @@ constructor forgets to mark its scope.
 | 4.5 | media globals | Keep `media.RTPPortStart` etc. as deprecated process fallbacks; config struct is the recommended path | additive | S |
 | 4.6 | `MediaProps` output | `ReaderWithProps() (io.Reader, MediaProps, error)` / `WriterWithProps()`; delete `WithAudioReaderMediaProps`/`WithAudioWriterMediaProps` | call sites | S |
 
+Status: implemented on the `v2` branch. `MediaConfig` is grouped into
+`SRTPConfig`/`NetworkConfig`/`SDPConfig`; typed `SecureRTP`, `SRTPAlg` and
+`RTPNATMode` replace the old untyped ints. `Transport.Media` carries
+`TransportMediaConfig{SRTP, Network}` merged field-by-field with the rule
+"zero inherits global; an explicit override wins; a concrete BindHost pins
+the media bind IP". `NewTransport`/`Transport.Validate` reject unknown
+networks (udp/tcp/tls/ws/wss + 4/6 suffix) and `NewDiago` now returns an
+error and fails without a transport; `WithDefaultTransport()` installs the
+old loopback default explicitly. `ReaderWithProps`/`WriterWithProps` replace
+the props-pointer option passes.
+
+`Transport.Validate` mirrors what the SIP stack can actually serve:
+`TLSConf` is required for `tls`/`wss` and rejected elsewhere, and `tls6` is
+rejected because sipgo has no TLS-over-IPv6 listener (it maps `tcp6` to
+`wss`). The remaining suffix forms are translated at serve time
+(`tls4 -> tcp4`, `wss4 -> ws4`, `wss6 -> ws6`).
+
 ## P5 - Public surface cleanup
 
 | # | Item | New design | Break | Size |

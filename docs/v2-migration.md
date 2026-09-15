@@ -9,9 +9,10 @@ user-visible rename, removal, and behavior change.
 | v1 | v2 | Notes |
 |---|---|---|
 | `github.com/sjlit/diago` | `github.com/sjlit/diago/v2` | Major-version import path |
-| Implicit `127.0.0.1:5060` transport when none configured | `NewDiago` errors; configure with `WithTransport` | Removes a silent loopback default |
+| `NewDiago(ua, opts...) *Diago` | `NewDiago(ua, opts...) (*Diago, error)` | Also fails on an invalid transport |
+| Implicit `127.0.0.1:5060` transport when none configured | `NewDiago` errors; configure with `WithTransport`, or opt into the old default explicitly with `WithDefaultTransport()` | Removes a silent loopback default |
 | `WithAuth(...)` | Removed | It was a no-op. Incoming calls: `DialogServerSession.Authorize`; outgoing/REGISTER: `WithAuthCredentials` |
-| `WithTransport(Transport{...})` | `WithTransport(Transport{...})` with validation | Invalid network values now fail at construction |
+| `WithTransport(Transport{...})` | `WithTransport(Transport{...})` with validation (`Transport.Validate`/`NewTransport`) | Invalid network values now fail at construction |
 
 ## 2. Server handler and lifecycle
 
@@ -54,13 +55,13 @@ user-visible rename, removal, and behavior change.
 
 | v1 | v2 |
 |---|---|
-| `Transport.MediaSRTP int` (docs said 0/1; 2 meant DTLS) | `Transport.Media.SRTP.Mode SecureRTP` (`SecureRTPNone/SDES/DTLS`); `DTLSConf` non-zero auto-selects DTLS |
-| `MediaConfig.SecureRTP int`, `MediaConfig.SecureRTPAlg uint16` | `MediaConfig.SRTP{Mode SecureRTP, Alg SRTPAlg, DTLS DTLSConfig}` |
-| `MediaConfig.RTPNAT int` | `NetworkConfig.RTPNAT RTPNATMode` |
-| `MediaConfig.BindIP/ExternalIP/RTPPortStart/RTPPortEnd` | `MediaConfig.Network` |
-| `MediaConfig.SDPCodecPreferLocalOrder/SDPSessionName` | `MediaConfig.SDP` |
-| `WithAudioReaderMediaProps(*MediaProps)` | `ReaderWithProps() (io.Reader, MediaProps, error)` |
-| `WithAudioWriterMediaProps(*MediaProps)` | `WriterWithProps() (io.Writer, MediaProps, error)` |
+| `Transport.MediaSRTP int` (docs said 0/1; 2 meant DTLS), `Transport.MediaDTLSConf`, `Transport.MediaExternalIP` | `Transport.Media.SRTP{Mode SecureRTP, Alg SRTPAlg, DTLS media.DTLSConfig}` and `Transport.Media.Network{ExternalIP/BindIP/RTPNAT/RTPPortStart/RTPPortEnd}`; zero fields inherit `MediaConfig` |
+| `MediaConfig.SecureRTP int`, `MediaConfig.SecureRTPAlg uint16` | `MediaConfig.SRTP{Mode SecureRTP, Alg SRTPAlg, DTLS media.DTLSConfig}` |
+| `MediaConfig.RTPNAT int` | `MediaConfig.Network.RTPNAT RTPNATMode` (`RTPNATDisabled`/`RTPNATLearnSource`) |
+| `MediaConfig.BindIP/ExternalIP/RTPPortStart/RTPPortEnd` | `MediaConfig.Network.{BindIP,ExternalIP,RTPPortStart,RTPPortEnd}` |
+| `MediaConfig.SDPCodecPreferLocalOrder/SDPSessionName` | `MediaConfig.SDP.{CodecPreferLocalOrder,SessionName}` |
+| `WithAudioReaderMediaProps(*MediaProps)` | `ReaderWithProps(...AudioReaderOption) (io.Reader, MediaProps, error)` |
+| `WithAudioWriterMediaProps(*MediaProps)` | `WriterWithProps(...AudioWriterOption) (io.Writer, MediaProps, error)` |
 
 ## 6. Public surface
 
@@ -76,6 +77,7 @@ user-visible rename, removal, and behavior change.
 | `ListenBackground` stop `func() error`, `PauseAudioRead/Write` `func()`, `ProxyMediaControl` `func() error` | Unified `StopFunc func() error` |
 | `Bridger` defined but never accepted | `DialBridge` accepts `Bridger` |
 | `diagotest.NewConnRecorder() *connRecorder` | `NewConnRecorder() *ConnRecorder` |
+| `diagotest.NewDiagoClientTest(ua, onRequest) *diago.Diago` | `NewDiagoClientTest(ua, onRequest) (*diago.Diago, error)` |
 
 ## 7. Errors
 

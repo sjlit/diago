@@ -286,8 +286,15 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if conf.SecureRTP < SecureRTPNone || conf.SecureRTP > SecureRTPDTLS {
-		return fmt.Errorf("invalid SRTP mode %d: use SecureRTPNone, SecureRTPSDES or SecureRTPDTLS", conf.SecureRTP)
+	// Enforce the SRTPConfig invariant here as well, so per-call configs built
+	// without mediaConfigForTransport (ex. WithMediaDTLS on Answer) enable DTLS
+	// instead of silently carrying an unused DTLS configuration.
+	if conf.SRTP.Mode == SecureRTPNone && !dtlsConfIsZero(conf.SRTP.DTLS) {
+		conf.SRTP.Mode = SecureRTPDTLS
+	}
+
+	if conf.SRTP.Mode < SecureRTPNone || conf.SRTP.Mode > SecureRTPDTLS {
+		return fmt.Errorf("invalid SRTP mode %d: use SecureRTPNone, SecureRTPSDES or SecureRTPDTLS", conf.SRTP.Mode)
 	}
 
 	// Set before the early return: precreated sessions (fake IO in tests,
@@ -301,7 +308,7 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 		return nil
 	}
 
-	bindIP := conf.BindIP
+	bindIP := conf.Network.BindIP
 	if bindIP == nil {
 		var err error
 		bindIP, _, err = sip.ResolveInterfacesIP("ip4", nil)
@@ -313,17 +320,17 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	sess := &media.MediaSession{
 		Codecs:     slices.Clone(conf.Codecs),
 		Laddr:      net.UDPAddr{IP: bindIP, Port: 0},
-		ExternalIP: conf.ExternalIP,
+		ExternalIP: conf.Network.ExternalIP,
 		Mode:       sdp.ModeSendrecv,
-		SecureRTP:  conf.SecureRTP,
-		SRTPAlg:    conf.SecureRTPAlg,
-		RTPNAT:     conf.RTPNAT,
-		DTLSConf:   conf.DTLSConf,
+		SecureRTP:  int(conf.SRTP.Mode),
+		SRTPAlg:    uint16(conf.SRTP.Alg),
+		RTPNAT:     int(conf.Network.RTPNAT),
+		DTLSConf:   conf.SRTP.DTLS,
 
-		RTPPortStart:             conf.RTPPortStart,
-		RTPPortEnd:               conf.RTPPortEnd,
-		SDPCodecPreferLocalOrder: conf.SDPCodecPreferLocalOrder,
-		SDPSessionName:           conf.SDPSessionName,
+		RTPPortStart:             conf.Network.RTPPortStart,
+		RTPPortEnd:               conf.Network.RTPPortEnd,
+		SDPCodecPreferLocalOrder: conf.SDP.CodecPreferLocalOrder,
+		SDPSessionName:           conf.SDP.SessionName,
 	}
 
 	if err := sess.Init(); err != nil {
@@ -461,15 +468,6 @@ type MediaProps struct {
 	Raddr string
 }
 
-func WithAudioReaderMediaProps(p *MediaProps) AudioReaderOption {
-	return func(d *DialogMedia) error {
-		p.Codec = media.CodecAudioFromSession(d.mediaSession)
-		p.Laddr = d.mediaSession.Laddr.String()
-		p.Raddr = d.mediaSession.Raddr.String()
-		return nil
-	}
-}
-
 // WithAudioReaderJitterBuffer inserts an RTP jitter buffer before the payload reader.
 // Packet duration is derived from the negotiated audio codec.
 func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderOption {
@@ -544,6 +542,7 @@ func WithAudioReaderPCMMonitor(mon *audio.MonitorPCMReader, w io.Writer) AudioRe
 
 // AudioReader returns io.Reader on which you can read your ENCODED audio.
 // By default it is RTPPacketReader unless overwritten with SetAudioReader().
+// Use ReaderWithProps when the negotiated codec or addresses are needed.
 //
 // NOTE: AudioReader must be called after negotiation is finished, like Answer()
 // Reading buffer should be equal or bigger of media.RTPBufSize
@@ -552,6 +551,12 @@ func (d *DialogMedia) AudioReader(opts ...AudioReaderOption) (io.Reader, error) 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	return d.audioReaderUnsafe(opts)
+}
+
+// audioReaderUnsafe applies the reader options and returns the current reader.
+// Callers must hold d.mu.
+func (d *DialogMedia) audioReaderUnsafe(opts []AudioReaderOption) (io.Reader, error) {
 	if err := d.mediaGuard(); err != nil {
 		return nil, err
 	}
@@ -570,6 +575,33 @@ func (d *DialogMedia) AudioReader(opts ...AudioReaderOption) (io.Reader, error) 
 	return d.getAudioReader(), nil
 }
 
+// ReaderWithProps is AudioReader plus the negotiated media properties: it
+// applies opts in order and returns the reader together with its codec and
+// local/remote RTP addresses. Replaces WithAudioReaderMediaProps.
+func (d *DialogMedia) ReaderWithProps(opts ...AudioReaderOption) (io.Reader, MediaProps, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	r, err := d.audioReaderUnsafe(opts)
+	if err != nil {
+		return nil, MediaProps{}, err
+	}
+	return r, d.mediaPropsUnsafe(), nil
+}
+
+// mediaPropsUnsafe snapshots the negotiated media properties. Callers must
+// hold d.mu.
+func (d *DialogMedia) mediaPropsUnsafe() MediaProps {
+	if d.mediaSession == nil {
+		return MediaProps{}
+	}
+	return MediaProps{
+		Codec: media.CodecAudioFromSession(d.mediaSession),
+		Laddr: d.mediaSession.Laddr.String(),
+		Raddr: d.mediaSession.Raddr.String(),
+	}
+}
+
 func (d *DialogMedia) getAudioReader() io.Reader {
 	if d.audioReader != nil {
 		return d.audioReader
@@ -580,21 +612,12 @@ func (d *DialogMedia) getAudioReader() io.Reader {
 // audioReaderProps returns the current audio reader plus its media props.
 // It fails with the lifecycle sentinels if media is not usable.
 func (d *DialogMedia) audioReaderProps(p *MediaProps) (io.Reader, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if err := d.mediaGuard(); err != nil {
+	r, props, err := d.ReaderWithProps()
+	if err != nil {
 		return nil, err
 	}
-	if d.audioReader == nil && d.RTPPacketReader == nil {
-		// Typed-nil guard for the setup window (mediaSession set, handles not
-		// yet created). A manually installed audioReader (fake IO) is a valid
-		// reader source on its own.
-		return nil, ErrDialogNotAnswered
-	}
-
-	WithAudioReaderMediaProps(p)(d)
-	return d.getAudioReader(), nil
+	*p = props
+	return r, nil
 }
 
 // SetAudioReader adds/changes audio reader.
@@ -606,15 +629,6 @@ func (d *DialogMedia) SetAudioReader(r io.Reader) {
 }
 
 type AudioWriterOption func(d *DialogMedia) error
-
-func WithAudioWriterMediaProps(p *MediaProps) AudioWriterOption {
-	return func(d *DialogMedia) error {
-		p.Codec = media.CodecAudioFromSession(d.mediaSession)
-		p.Laddr = d.mediaSession.Laddr.String()
-		p.Raddr = d.mediaSession.Raddr.String()
-		return nil
-	}
-}
 
 // WithAudioWriterRTPStats creates RTP Statistics interceptor on audio writer
 func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
@@ -653,11 +667,18 @@ func WithAudioWriterMonitor(mon *audio.MonitorPCMWriter, w io.Writer) AudioWrite
 
 // AudioWriter returns io.Writer on which you can write your ENCODED audio.
 // By default it is RTPPacketWriter unless overwritten with SetAudioWriter().
+// Use WriterWithProps when the negotiated codec or addresses are needed.
 // NOTE: RTPPacketWriter has running sample clock, but it expects samples sent, match sample duration of codec.
 func (d *DialogMedia) AudioWriter(opts ...AudioWriterOption) (io.Writer, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	return d.audioWriterUnsafe(opts)
+}
+
+// audioWriterUnsafe applies the writer options and returns the current writer.
+// Callers must hold d.mu.
+func (d *DialogMedia) audioWriterUnsafe(opts []AudioWriterOption) (io.Writer, error) {
 	if err := d.mediaGuard(); err != nil {
 		return nil, err
 	}
@@ -677,6 +698,20 @@ func (d *DialogMedia) AudioWriter(opts ...AudioWriterOption) (io.Writer, error) 
 	return d.getAudioWriter(), nil
 }
 
+// WriterWithProps is AudioWriter plus the negotiated media properties: it
+// applies opts in order and returns the writer together with its codec and
+// local/remote RTP addresses. Replaces WithAudioWriterMediaProps.
+func (d *DialogMedia) WriterWithProps(opts ...AudioWriterOption) (io.Writer, MediaProps, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	w, err := d.audioWriterUnsafe(opts)
+	if err != nil {
+		return nil, MediaProps{}, err
+	}
+	return w, d.mediaPropsUnsafe(), nil
+}
+
 func (d *DialogMedia) getAudioWriter() io.Writer {
 	if d.audioWriter != nil {
 		return d.audioWriter
@@ -685,21 +720,12 @@ func (d *DialogMedia) getAudioWriter() io.Writer {
 }
 
 func (d *DialogMedia) audioWriterProps(p *MediaProps) (io.Writer, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if err := d.mediaGuard(); err != nil {
+	w, props, err := d.WriterWithProps()
+	if err != nil {
 		return nil, err
 	}
-	if d.audioWriter == nil && d.RTPPacketWriter == nil {
-		// Typed-nil guard for the setup window (mediaSession set, handles not
-		// yet created). A manually installed audioWriter (fake IO) is a valid
-		// writer sink on its own.
-		return nil, ErrDialogNotAnswered
-	}
-
-	WithAudioWriterMediaProps(p)(d)
-	return d.getAudioWriter(), nil
+	*p = props
+	return w, nil
 }
 
 // SetAudioWriter adds/changes audio reader.

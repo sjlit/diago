@@ -69,13 +69,16 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 	)
 	defer ua.Close()
 
-	tu := diago.NewDiago(ua, diago.WithTransport(
+	tu, err := diago.NewDiago(ua, diago.WithTransport(
 		diago.Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15060,
 		},
 	))
+	if err != nil {
+		return err
+	}
 
 	// Start listening incoming calls
 	go func() {

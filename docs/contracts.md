@@ -387,11 +387,14 @@ reached explicitly (`d.DialogClientSession.ID`,
 
 ### Global mutable variables (inventory, see recommendation 4)
 
-Instance-scoped via `MediaConfig` (zero value inherits the package global):
+Instance-scoped via `MediaConfig.Network`/`MediaConfig.SDP` (zero value
+inherits the package global):
 `RTPPortStart`/`RTPPortEnd` (local RTP port range, fed into the session) and
 `SDPCodecPreferLocalOrder` (per-session negotiation policy). Both are carried
 through `Fork()`. The per-dialog config is built from the global `MediaConfig`
-with transport values overlaid, so all fields propagate.
+merged with `Transport.Media` field by field ("zero inherits global"; an
+explicit transport override or a concrete `BindHost` wins), so all fields
+propagate.
 
 Kept process-global, deliberately:
 `media.RTPBufSize` (pools and the jitter buffer capture it lazily at first
@@ -590,13 +593,14 @@ are bridged.
 
 ## 14. Secure media (SDES and DTLS-SRTP)
 
-`MediaConfig.SecureRTP` selects the profile: `0` plain RTP/AVP, `1` SDES
-(keys in SDP, RTP/SAVP), `2` DTLS-SRTP (UDP/TLS/RTP/SAVP). The offer/answer
+`MediaConfig.SRTP.Mode` selects the profile: `SecureRTPNone` plain RTP/AVP,
+`SecureRTPSDES` (keys in SDP, RTP/SAVP), `SecureRTPDTLS`
+(UDP/TLS/RTP/SAVP). A non-zero `MediaConfig.SRTP.DTLS` auto-selects DTLS. The offer/answer
 path owns profile and codec negotiation; applications only configure
 certificates and algorithm preferences (see §10 for config propagation).
 
 **SDES.** One `a=crypto` line is offered, algorithm taken from
-`MediaConfig.SRTPAlg` (default AES_CM_128_HMAC_SHA1_80). The answer must carry
+`MediaConfig.SRTP.Alg` (default AES_CM_128_HMAC_SHA1_80). The answer must carry
 a matching crypto attribute; a missing one leaves the call plaintext by
 design (SDES offers no downgrade protection — use SIPS/TLS for signaling).
 

@@ -39,7 +39,9 @@ will also bring the Pion media stack into Diago.
 
 ## Media security (SDES / DTLS-SRTP)
 
-`MediaConfig.SecureRTP` selects plain RTP (`0`), SDES (`1`) or DTLS-SRTP (`2`).
+`MediaConfig.SRTP.Mode` selects plain RTP (`SecureRTPNone`), SDES
+(`SecureRTPSDES`) or DTLS-SRTP (`SecureRTPDTLS`); a non-zero
+`MediaConfig.SRTP.DTLS` configuration auto-selects DTLS.
 DTLS-SRTP verifies the peer certificate against every `a=fingerprint` in the
 remote SDP (RFC 5763) and **fails closed** on mismatch: an offer/answer that
 does not match the presented certificate aborts the media instead of being

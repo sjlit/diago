@@ -25,15 +25,16 @@ func main() {
 	examples.SetupLogger()
 
 	ua, _ := sipgo.NewUA()
-	dg := diago.NewDiago(ua,
+	dg, err := diago.NewDiago(ua,
 		diago.WithTransport(
 			diago.Transport{
-				ID:            "tcp",
-				Transport:     "tcp",
-				BindHost:      "127.0.0.1",
-				BindPort:      16441,
-				MediaSRTP:     2, // USE DTLS
-				MediaDTLSConf: media.DTLSConfig{},
+				ID:        "tcp",
+				Transport: "tcp",
+				BindHost:  "127.0.0.1",
+				BindPort:  16441,
+				Media: diago.TransportMediaConfig{
+					SRTP: diago.SRTPConfig{Mode: diago.SecureRTPDTLS}, // USE DTLS
+				},
 			},
 		),
 		diago.WithMediaConfig(
@@ -41,6 +42,9 @@ func main() {
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			},
 		))
+	if err != nil {
+		panic(err)
+	}
 
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)

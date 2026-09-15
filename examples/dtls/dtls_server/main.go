@@ -23,17 +23,21 @@ func main() {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := diago.NewDiago(ua,
+	dg, err := diago.NewDiago(ua,
 		diago.WithTransport(
 			diago.Transport{
 				ID:        "tcp",
 				Transport: "tcp",
 				BindHost:  "127.0.0.1",
 				BindPort:  16443,
-				MediaSRTP: 2, // This enables SRTP DTLS
-				MediaDTLSConf: media.DTLSConfig{
-					Certificates:     []tls.Certificate{testdata.ServerCertificate()},
-					ServerClientAuth: media.ServerClientAuthRequireCert,
+				Media: diago.TransportMediaConfig{
+					SRTP: diago.SRTPConfig{ // This enables SRTP DTLS
+						Mode: diago.SecureRTPDTLS,
+						DTLS: media.DTLSConfig{
+							Certificates:     []tls.Certificate{testdata.ServerCertificate()},
+							ServerClientAuth: media.ServerClientAuthRequireCert,
+						},
+					},
 				},
 			},
 		),
@@ -42,8 +46,12 @@ func main() {
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			},
 		))
+	if err != nil {
+		slog.Error("failed to create diago", "error", err)
+		return
+	}
 
-	err := dg.Serve(ctx, func(ctx context.Context, d *diago.DialogServerSession) error {
+	err = dg.Serve(ctx, func(ctx context.Context, d *diago.DialogServerSession) error {
 		d.Trying(ctx)
 		if err := d.Answer(ctx); err != nil {
 			panic(err)

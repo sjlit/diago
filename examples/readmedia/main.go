@@ -34,7 +34,10 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu := diago.NewDiago(ua)
+	tu, err := diago.NewDiago(ua, diago.WithDefaultTransport())
+	if err != nil {
+		return err
+	}
 
 	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
@@ -56,10 +59,10 @@ func ReadMedia(ctx context.Context, inDialog *diago.DialogServerSession) error {
 	buf := make([]byte, media.RTPBufSize)
 
 	// After answer we can access audio reader and read props
-	m := diago.MediaProps{}
-	audioReader, _ := inDialog.AudioReader(
-		diago.WithAudioReaderMediaProps(&m),
-	)
+	audioReader, m, err := inDialog.ReaderWithProps()
+	if err != nil {
+		return err
+	}
 
 	decoder, err := audio.NewPCMDecoderReader(m.Codec.PayloadType, audioReader)
 	if err != nil {

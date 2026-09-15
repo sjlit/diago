@@ -77,7 +77,7 @@ type Transport struct {
 	Transport string
 	network   string // network will keep original transport value
 
-	// BindHost sets IP to bind. If specified (not 0.0.0.0) it will be used same for media IP unless MediaExternalIP is set.
+	// BindHost sets IP to bind. If specified (not 0.0.0.0) it will be used same for media IP unless Media.Network.BindIP is set.
 	BindHost string
 	// BindPort sets port to bind. Leaving at 0 will use empheral port and apply on Contact addr
 	BindPort int
@@ -86,13 +86,11 @@ type Transport struct {
 	ExternalHost string // SIP signaling and media external addr
 	ExternalPort int
 
-	// MediaExternalIP changes SDP IP, by default it tries to use external host if it is IP defined
-	MediaExternalIP net.IP
-	// MediaSRTP offers SRTP. Values: SecureRTPNone, SecureRTPSDES or
-	// SecureRTPDTLS. Zero also auto-enables DTLS when MediaDTLSConf is set.
-	MediaSRTP     int
-	mediaBindIP   net.IP
-	MediaDTLSConf media.DTLSConfig
+	// Media overrides the global MediaConfig for dialogs carried over this
+	// transport. Zero fields inherit the global value; a field set here wins.
+	Media TransportMediaConfig
+
+	mediaBindIP net.IP
 
 	// In case TLS protocol
 	TLSConf *tls.Config
@@ -102,6 +100,87 @@ type Transport struct {
 	RewriteContact bool
 
 	client *sipgo.Client
+}
+
+// NewTransport builds a Transport for the given network and validates it.
+// Accepted networks are udp, tcp, tls, ws and wss, optionally suffixed with
+// 4 or 6 to force the IP family (udp4, tcp6, ...). Invalid values fail here
+// instead of at serve time.
+func NewTransport(network string) (Transport, error) {
+	t := Transport{Transport: network}
+	if err := t.Validate(); err != nil {
+		return Transport{}, err
+	}
+	return t, nil
+}
+
+// Validate reports whether the transport can be served by NewDiago/serve.
+// The network must be udp, tcp, tls, ws or wss with an optional 4/6 suffix;
+// tls and wss require TLSConf (and no other network may carry one). tls6 is
+// rejected: the underlying SIP stack has no TLS-over-IPv6 listener. The
+// remaining suffix forms are translated by tlsListenNetwork at serve time.
+func (t Transport) Validate() error {
+	// WithTransport trims the 4/6 suffix from Transport and keeps the raw
+	// value in network, so validate the original spelling when present.
+	raw := strings.TrimSpace(t.Transport)
+	if t.network != "" {
+		raw = t.network
+	}
+	network := sip.NetworkToLower(raw)
+	base := network
+	if n := len(network); n > 0 && (network[n-1] == '4' || network[n-1] == '6') {
+		base = network[:n-1]
+	}
+	switch base {
+	case "udp", "tcp", "ws":
+		if t.TLSConf != nil {
+			return fmt.Errorf("network %q cannot carry TLSConf: use tls or wss", raw)
+		}
+	case "tls", "wss":
+		if t.TLSConf == nil {
+			return fmt.Errorf("network %q requires TLSConf", raw)
+		}
+		if base == "tls" && network != "tls" && network != "tls4" {
+			// sipgo maps tcp6/ws6 to wss, so there is no TLS-over-IPv6 path.
+			return fmt.Errorf("network %q is not supported by the SIP stack: use tls, tls4 or wss with an optional 4/6 suffix", raw)
+		}
+	default:
+		return fmt.Errorf("invalid network %q: use udp/tcp/tls/ws/wss with optional 4 or 6 suffix", raw)
+	}
+	if t.BindPort < 0 || t.BindPort > 65535 {
+		return fmt.Errorf("invalid bind port %d", t.BindPort)
+	}
+	if t.ExternalPort < 0 || t.ExternalPort > 65535 {
+		return fmt.Errorf("invalid external port %d", t.ExternalPort)
+	}
+	return nil
+}
+
+// tlsListenNetwork maps a validated tls/wss transport network to the network
+// string sipgo.ListenAndServeTLS understands: it applies the IP-family suffix
+// itself (tls4 -> tcp4, wss4 -> ws4, wss6 -> ws6). tls6 never reaches serve:
+// Validate rejects it.
+func tlsListenNetwork(network string) string {
+	switch network {
+	case "tls4":
+		return "tcp4"
+	case "wss4":
+		return "ws4"
+	case "wss6":
+		return "ws6"
+	}
+	return network
+}
+
+// WithDefaultTransport explicitly installs the built-in loopback default
+// (udp on 127.0.0.1:5060). v2 never adds it implicitly: NewDiago fails
+// without at least one configured transport.
+func WithDefaultTransport() DiagoOption {
+	return WithTransport(Transport{
+		Transport: "udp",
+		BindHost:  "127.0.0.1",
+		BindPort:  5060,
+	})
 }
 
 func WithTransport(t Transport) DiagoOption {
@@ -120,6 +199,11 @@ func WithTransport(t Transport) DiagoOption {
 			}
 		}
 
+		// A concrete BindHost/ExternalHost is an explicit signaling choice, so
+		// it also pins the media external IP. An unspecified BindHost only
+		// provides the client bind address (mediaBindIP) and leaves the media
+		// IP to the global MediaConfig.
+		externalExplicit := t.ExternalHost != ""
 		if t.ExternalHost == "" {
 			t.ExternalHost = t.BindHost
 			// External host should match media IP
@@ -138,14 +222,14 @@ func WithTransport(t Transport) DiagoOption {
 			extIp = t.mediaBindIP
 		}
 
-		if t.MediaExternalIP == nil && t.ExternalHost != "" {
+		if t.Media.Network.ExternalIP == nil && (externalExplicit || t.bindIP == nil || !t.bindIP.IsUnspecified()) {
 			// try to use external host as external media IP
 			if extIp != nil && !extIp.IsUnspecified() {
-				t.MediaExternalIP = extIp
+				t.Media.Network.ExternalIP = extIp
 			}
 		}
 
-		t.Transport = sip.NetworkToLower(t.Transport)
+		t.Transport = sip.NetworkToLower(strings.TrimSpace(t.Transport))
 		t.network = t.Transport
 		t.Transport = strings.TrimSuffix(t.Transport, "4") // udp4, tcp4
 		t.Transport = strings.TrimSuffix(t.Transport, "6") // udp6, tcp6
@@ -158,46 +242,78 @@ func WithTransport(t Transport) DiagoOption {
 	}
 }
 
-// Secure RTP modes accepted by Transport.MediaSRTP and
-// MediaConfig.SecureRTP. SecureRTPDTLS requires MediaDTLSConf / DTLSConf;
-// when a DTLS configuration is present and the mode is left at
-// SecureRTPNone, DTLS is enabled automatically.
+// SecureRTP selects the SRTP keying mode of a media session.
+type SecureRTP int
+
 const (
-	SecureRTPNone = 0
-	SecureRTPSDES = 1
-	SecureRTPDTLS = 2
+	SecureRTPNone SecureRTP = iota
+	SecureRTPSDES
+	SecureRTPDTLS
 )
 
-type MediaConfig struct {
-	Codecs []media.Codec
-	// Currently supported Single. Check media.SRTP... constants
-	// Experimental
-	SecureRTPAlg uint16
-	// SecureRTP: SecureRTPNone, SecureRTPSDES or SecureRTPDTLS.
-	SecureRTP int
-	// BindIP is local IP used to bind RTP/RTCP listeners.
-	// When nil the interfaces IP is resolved on session creation.
-	BindIP net.IP
-	// ExternalIP is the IP advertised inside SDP (c= line).
-	ExternalIP net.IP
-	// RTPNAT 0 - disabled, 1 - learn source. Check media.RTPNAT options
-	RTPNAT int
-	// DTLSConf used for DTLS-SRTP
-	DTLSConf media.DTLSConfig
+// SRTPAlg is an SRTP protection profile. Values map to the
+// srtp.ProtectionProfile constants; zero selects the default profile
+// (srtp.ProtectionProfileAes128CmHmacSha1_80) when Mode is not SecureRTPNone.
+type SRTPAlg uint16
 
-	// RTPPortStart/RTPPortEnd define the local RTP port range for media
-	// sessions created from this config. Ports are picked in steps of 2 so
-	// the RTCP port (RTP+1) fits. Zero values inherit the media package
-	// globals media.RTPPortStart/RTPPortEnd (0 = ephemeral ports with retry).
+// RTPNATMode selects how RTP behind NAT is handled.
+type RTPNATMode int
+
+const (
+	RTPNATDisabled RTPNATMode = iota
+	// RTPNATLearnSource learns the remote source address from incoming
+	// packets (symmetric RTP; media.RTPNATSymetric).
+	RTPNATLearnSource
+)
+
+// SRTPConfig groups the SRTP/DTLS settings of a media session.
+type SRTPConfig struct {
+	// Mode selects the SRTP keying mode. SecureRTPDTLS requires DTLS; when
+	// DTLS is non-zero and Mode is left at SecureRTPNone, DTLS is enabled
+	// automatically.
+	Mode SecureRTP
+	// Alg is the SRTP protection profile. Zero picks the default profile.
+	// media.DTLSConfig.SRTPProfiles wins for DTLS.
+	Alg SRTPAlg
+	// DTLS is the DTLS-SRTP configuration.
+	DTLS media.DTLSConfig
+}
+
+// NetworkConfig groups the RTP address and port settings.
+type NetworkConfig struct {
+	// BindIP is the local IP used to bind RTP/RTCP listeners. Nil resolves
+	// the interface IP when the media session is created.
+	BindIP net.IP
+	// ExternalIP is the IP advertised inside SDP (c= line). Nil uses the
+	// session bind IP.
+	ExternalIP net.IP
+	// RTPNAT 0 - disabled, 1 - learn source. Check media.RTPNAT options.
+	RTPNAT RTPNATMode
+	// RTPPortStart/RTPPortEnd define the local RTP port range. Ports are
+	// picked in steps of 2 so the RTCP port (RTP+1) fits. Zero values
+	// inherit the media package globals media.RTPPortStart/RTPPortEnd
+	// (0 = ephemeral ports with retry).
 	RTPPortStart int
 	RTPPortEnd   int
-	// SDPCodecPreferLocalOrder makes the answerer order common codecs by
-	// local preference instead of the offerer order (RFC 3264 default).
-	// Zero inherits media.SDPCodecPreferLocalOrder.
-	SDPCodecPreferLocalOrder int
-	// SDPSessionName overrides the SDP "s=" session-name line. Empty keeps
-	// the library default "Sip Go Media".
-	SDPSessionName string
+}
+
+// SDPConfig groups SDP generation settings.
+type SDPConfig struct {
+	// CodecPreferLocalOrder makes the answerer order common codecs by local
+	// preference instead of the offerer order (RFC 3264 default). Zero
+	// inherits media.SDPCodecPreferLocalOrder.
+	CodecPreferLocalOrder int
+	// SessionName overrides the SDP "s=" session-name line. Empty keeps the
+	// library default "Sip Go Media".
+	SessionName string
+}
+
+// MediaConfig configures the media sessions created by Diago.
+type MediaConfig struct {
+	Codecs  []media.Codec
+	SRTP    SRTPConfig
+	Network NetworkConfig
+	SDP     SDPConfig
 
 	// MusicOnHold is the dialog-level default hold music: Hold() starts
 	// looping it automatically once the hold re-INVITE succeeds. Zero value
@@ -207,6 +323,21 @@ type MediaConfig struct {
 	MusicOnHold audio.Tone
 }
 
+// TransportMediaConfig overrides the transport-scoped parts of MediaConfig
+// (SRTP and Network) for dialogs carried over a specific Transport. Zero
+// fields inherit the global MediaConfig; the precedence for a field is:
+// explicit Transport value, then a value derived from BindHost/ExternalHost,
+// then MediaConfig. Codecs, SDP and MusicOnHold are global-only.
+type TransportMediaConfig struct {
+	SRTP    SRTPConfig
+	Network NetworkConfig
+}
+
+// WithMediaConfig replaces the global media configuration. It is a whole
+// struct replacement, not a merge: fields left at their zero value fall back
+// to the library defaults only via media session globals (see NetworkConfig
+// and SDPConfig). Codecs left nil would fail session creation, so start from
+// the defaults you need.
 func WithMediaConfig(conf MediaConfig) DiagoOption {
 	return func(dg *Diago) {
 		dg.mediaConf = conf
@@ -239,8 +370,11 @@ func WithServerRequestMiddleware(f func(next sipgo.RequestHandler) sipgo.Request
 	}
 }
 
-// NewDiago construct b2b user agent that will act as server and client
-func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
+// NewDiago constructs a b2b user agent that will act as server and client.
+// It fails when no transport is configured (the v1 implicit 127.0.0.1:5060
+// default was removed) or when a configured transport is invalid; use
+// WithTransport or WithDefaultTransport.
+func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	dg := &Diago{
 		ua:  ua,
 		log: sip.DefaultLogger(),
@@ -264,20 +398,18 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 	}
 
 	if len(dg.transports) == 0 {
-		tran := Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  5060,
+		return nil, fmt.Errorf("diago: no transport configured: use WithTransport or WithDefaultTransport")
+	}
+	for i := range dg.transports {
+		if err := dg.transports[i].Validate(); err != nil {
+			return nil, fmt.Errorf("diago: transport %d: %w", i, err)
 		}
-		WithTransport(tran)(dg)
 	}
 
 	if dg.server == nil {
 		srv, err := sipgo.NewServer(ua, sipgo.WithServerLogger(dg.log))
 		if err != nil {
-			// Only reachable with a broken UA handle; failing loudly beats a
-			// silently nil server that panics on the first request.
-			panic(fmt.Sprintf("diago: failed to create default sip server: %v", err))
+			return nil, fmt.Errorf("diago: failed to create default sip server: %w", err)
 		}
 		dg.server = srv
 	}
@@ -521,7 +653,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 	// 	}
 	// })
 
-	return dg
+	return dg, nil
 }
 
 func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id string) error {
@@ -644,8 +776,8 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 				dg.log.Info("Listening on transport", "addr", addr, "protocol", tran.network)
 			}))
 
-			if tran.TLSConf != nil || tran.Transport == "tls" || tran.Transport == "wss" {
-				errCh <- server.ListenAndServeTLS(ctx, tran.network, hostport, tran.TLSConf)
+			if tran.Transport == "tls" || tran.Transport == "wss" {
+				errCh <- server.ListenAndServeTLS(ctx, tlsListenNetwork(tran.network), hostport, tran.TLSConf)
 				return
 			}
 			errCh <- server.ListenAndServe(ctx, tran.network, hostport)
@@ -905,19 +1037,48 @@ func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *signalParams) (d
 	return dg.newSipDialog(recipient, tran, contact)
 }
 
-// mediaConfigForTransport builds the per-dialog media config: the global
-// media config with the transport values overlaid, so it carries all fields
-// (codecs, RTPNAT, SRTP alg, port range, codec order). A configured DTLS
+// mediaConfigForTransport builds the per-dialog media config by overlaying
+// the transport media overrides on the global media config. The rule is
+// "zero inherits global" per field; a BindHost that pins a concrete IP also
+// pins the media bind IP unless overridden explicitly. A configured DTLS
 // profile implies DTLS-SRTP unless an explicit SRTP mode was chosen.
 func (dg *Diago) mediaConfigForTransport(tran *Transport) MediaConfig {
 	conf := dg.mediaConf
-	conf.SecureRTP = tran.MediaSRTP
-	conf.BindIP = tran.mediaBindIP
-	conf.ExternalIP = tran.MediaExternalIP
-	conf.DTLSConf = tran.MediaDTLSConf
+	ov := tran.Media
 
-	if conf.SecureRTP == SecureRTPNone && !dtlsConfIsZero(conf.DTLSConf) {
-		conf.SecureRTP = SecureRTPDTLS
+	if ov.SRTP.Mode != SecureRTPNone {
+		conf.SRTP.Mode = ov.SRTP.Mode
+	}
+	if ov.SRTP.Alg != 0 {
+		conf.SRTP.Alg = ov.SRTP.Alg
+	}
+	if !dtlsConfIsZero(ov.SRTP.DTLS) {
+		conf.SRTP.DTLS = ov.SRTP.DTLS
+	}
+	if ov.Network.BindIP != nil {
+		conf.Network.BindIP = ov.Network.BindIP
+	} else if bindIP := tran.bindIP; bindIP != nil && !bindIP.IsUnspecified() {
+		conf.Network.BindIP = bindIP
+	} else if bindIP := net.ParseIP(tran.BindHost); bindIP != nil && !bindIP.IsUnspecified() {
+		// A Transport built as a literal (not through WithTransport) still
+		// pins a concrete BindHost.
+		conf.Network.BindIP = bindIP
+	}
+	if ov.Network.ExternalIP != nil {
+		conf.Network.ExternalIP = ov.Network.ExternalIP
+	}
+	if ov.Network.RTPNAT != RTPNATDisabled {
+		conf.Network.RTPNAT = ov.Network.RTPNAT
+	}
+	if ov.Network.RTPPortStart != 0 {
+		conf.Network.RTPPortStart = ov.Network.RTPPortStart
+	}
+	if ov.Network.RTPPortEnd != 0 {
+		conf.Network.RTPPortEnd = ov.Network.RTPPortEnd
+	}
+
+	if conf.SRTP.Mode == SecureRTPNone && !dtlsConfIsZero(conf.SRTP.DTLS) {
+		conf.SRTP.Mode = SecureRTPDTLS
 	}
 	return conf
 }

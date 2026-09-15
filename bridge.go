@@ -537,13 +537,12 @@ func proxyMediaBackground(log *slog.Logger, reader io.Reader, writer io.Writer, 
 
 func (b *Bridge) proxyMediaWithDTMF(m1 *DialogMedia, m2 *DialogMedia) error {
 	dtmfReader := DTMFReader{}
-	p1, p2 := MediaProps{}, MediaProps{}
-	r, err := m1.AudioReader(WithAudioReaderDTMF(&dtmfReader), WithAudioReaderMediaProps(&p1))
+	r, p1, err := m1.ReaderWithProps(WithAudioReaderDTMF(&dtmfReader))
 	if err != nil {
 		return err
 	}
 	dtmfWriter := DTMFWriter{}
-	w, err := m2.AudioWriter(WithAudioWriterDTMF(&dtmfWriter), WithAudioWriterMediaProps(&p2))
+	w, p2, err := m2.WriterWithProps(WithAudioWriterDTMF(&dtmfWriter))
 	if err != nil {
 		return err
 	}
@@ -950,7 +949,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 	m := d.Media()
 
 	p := MediaProps{}
-	r, err := m.AudioReader(WithAudioReaderMediaProps(&p))
+	r, p, err := m.ReaderWithProps()
 	if err != nil {
 		return err
 	}
@@ -984,14 +983,13 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 	}
 
 	// Now do write stream
-	p = MediaProps{}
-	w, err := m.AudioWriter(WithAudioWriterMediaProps(&p))
+	w, wprops, err := m.WriterWithProps()
 	if err != nil {
 		return err
 	}
 
 	pcmWriter := audio.PCMEncoderWriter{}
-	if err := pcmWriter.Init(p.Codec, w); err != nil {
+	if err := pcmWriter.Init(wprops.Codec, w); err != nil {
 		return err
 	}
 

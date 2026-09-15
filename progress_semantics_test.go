@@ -30,10 +30,11 @@ func TestProgressSemantics(t *testing.T) {
 
 	uaSrv, _ := sipgo.NewUA()
 	defer uaSrv.Close()
-	dgSrv := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15250,
 	}))
-	err := dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, err)
+	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		if err := d.Trying(ctx); err != nil {
 			return err
 		}
@@ -47,9 +48,10 @@ func TestProgressSemantics(t *testing.T) {
 
 	uaCli, _ := sipgo.NewUA()
 	defer uaCli.Close()
-	dgCli := NewDiago(uaCli, WithTransport(Transport{
+	dgCli, err := NewDiago(uaCli, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15251,
 	}))
+	require.NoError(t, err)
 
 	d, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15250},
 		WithOnResponse(func(res *sip.Response) error {

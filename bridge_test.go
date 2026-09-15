@@ -107,15 +107,16 @@ func TestIntegrationBridging(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu := NewDiago(ua, WithTransport(
+	tu, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  5090,
 		},
 	))
+	require.NoError(t, err)
 
-	err := tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
 		in.Trying(ctx)
 		in.Ringing(ctx)
 		in.Answer(ctx)
@@ -160,15 +161,16 @@ func TestIntegrationBridging(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  5091,
 			},
 		))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(context.Background(), func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(context.Background(), func(ctx context.Context, d *DialogServerSession) error {
 			ctx = d.Context()
 			err = d.Answer(ctx)
 			require.NoError(t, err)
@@ -193,7 +195,7 @@ func TestIntegrationBridging(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := newDialer(ua)
+		dg := newDialer(t, ua)
 		dialog, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog.Close()
@@ -221,13 +223,14 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu := NewDiago(ua, WithTransport(
+	tu, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  5090,
 		},
 	))
+	require.NoError(t, err)
 
 	// The serve handler runs on SIP transaction goroutines and must resolve
 	// the CURRENT bridge at use time: SoundProxied installs a fresh one.
@@ -236,7 +239,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	var bridgePtr atomic.Pointer[BridgeMix]
 	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
-	err := tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
 		defer func() { dialogExit <- in.ID() }()
 
 		in.Trying(ctx)
@@ -263,7 +266,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := newDialer(ua)
+		dg := newDialer(t, ua)
 
 		dialogs := make([]*DialogClientSession, 3)
 		for i := range 3 {
@@ -308,7 +311,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := newDialer(ua)
+		dg := newDialer(t, ua)
 
 		// Make number of calls that will have audio mixed in bridge
 		// wg := sync.WaitGroup{}

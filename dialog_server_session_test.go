@@ -52,16 +52,17 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15020,
 			},
 		))
+		require.NoError(t, err)
 
 		// Run listener to accepte reinvites, but it should not receive any request
-		err := dg.ServeBackground(ctx, nil)
+		err = dg.ServeBackground(ctx, nil)
 		require.NoError(t, err)
 
 		dialer = dg
@@ -70,16 +71,17 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := NewDiago(ua, WithTransport(
+	dg, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15010,
 		},
 	))
+	require.NoError(t, err)
 
 	waitDialog := make(chan *DialogServerSession)
-	err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		t.Log("Call received")
 		waitDialog <- d
 		<-d.Context().Done()
@@ -149,16 +151,17 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15070,
 			},
 		))
+		require.NoError(t, err)
 
 		// Run listener to accepte reinvites, but it should not receive any request
-		err := dg.ServeBackground(ctx, nil)
+		err = dg.ServeBackground(ctx, nil)
 		require.NoError(t, err)
 
 		go func() {
@@ -172,16 +175,17 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := NewDiago(ua, WithTransport(
+	dg, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15060,
 		},
 	))
+	require.NoError(t, err)
 
 	waitDialog := make(chan *DialogServerSession)
-	err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		t.Log("Call received")
 		waitDialog <- d
 		<-d.Context().Done()
@@ -205,13 +209,16 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
-	uas := NewDiago(ua, WithTransport(Transport{
-		Transport:       "udp",
-		BindHost:        "127.0.0.1",
-		BindPort:        15080,
-		MediaExternalIP: net.IPv4(203, 0, 113, 10),
+	uas, err := NewDiago(ua, WithTransport(Transport{
+		Transport: "udp",
+		BindHost:  "127.0.0.1",
+		BindPort:  15080,
+		Media: TransportMediaConfig{
+			Network: NetworkConfig{ExternalIP: net.IPv4(203, 0, 113, 10)},
+		},
 	}))
-	err := uas.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, err)
+	err = uas.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		// This is the reported role: the peer sends the initial INVITE and
 		// Diago answers it as the UAS. RTP NAT must not change the SIP flow.
 		err := d.Answer(ctx,
@@ -231,7 +238,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 
 	peerUA, _ := sipgo.NewUA(sipgo.WithUserAgent("peer"))
 	defer peerUA.Close()
-	peer := newDialer(peerUA)
+	peer := newDialer(t, peerUA)
 	err = peer.ServeBackground(ctx, func(ctx context.Context, _ *DialogServerSession) error {
 		return nil
 	})
@@ -300,7 +307,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("dialer"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -308,9 +315,10 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 				ID:        "udp",
 			},
 		))
+		require.NoError(t, err)
 
 		// Run listener to accepte reinvites, but it should not receive any request
-		err := dg.ServeBackground(ctx, nil)
+		err = dg.ServeBackground(ctx, nil)
 		require.NoError(t, err)
 		dialer = dg
 	}
@@ -345,15 +353,16 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15072,
 			},
 		))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call INVITE due to REFER received")
 			// waitReferDialog <- d
 			switch d.ToUser() {
@@ -376,16 +385,17 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := NewDiago(ua, WithTransport(
+	dg, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15070,
 		},
 	))
+	require.NoError(t, err)
 
 	waitDialog := make(chan *DialogServerSession)
-	err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		t.Log("Call received")
 		waitDialog <- d
 		<-d.Context().Done()
@@ -494,15 +504,16 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uas"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15100,
 			},
 		))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			waitDialog <- d
 			// Blocks until the ACK is processed (RemoteSDP applied).
 			answerLateErr <- d.AnswerLate(ctx)

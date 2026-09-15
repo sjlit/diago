@@ -136,17 +136,19 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			uaSrv, err := sipgo.NewUA(sipgo.WithUserAgent("server"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaSrv.Close() })
-			dgSrv := NewDiago(uaSrv, WithTransport(Transport{
+			dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
 				Transport: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
 			}))
+			require.NoError(t, err)
 			require.NoError(t, dgSrv.ServeBackground(ctx, tc.handler))
 
 			uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaCli.Close() })
-			dgCli := NewDiago(uaCli, WithTransport(Transport{
+			dgCli, err := NewDiago(uaCli, WithTransport(Transport{
 				Transport: "udp", BindHost: "127.0.0.1", BindPort: cliPort,
 			}))
+			require.NoError(t, err)
 
 			_, err = dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 			require.Error(t, err)
@@ -168,9 +170,10 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	t.Cleanup(func() { uaSrv.Close() })
 
 	handlerCtxErr := make(chan error, 1)
-	dgSrv := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15230,
 	}))
+	require.NoError(t, err)
 	require.NoError(t, dgSrv.ServeBackground(ctx, func(hctx context.Context, d *DialogServerSession) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
@@ -183,9 +186,10 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli := NewDiago(uaCli, WithTransport(Transport{
+	dgCli, err := NewDiago(uaCli, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15231,
 	}))
+	require.NoError(t, err)
 
 	dlg, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15230})
 	require.NoError(t, err)
@@ -211,9 +215,10 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaSrv.Close() })
 
-	dgSrv := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15240,
 	}))
+	require.NoError(t, err)
 	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
@@ -227,7 +232,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli := NewDiago(uaCli,
+	dgCli, err := NewDiago(uaCli,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15241}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
@@ -240,6 +245,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 			}
 		}),
 	)
+	require.NoError(t, err)
 	require.NoError(t, dgCli.ServeBackground(ctx, nil))
 
 	dlg, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15240})

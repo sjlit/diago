@@ -184,10 +184,11 @@ func TestIntegrationUnsupportedOptionRejected(t *testing.T) {
 
 	uaSrv, _ := sipgo.NewUA()
 	defer uaSrv.Close()
-	dgSrv := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15260,
 	}))
-	err := dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, err)
+	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		e := d.Trying(ctx, WithBody([]byte("v=0")))
 		handlerErr <- e
 		return e
@@ -196,9 +197,10 @@ func TestIntegrationUnsupportedOptionRejected(t *testing.T) {
 
 	uaCli, _ := sipgo.NewUA()
 	defer uaCli.Close()
-	dgCli := NewDiago(uaCli, WithTransport(Transport{
+	dgCli, err := NewDiago(uaCli, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15261,
 	}))
+	require.NoError(t, err)
 
 	_, err = dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15260})
 	require.Error(t, err, "server must answer the unsupported option with 500")

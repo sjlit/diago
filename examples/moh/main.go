@@ -58,10 +58,13 @@ func run(ctx context.Context) error {
 		Segments: []audio.ToneSegment{{Freqs: []float64{425}, On: 30 * time.Millisecond}},
 	}
 
-	dg := diago.NewDiago(ua,
+	dg, err := diago.NewDiago(ua,
 		diago.WithTransport(diago.Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 5060}),
 		diago.WithMediaConfig(diago.MediaConfig{MusicOnHold: holdTone}),
 	)
+	if err != nil {
+		return err
+	}
 
 	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		if err := inDialog.Answer(ctx); err != nil {

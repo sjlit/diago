@@ -33,7 +33,10 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu := diago.NewDiago(ua)
+	tu, err := diago.NewDiago(ua, diago.WithDefaultTransport())
+	if err != nil {
+		return err
+	}
 
 	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Info("New dialog request", "id", inDialog.ID())

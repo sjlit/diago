@@ -6,7 +6,7 @@ import (
 	"github.com/sjlit/diago"
 )
 
-func NewDiagoClientTest(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Response) *diago.Diago {
+func NewDiagoClientTest(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Response) (*diago.Diago, error) {
 	// Create client transaction request
 	cTxReq := &clientTxRequester{
 		onRequest: onRequest,
@@ -14,5 +14,5 @@ func NewDiagoClientTest(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *s
 
 	client, _ := sipgo.NewClient(ua)
 	client.TxRequester = cTxReq
-	return diago.NewDiago(ua, diago.WithClient(client))
+	return diago.NewDiago(ua, diago.WithClient(client), diago.WithDefaultTransport())
 }

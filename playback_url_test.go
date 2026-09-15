@@ -28,13 +28,14 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu := NewDiago(ua, WithTransport(
+	tu, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15060,
 		},
 	))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -45,7 +46,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	var errServer error
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	err := tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
 		defer wg.Done()
 		in.Trying(ctx)
 		in.Ringing(ctx)
@@ -65,13 +66,14 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
-		phone := NewDiago(ua, WithTransport(Transport{
+		phone, err := NewDiago(ua, WithTransport(Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15061,
 		}))
+		require.NoError(t, err)
 		// Just to have handled BYE
-		err := phone.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
+		err = phone.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 			return nil
 		})
 		require.NoError(t, err)

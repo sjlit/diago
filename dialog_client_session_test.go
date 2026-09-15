@@ -21,11 +21,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newDialer(ua *sipgo.UserAgent) *Diago {
-	return NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+func newDialer(t *testing.T, ua *sipgo.UserAgent) *Diago {
+	t.Helper()
+	dg, err := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	require.NoError(t, err)
+	return dg
 }
 
-func newDiagoClientTest(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Response) *Diago {
+func newDiagoClientTest(t *testing.T, ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Response) *Diago {
+	t.Helper()
 	// Create client transaction request
 	cTxReq := &clientTxRequester{
 		onRequest: onRequest,
@@ -33,7 +37,9 @@ func newDiagoClientTest(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *s
 
 	client, _ := sipgo.NewClient(ua)
 	client.TxRequester = cTxReq
-	return NewDiago(ua, WithClient(client))
+	dg, err := NewDiago(ua, WithDefaultTransport(), WithClient(client))
+	require.NoError(t, err)
+	return dg
 }
 
 func dialogEcho(sess DialogSession) error {
@@ -64,9 +70,10 @@ func TestIntegrationDialogClient(t *testing.T) {
 	)
 	defer ua.Close()
 
-	dg := NewDiago(ua)
+	dg, err := NewDiago(ua, WithDefaultTransport())
+	require.NoError(t, err)
 
-	err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		// t.Log("Call received", d.InviteRequest)
 		// Add some routing
 		if d.ToUser() == "alice" {
@@ -99,7 +106,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		defer ua.Close()
 
 		// Has no listener just UAC. Contact will hold empheral port
-		phone := newDialer(ua)
+		phone := newDialer(t, ua)
 		// Hanguped
 		dialog, err := phone.Dial(context.TODO(), sip.Uri{User: "hanguper", Host: "127.0.0.1", Port: 5060})
 		require.NoError(t, err)
@@ -111,7 +118,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		phone := newDialer(ua)
+		phone := newDialer(t, ua)
 		// listening but stil with empheral port
 		err := phone.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 			return nil
@@ -135,7 +142,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		phone := newDialer(ua)
+		phone := newDialer(t, ua)
 		// Start listener in order to reuse UDP listener
 		err := phone.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 			return nil
@@ -179,13 +186,14 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 	port := 15000 + rand.IntN(999)
-	dg := NewDiago(ua, WithTransport(
+	dg, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  port,
 		},
 	))
+	require.NoError(t, err)
 
 	dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		ctx = d.Context()
@@ -200,7 +208,7 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := newDialer(ua)
+		dg := newDialer(t, ua)
 		dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 			return nil
 		})
@@ -229,16 +237,17 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15060,
 			},
 		))
+		require.NoError(t, err)
 
 		authServer := NewDigestServer()
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call received")
 
 			err := authServer.AuthorizeDialog(d, DigestAuth{
@@ -277,7 +286,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := newDialer(ua)
+	dg := newDialer(t, ua)
 	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
@@ -320,14 +329,15 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15060,
 			},
 		))
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		require.NoError(t, err)
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call received")
 			d.Answer(ctx, WithOnMediaUpdate(func(d *DialogMedia) {
 
@@ -341,7 +351,7 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := newDialer(ua)
+	dg := newDialer(t, ua)
 	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
@@ -372,7 +382,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -388,7 +398,8 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 				next(req, tx)
 			}
 		}))
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		require.NoError(t, err)
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			if err := d.Answer(ctx); err != nil {
 				t.Log("answer failed", err)
 				return nil
@@ -402,7 +413,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := newDialer(ua)
+	dg := newDialer(t, ua)
 	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
@@ -451,14 +462,15 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15066,
 			},
 		))
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		require.NoError(t, err)
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call received")
 			d.Answer(ctx, WithOnMediaUpdate(func(d *DialogMedia) {
 
@@ -472,7 +484,7 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := newDialer(ua)
+	dg := newDialer(t, ua)
 	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
@@ -505,15 +517,16 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15079,
 			},
 		))
+		require.NoError(t, err)
 		digServer := NewDigestServer()
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("New INVITE")
 			if err := digServer.AuthorizeDialog(d, DigestAuth{
 				Username: "test",
@@ -558,7 +571,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := newDialer(ua)
+	dg := newDialer(t, ua)
 	// Client must serve: without a bound listener the server re-INVITE
 	// (media fork to 127.0.0.2:39999) can never be answered and the SIP
 	// transaction FSM deadlocks.
@@ -644,7 +657,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 			requests = append(requests, msg)
 		})
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -652,8 +665,9 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 			},
 		),
 		)
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call received")
 			if err := d.Answer(ctx); err != nil {
 				t.Log("Error on answer", err)
@@ -674,7 +688,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 		responses = append(responses, msg)
 	})
 
-	dg := newDialer(ua)
+	dg := newDialer(t, ua)
 	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
@@ -736,7 +750,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -744,8 +758,9 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 				ID:        "udp",
 			},
 		))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call received")
 			d.Answer(ctx, WithOnRefer(func(referDialog *DialogClientSession) error {
 				if err := referDialog.Invite(referDialog.Context()); err != nil {
@@ -768,15 +783,16 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg := NewDiago(ua, WithTransport(
+		dg, err := NewDiago(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
 				BindPort:  15072,
 			},
 		))
+		require.NoError(t, err)
 
-		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 			t.Log("Call INVITE due to REFER received")
 			// waitReferDialog <- d
 			switch d.ToUser() {
@@ -799,15 +815,16 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg := NewDiago(ua, WithTransport(
+	dg, err := NewDiago(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15070,
 		},
 	))
+	require.NoError(t, err)
 
-	err := dg.ServeBackground(ctx, nil)
+	err = dg.ServeBackground(ctx, nil)
 	require.NoError(t, err)
 
 	t.Run("Succesfull", func(t *testing.T) {

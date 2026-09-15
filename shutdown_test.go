@@ -71,7 +71,8 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg, err := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -86,7 +87,8 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	assert.False(t, dg.serving.Load(), "listeners must be stopped after Shutdown")
 
 	// Already-serving must be rejected while up.
-	dg2 := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg2, err := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	require.NoError(t, err)
 	require.NoError(t, dg2.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	}))
@@ -106,7 +108,8 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaS.Close() })
 
-	dgS := NewDiago(uaS, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dgS, err := NewDiago(uaS, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	require.NoError(t, err)
 	handlerDone := make(chan struct{})
 	var handlerOnce atomic.Bool
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -126,7 +129,8 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	uaC, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { uaC.Close() })
-	dgC := NewDiago(uaC, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dgC, err := NewDiago(uaC, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	require.NoError(t, err)
 
 	d, err := dgC.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
 	require.NoError(t, err)
@@ -185,12 +189,18 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	// The second transport uses an unsupported transport name, so its
-	// ListenAndServe fails deterministically (sip.ErrTransportNotSuported).
-	dg := NewDiago(ua,
+	// Occupy a UDP port so the second listener fails deterministically with
+	// EADDRINUSE while the first one starts fine.
+	occupied, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { occupied.Close() })
+	occupiedPort := occupied.LocalAddr().(*net.UDPAddr).Port
+
+	dg, err := NewDiago(ua,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}),
-		WithTransport(Transport{Transport: "bogus", BindHost: "127.0.0.1", BindPort: 0}),
+		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: occupiedPort}),
 	)
+	require.NoError(t, err)
 
 	chErr := make(chan error, 1)
 	go func() {
