@@ -15,14 +15,14 @@ import (
 )
 
 func TestTransportSecureRTPValidation(t *testing.T) {
-	t.Run("InvalidModeRejected", func(t *testing.T) {
+	t.Run("invalid mode rejected", func(t *testing.T) {
 		dm := &DialogMedia{}
 		err := dm.initMediaSessionFromConf(MediaConfig{SRTP: SRTPConfig{Mode: 99}})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid SRTP mode")
+		assert.Contains(t, err.Error(), "invalid srtp mode")
 	})
 
-	t.Run("ValidModesAccepted", func(t *testing.T) {
+	t.Run("valid modes accepted", func(t *testing.T) {
 		for _, mode := range []SecureRTP{SecureRTPNone, SecureRTPSDES, SecureRTPDTLS} {
 			dm := &DialogMedia{}
 			err := dm.initMediaSessionFromConf(MediaConfig{
@@ -41,7 +41,7 @@ func TestMediaConfigDTLSAutoEnable(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	dtlsConf := media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}}
-	dg, err := NewDiago(ua, WithDefaultTransport())
+	dg, err := New(ua, WithDefaultTransport())
 	require.NoError(t, err)
 
 	conf := dg.mediaConfigForTransport(&Transport{

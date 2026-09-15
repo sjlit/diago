@@ -22,7 +22,7 @@ import (
 // API's declared set fail with *UnsupportedOptionError instead of being
 // silently ignored.
 func TestOptionScopeRejectsUnsupported(t *testing.T) {
-	t.Run("WithBody on Trying", func(t *testing.T) {
+	t.Run("with body on trying", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "Trying", scopeTrying)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
@@ -30,70 +30,70 @@ func TestOptionScopeRejectsUnsupported(t *testing.T) {
 		assert.Equal(t, []string{"WithBody"}, unsupported.Options)
 	})
 
-	t.Run("WithCodecs on ServerHangup", func(t *testing.T) {
+	t.Run("with codecs on server hangup", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithCodecs(media.CodecAudioAlaw)}, "Hangup", scopeServerHangup)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithCodecs"}, unsupported.Options)
 	})
 
-	t.Run("WithRegisterExpiry on Qualify", func(t *testing.T) {
+	t.Run("with register expiry on qualify", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithRegisterExpiry(time.Second)}, "Qualify", scopeRegisterAttempt)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithRegisterExpiry"}, unsupported.Options)
 	})
 
-	t.Run("WithDialogTransport on Invite", func(t *testing.T) {
+	t.Run("with dialog transport on invite", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithDialogTransport("udp")}, "Invite", scopeClientInvite)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithDialogTransport"}, unsupported.Options)
 	})
 
-	t.Run("WithAuthCredentials on Answer", func(t *testing.T) {
+	t.Run("with auth credentials on answer", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithAuthCredentials("u", "p")}, "Answer", scopeAnswer)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithAuthCredentials"}, unsupported.Options)
 	})
 
-	t.Run("WithMusicOnHold on Unhold", func(t *testing.T) {
+	t.Run("with music on hold on unhold", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithMusicOnHold(audio.Tone{})}, "Unhold", scopeUnhold)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithMusicOnHold"}, unsupported.Options)
 	})
 
-	t.Run("WithBody on Ack", func(t *testing.T) {
+	t.Run("with body on ack", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "Ack", scopeClientAck)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithBody"}, unsupported.Options)
 	})
 
-	t.Run("WithBody on RegisterAttempt", func(t *testing.T) {
+	t.Run("with body on register attempt", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "Register", scopeRegisterAttempt)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithBody"}, unsupported.Options)
 	})
 
-	t.Run("WithBody on Refer", func(t *testing.T) {
+	t.Run("with body on refer", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "Refer", scopeRefer)
 		var unsupported *UnsupportedOptionError
 		require.ErrorAs(t, err, &unsupported)
 		assert.Equal(t, []string{"WithBody"}, unsupported.Options)
 	})
 
-	t.Run("WithBody allowed on ReInvite and Hold", func(t *testing.T) {
+	t.Run("with body allowed on re invite and hold", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "ReInvite", scopeReInvite)
 		require.NoError(t, err)
 		_, err = newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "Hold", scopeHold)
 		require.NoError(t, err)
 	})
 
-	t.Run("DeduplicatesAndSortsDiagnostics", func(t *testing.T) {
+	t.Run("deduplicates and sorts diagnostics", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{
 			WithBody([]byte("v=0")),
 			WithBody([]byte("v=1")),
@@ -105,12 +105,12 @@ func TestOptionScopeRejectsUnsupported(t *testing.T) {
 		assert.Equal(t, "Trying: unsupported options WithBody, WithCodecs", unsupported.Error())
 	})
 
-	t.Run("SingleOptionMessage", func(t *testing.T) {
+	t.Run("single option message", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{WithBody([]byte("v=0"))}, "Ringing", scopeRinging)
 		require.EqualError(t, err, "Ringing: unsupported option WithBody")
 	})
 
-	t.Run("AllowedOptionsPass", func(t *testing.T) {
+	t.Run("allowed options pass", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{
 			WithHeader("X-Test", "1"),
 			WithContact(&sip.ContactHeader{Address: sip.Uri{Host: "127.0.0.1"}}),
@@ -119,7 +119,7 @@ func TestOptionScopeRejectsUnsupported(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("DialogTransportAllowedOnDial", func(t *testing.T) {
+	t.Run("dialog transport allowed on dial", func(t *testing.T) {
 		_, err := newSignalParams([]SignalOption{
 			WithDialogTransport("udp"),
 			WithDialogTransportID("tr-1"),
@@ -184,7 +184,7 @@ func TestIntegrationUnsupportedOptionRejected(t *testing.T) {
 
 	uaSrv, _ := sipgo.NewUA()
 	defer uaSrv.Close()
-	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := New(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15260,
 	}))
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestIntegrationUnsupportedOptionRejected(t *testing.T) {
 
 	uaCli, _ := sipgo.NewUA()
 	defer uaCli.Close()
-	dgCli, err := NewDiago(uaCli, WithTransport(Transport{
+	dgCli, err := New(uaCli, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15261,
 	}))
 	require.NoError(t, err)

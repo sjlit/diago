@@ -69,12 +69,12 @@ type RTPSession struct {
 
 	rtcpMU sync.Mutex
 	// All below fields should not be updated without rtcpMu Lock
-	rtcpTicker *time.Ticker
-	rtcpClosed chan struct{}
-	monitorWG  sync.WaitGroup
-	monitorRun bool
-	readStats  RTPReadStats
-	writeStats RTPWriteStats
+	rtcpTicker   *time.Ticker
+	rtcpClosed   chan struct{}
+	monitorWG    sync.WaitGroup
+	isMonitorRun bool
+	readStats    RTPReadStats
+	writeStats   RTPWriteStats
 
 	// Reading and Writing RTCP can be intercept. For global use DefaultOnReadRTCP, DefaultOnWriteRTCP
 	// Must be set before RTP is read or writen
@@ -84,7 +84,7 @@ type RTPSession struct {
 	closed bool
 
 	// sourceLock when enabled locks reading RTP packets into single source addr which handles security issue
-	sourceLock        bool
+	isSourceLocked    bool
 	sourceLockPackets int
 	sourceLockAddr    *net.UDPAddr
 }
@@ -103,7 +103,7 @@ type RTPReadStats struct {
 	// intervalStarted marks that IntervalFirst* hold a real sample. Sequence
 	// number 0 is a legal first packet, so the sentinel must not be the value
 	// itself - otherwise an interval opening at seq 0 re-arms every packet.
-	intervalStarted bool
+	isIntervalStarted bool
 
 	PacketsCount uint64
 	OctetCount   uint64
@@ -125,7 +125,7 @@ type RTPReadStats struct {
 	// Round TRIP Time based on LSR and DLSR
 	RTT time.Duration
 
-	clockReset bool
+	isClockReset bool
 }
 
 /*
@@ -179,13 +179,13 @@ type RTPWriteStats struct {
 // RTP session creates new RTP reader/writer from session
 func NewRTPSession(sess *MediaSession) *RTPSession {
 	return &RTPSession{
-		Sess:        sess,
-		log:         sess.logger(),
-		rtcpTicker:  time.NewTicker(5 * time.Second),
-		rtcpClosed:  make(chan struct{}),
-		onReadRTCP:  DefaultOnReadRTCP,
-		onWriteRTCP: DefaultOnWriteRTCP,
-		sourceLock:  RTPSourceLock,
+		Sess:           sess,
+		log:            sess.logger(),
+		rtcpTicker:     time.NewTicker(5 * time.Second),
+		rtcpClosed:     make(chan struct{}),
+		onReadRTCP:     DefaultOnReadRTCP,
+		onWriteRTCP:    DefaultOnWriteRTCP,
+		isSourceLocked: RTPSourceLock,
 	}
 }
 
@@ -208,7 +208,7 @@ func (s *RTPSession) Fork(sess *MediaSession) *RTPSession {
 	fork.writeStats = s.writeStats
 	fork.onReadRTCP = s.onReadRTCP
 	fork.onWriteRTCP = s.onWriteRTCP
-	fork.sourceLock = s.sourceLock
+	fork.isSourceLocked = s.isSourceLocked
 	fork.sourceLockPackets = s.sourceLockPackets
 	if s.sourceLockAddr != nil {
 		addr := *s.sourceLockAddr
@@ -223,7 +223,7 @@ func (s *RTPSession) Fork(sess *MediaSession) *RTPSession {
 		fork.readStats.firstRTPTimestamp = 0
 		fork.readStats.jitter = 0
 		fork.readStats.transit = 0
-		fork.readStats.clockReset = true
+		fork.readStats.isClockReset = true
 		fork.writeStats.sampleRate = newCodec.SampleRate
 	}
 
@@ -279,13 +279,13 @@ func (s *RTPSession) startMonitor(goroutines int) error {
 	s.rtcpMU.Lock()
 	defer s.rtcpMU.Unlock()
 
-	if s.monitorRun {
+	if s.isMonitorRun {
 		return errRTPSessionMonitorStarted
 	}
 	if s.closed {
 		return errRTPSessionClosed
 	}
-	s.monitorRun = true
+	s.isMonitorRun = true
 	s.monitorWG.Add(goroutines)
 	return nil
 }
@@ -313,7 +313,7 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 			continue
 		}
 
-		if s.sourceLock && !s.sourceLockProtection(readPkt, sess.ReadRTPFromAddr) {
+		if s.isSourceLocked && !s.sourceLockProtection(readPkt, sess.ReadRTPFromAddr) {
 			s.logger().Debug("RTP Source lock protection learning. Skipping", "pkt.ssrc", readPkt.SSRC, "pkt.seq", readPkt.SequenceNumber)
 			continue
 		}
@@ -350,11 +350,11 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 	} else {
 		_ = stats.lastSeq.UpdateSeq(readPkt.SequenceNumber)
 
-		if stats.clockReset {
+		if stats.isClockReset {
 			stats.firstRTPTime = now
 			stats.firstRTPTimestamp = readPkt.Timestamp
 			stats.transit = 0
-			stats.clockReset = false
+			stats.isClockReset = false
 		} else if readPkt.Marker {
 			// Reset our firstRTPtime to improve jitter calc
 			stats.firstRTPTime = now
@@ -373,8 +373,8 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 	stats.LastSequenceNumber = readPkt.SequenceNumber
 	// stats.clockRTPTimestamp+=
 
-	if !stats.intervalStarted {
-		stats.intervalStarted = true
+	if !stats.isIntervalStarted {
+		stats.isIntervalStarted = true
 		stats.IntervalFirstPktSeqNum = readPkt.SequenceNumber
 		stats.IntervalFirstPktSeqNumExt = stats.lastSeq.ReadExtendedSeq()
 	}
@@ -477,7 +477,7 @@ func (s *RTPSession) WriteStats() RTPWriteStats {
 func (s *RTPSession) Monitor() error {
 	sess := s.Sess
 	if sess.Raddr.IP == nil || sess.rtcpRaddr.IP == nil {
-		return fmt.Errorf("raddr of RTP is not present. You must call this after RemoteSDP is parsed")
+		return fmt.Errorf("remote rtp address is not present: call this after RemoteSDP is parsed")
 	}
 	if err := s.startMonitor(1); err != nil {
 		return err
@@ -513,7 +513,7 @@ func (s *RTPSession) Monitor() error {
 func (s *RTPSession) MonitorBackground() error {
 	sess := s.Sess
 	if sess.Raddr.IP == nil || sess.rtcpRaddr.IP == nil {
-		return fmt.Errorf("raddr of RTP is not present. Is RemoteSDP called. Monitor RTP Session failed")
+		return fmt.Errorf("remote rtp address is not present: is RemoteSDP called, rtp session monitor failed")
 	}
 
 	if err := s.startMonitor(2); err != nil {
@@ -695,7 +695,7 @@ func (s *RTPSession) writeRTCP(now time.Time) error {
 	s.readStats.IntervalFirstPktSeqNum = 0
 	s.readStats.IntervalFirstPktSeqNumExt = 0
 	s.readStats.IntervalPacketsCount = 0
-	s.readStats.intervalStarted = false
+	s.readStats.isIntervalStarted = false
 
 	// Add interceptor
 	if s.onWriteRTCP != nil {

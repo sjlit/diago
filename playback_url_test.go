@@ -28,7 +28,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := NewDiago(ua, WithTransport(
+	tu, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -66,7 +66,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
-		phone, err := NewDiago(ua, WithTransport(Transport{
+		phone, err := New(ua, WithTransport(Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
 			BindPort:  15061,

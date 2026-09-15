@@ -33,7 +33,7 @@ func main() {
 
 func start(ctx context.Context) error {
 	ua, _ := sipgo.NewUA()
-	dg, err := diago.NewDiago(ua, diago.WithDefaultTransport())
+	dg, err := diago.New(ua, diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ import (
 
 func newDialer(t *testing.T, ua *sipgo.UserAgent) *Diago {
 	t.Helper()
-	dg, err := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg, err := New(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 	return dg
 }
@@ -56,7 +56,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 	)
 	defer ua.Close()
 
-	dg, err := NewDiago(ua, WithDefaultTransport())
+	dg, err := New(ua, WithDefaultTransport())
 	require.NoError(t, err)
 
 	err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
@@ -86,7 +86,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	t.Run("HanguperClientNoServe", func(t *testing.T) {
+	t.Run("hanguper client no serve", func(t *testing.T) {
 		// We want to confirm that diago can receive BYE without Binding to IP, which will reflect Contact Header
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
@@ -99,7 +99,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		<-dialog.Context().Done()
 	})
 
-	t.Run("HanguperClientWithServe", func(t *testing.T) {
+	t.Run("hanguper client with serve", func(t *testing.T) {
 		// We want to confirm that diago can receive BYE on Binded IP
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
@@ -124,7 +124,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		assert.Equal(t, dialog.InviteRequest.Via().Port, dialog.InviteRequest.Contact().Address.Port)
 	})
 
-	t.Run("Dialer", func(t *testing.T) {
+	t.Run("dialer", func(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
@@ -172,7 +172,7 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 	port := 15000 + rand.IntN(999)
-	dg, err := NewDiago(ua, WithTransport(
+	dg, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -223,7 +223,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -315,7 +315,7 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -368,7 +368,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -448,7 +448,7 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -503,7 +503,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -597,7 +597,7 @@ func TestDialogClientInviteFailed(t *testing.T) {
 		return sip.NewResponseFromRequest(req, 500, "", nil)
 	})
 
-	t.Run("WithCallerid", func(t *testing.T) {
+	t.Run("with callerid", func(t *testing.T) {
 		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		go dialog.Invite(context.Background(), WithHeaders(&sip.FromHeader{
@@ -611,7 +611,7 @@ func TestDialogClientInviteFailed(t *testing.T) {
 		assert.NotEmpty(t, req.From().Params.GetOr("tag", ""))
 	})
 
-	t.Run("WithAnonymous", func(t *testing.T) {
+	t.Run("with anonymous", func(t *testing.T) {
 		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		go dialog.Invite(context.Background(), WithHeaders(&sip.FromHeader{
@@ -643,7 +643,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 			requests = append(requests, msg)
 		})
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -736,7 +736,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -769,7 +769,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -801,7 +801,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := NewDiago(ua, WithTransport(
+	dg, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -813,7 +813,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	err = dg.ServeBackground(ctx, nil)
 	require.NoError(t, err)
 
-	t.Run("Succesfull", func(t *testing.T) {
+	t.Run("succesfull", func(t *testing.T) {
 		d, err := dg.Dial(ctx, sip.Uri{Host: "127.0.0.1", Port: 15071})
 		require.NoError(t, err)
 		defer d.Close()
@@ -829,7 +829,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		assert.Equal(t, 200, <-referState)
 	})
 
-	t.Run("UnreachableRefer", func(t *testing.T) {
+	t.Run("unreachable refer", func(t *testing.T) {
 		d, err := dg.Dial(ctx, sip.Uri{Host: "127.0.0.1", Port: 15071})
 		require.NoError(t, err)
 		defer d.Close()
@@ -845,7 +845,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		assert.Equal(t, sip.StatusTemporarilyUnavailable, <-referState)
 	})
 
-	t.Run("BusyRefer", func(t *testing.T) {
+	t.Run("busy refer", func(t *testing.T) {
 		d, err := dg.Dial(ctx, sip.Uri{Host: "127.0.0.1", Port: 15071})
 		require.NoError(t, err)
 		defer d.Close()

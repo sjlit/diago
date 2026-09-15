@@ -325,7 +325,7 @@ func directionAttr(v string) string {
 }
 
 // Unmarshal is non validate version of sdp parsing
-// Validation of values needs to be seperate
+// Validation of values needs to be separate
 // NOT OPTIMIZED
 func Unmarshal(data []byte, sdptr *SessionDescription) error {
 	reader := bufReader.Get().(*bytes.Buffer)

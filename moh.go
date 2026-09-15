@@ -26,7 +26,7 @@ import (
 // playback before starting hold music.
 type MusicOnHold struct {
 	// auto marks handles started by Hold; Unhold stops only those.
-	auto   bool
+	isAuto bool
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -145,7 +145,7 @@ func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto
 		}
 	}
 
-	m := &MusicOnHold{auto: auto, done: make(chan struct{})}
+	m := &MusicOnHold{isAuto: auto, done: make(chan struct{})}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 
 	d.mu.Lock()
@@ -213,7 +213,7 @@ func (d *DialogMedia) mohAutoStop() {
 	d.mu.Lock()
 	m := d.moh
 	d.mu.Unlock()
-	if m == nil || !m.auto {
+	if m == nil || !m.isAuto {
 		return
 	}
 	if err := m.Stop(); err != nil {

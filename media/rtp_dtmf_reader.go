@@ -9,7 +9,7 @@ import (
 	"log/slog"
 )
 
-type RTPDtmfReader struct {
+type RTPDTMFReader struct {
 	codec        Codec // Depends on media session. Defaults to 101 per current mapping
 	reader       io.Reader
 	packetReader *RTPPacketReader
@@ -23,24 +23,24 @@ type RTPDtmfReader struct {
 	completedTimestamp uint32
 	hasCompleted       bool
 
-	lastEv  DTMFEvent
-	dtmf    rune
-	dtmfEnd bool
+	lastEv    DTMFEvent
+	dtmf      rune
+	isDTMFEnd bool
 }
 
 // logger returns the reader's logger, inherited from the packet reader handle
 // it decodes events from.
-func (r *RTPDtmfReader) logger() *slog.Logger {
+func (r *RTPDTMFReader) logger() *slog.Logger {
 	if r.packetReader != nil && r.packetReader.log != nil {
 		return r.packetReader.log
 	}
 	return DefaultLogger()
 }
 
-// RTP DTMF writer is midleware for reading DTMF events
+// RTP DTMF reader is middleware for reading DTMF events.
 // It reads from io Reader and checks packet Reader
-func NewRTPDTMFReader(codec Codec, packetReader *RTPPacketReader, reader io.Reader) *RTPDtmfReader {
-	return &RTPDtmfReader{
+func NewRTPDTMFReader(codec Codec, packetReader *RTPPacketReader, reader io.Reader) *RTPDTMFReader {
+	return &RTPDTMFReader{
 		codec:        codec,
 		packetReader: packetReader,
 		reader:       reader,
@@ -49,7 +49,7 @@ func NewRTPDTMFReader(codec Codec, packetReader *RTPPacketReader, reader io.Read
 }
 
 // Write is RTP io.Writer which adds more sync mechanism
-func (w *RTPDtmfReader) Read(b []byte) (int, error) {
+func (w *RTPDTMFReader) Read(b []byte) (int, error) {
 	n, err := w.reader.Read(b)
 	if err != nil {
 		// Signal our reader that no more dtmfs will be read
@@ -86,7 +86,7 @@ func (w *RTPDtmfReader) Read(b []byte) (int, error) {
 	return n, nil
 }
 
-func (w *RTPDtmfReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
+func (w *RTPDTMFReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
 	if w.logger().Handler().Enabled(context.Background(), slog.LevelDebug) {
 		// Expensive call on logger
 		w.logger().Debug("Processing DTMF event", "ev", ev, "mbit", mbit)
@@ -130,18 +130,18 @@ func (w *RTPDtmfReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
 
 // completeEvent surfaces the digit and clears the tracked start event.
 // Event codes above 15 are RFC 4733 line events (ex. flash), not DTMF keys.
-func (w *RTPDtmfReader) completeEvent(ev DTMFEvent) {
+func (w *RTPDTMFReader) completeEvent(ev DTMFEvent) {
 	if ev.Event > 15 {
 		return
 	}
 	w.dtmf = DTMFToRune(ev.Event)
-	w.dtmfEnd = true
+	w.isDTMFEnd = true
 	w.lastEv = DTMFEvent{}
 }
 
-func (w *RTPDtmfReader) ReadDTMF() (rune, bool) {
-	defer func() { w.dtmfEnd = false }()
-	return w.dtmf, w.dtmfEnd
+func (w *RTPDTMFReader) ReadDTMF() (rune, bool) {
+	defer func() { w.isDTMFEnd = false }()
+	return w.dtmf, w.isDTMFEnd
 	// dtmf, ok := <-w.dtmfCh
 	// return DTMFToRune(dtmf), ok
 }

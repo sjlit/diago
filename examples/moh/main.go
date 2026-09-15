@@ -58,7 +58,7 @@ func run(ctx context.Context) error {
 		Segments: []audio.ToneSegment{{Freqs: []float64{425}, On: 30 * time.Millisecond}},
 	}
 
-	dg, err := diago.NewDiago(ua,
+	dg, err := diago.New(ua,
 		diago.WithTransport(diago.Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 5060}),
 		diago.WithMediaConfig(diago.MediaConfig{MusicOnHold: holdTone}),
 	)

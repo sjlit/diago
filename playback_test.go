@@ -83,7 +83,7 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 		},
 	}
 
-	t.Run("withControl", func(t *testing.T) {
+	t.Run("with control", func(t *testing.T) {
 		playback, err := dialog.CreatePlaybackControl()
 		require.NoError(t, err)
 

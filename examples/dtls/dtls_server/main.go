@@ -23,7 +23,7 @@ func main() {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := diago.NewDiago(ua,
+	dg, err := diago.New(ua,
 		diago.WithTransport(
 			diago.Transport{
 				ID:        "tcp",

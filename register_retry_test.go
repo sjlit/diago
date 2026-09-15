@@ -30,12 +30,12 @@ func recordingAfter(delays *[]time.Duration, mu *sync.Mutex) func(time.Duration)
 }
 
 func TestRegisterCalcRetryPriority(t *testing.T) {
-	t.Run("RetryAfterWinsOverExpiry", func(t *testing.T) {
+	t.Run("retry after wins over expiry", func(t *testing.T) {
 		rtx := &RegisterTransaction{expiry: 100 * time.Second, retryAfter: 7 * time.Second}
 		assert.Equal(t, 7*time.Second, rtx.calcRetry(rtx.expiry))
 	})
 
-	t.Run("ExplicitIntervalWinsOverRetryAfter", func(t *testing.T) {
+	t.Run("explicit interval wins over retry after", func(t *testing.T) {
 		rtx := &RegisterTransaction{
 			expiry:     100 * time.Second,
 			retryAfter: 7 * time.Second,
@@ -44,12 +44,12 @@ func TestRegisterCalcRetryPriority(t *testing.T) {
 		assert.Equal(t, 3*time.Millisecond, rtx.calcRetry(rtx.expiry))
 	})
 
-	t.Run("ExpiryDerived", func(t *testing.T) {
+	t.Run("expiry derived", func(t *testing.T) {
 		rtx := &RegisterTransaction{expiry: 100 * time.Second}
 		assert.Equal(t, 75*time.Second, rtx.calcRetry(rtx.expiry))
 	})
 
-	t.Run("DefaultWhenNothingKnown", func(t *testing.T) {
+	t.Run("default when nothing known", func(t *testing.T) {
 		rtx := &RegisterTransaction{}
 		assert.Equal(t, 30*time.Second, rtx.calcRetry(0))
 	})

@@ -102,7 +102,7 @@ func NewTransport(network string) (Transport, error) {
 	return t, nil
 }
 
-// Validate reports whether the transport can be served by NewDiago/serve.
+// Validate reports whether the transport can be served by New/serve.
 // The network must be udp, tcp, tls, ws or wss with an optional 4/6 suffix;
 // tls and wss require TLSConf (and no other network may carry one). tls6 is
 // rejected: the underlying SIP stack has no TLS-over-IPv6 listener. The
@@ -130,7 +130,7 @@ func (t Transport) Validate() error {
 		}
 		if base == "tls" && network != "tls" && network != "tls4" {
 			// sipgo maps tcp6/ws6 to wss, so there is no TLS-over-IPv6 path.
-			return fmt.Errorf("network %q is not supported by the SIP stack: use tls, tls4 or wss with an optional 4/6 suffix", raw)
+			return fmt.Errorf("network %q is not supported by the sip stack: use tls, tls4 or wss with an optional 4/6 suffix", raw)
 		}
 	default:
 		return fmt.Errorf("invalid network %q: use udp/tcp/tls/ws/wss with optional 4 or 6 suffix", raw)
@@ -161,7 +161,7 @@ func tlsListenNetwork(network string) string {
 }
 
 // WithDefaultTransport explicitly installs the built-in loopback default
-// (udp on 127.0.0.1:5060). v2 never adds it implicitly: NewDiago fails
+// (udp on 127.0.0.1:5060). v2 never adds it implicitly: New fails
 // without at least one configured transport.
 func WithDefaultTransport() DiagoOption {
 	return WithTransport(Transport{
@@ -365,11 +365,11 @@ func WithServerRequestMiddleware(f func(next sipgo.RequestHandler) sipgo.Request
 	}
 }
 
-// NewDiago constructs a b2b user agent that will act as server and client.
+// New constructs a b2b user agent that will act as server and client.
 // It fails when no transport is configured (the v1 implicit 127.0.0.1:5060
 // default was removed) or when a configured transport is invalid; use
 // WithTransport or WithDefaultTransport.
-func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
+func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	dg := &Diago{
 		ua:  ua,
 		log: sip.DefaultLogger(),
@@ -462,7 +462,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 
 		dialog, err := dialogUA.ReadInvite(req, tx)
 		if err != nil {
-			return fmt.Errorf("handling new INVITE failed: %w", err)
+			return fmt.Errorf("handling new invite failed: %w", err)
 		}
 
 		// Server-side digest auth is opt-in: call DialogServerSession.Authorize
@@ -972,7 +972,7 @@ func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOpti
 // originator when not set. Options execute exactly once.
 func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridger, opts ...SignalOption) (d *DialogClientSession, err error) {
 	if bridge == nil {
-		return nil, fmt.Errorf("DialBridge: bridge is nil")
+		return nil, fmt.Errorf("dial bridge: bridge is nil")
 	}
 	params, err := newSignalParams(opts, "DialBridge", scopeDial)
 	if err != nil {
@@ -1043,10 +1043,10 @@ func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *signalParams) (d
 	}
 	tran, exists := dg.findTransport(transport, transportID)
 	if !exists {
-		return nil, fmt.Errorf("transport %q does not exists", transport)
+		return nil, fmt.Errorf("transport %q does not exist", transport)
 	}
 
-	return dg.newSipDialog(recipient, tran, contact)
+	return dg.newSIPDialog(recipient, tran, contact)
 }
 
 // mediaConfigForTransport builds the per-dialog media config by overlaying
@@ -1107,7 +1107,7 @@ func dtlsConfIsZero(conf media.DTLSConfig) bool {
 		len(conf.EllipticCurves) == 0
 }
 
-func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, contact *sip.ContactHeader) (d *DialogClientSession, err error) {
+func (dg *Diago) newSIPDialog(recipient sip.Uri, tran *Transport, contact *sip.ContactHeader) (d *DialogClientSession, err error) {
 	transport := tran.Transport
 
 	// TODO: remove this alloc of UA each time
@@ -1299,7 +1299,7 @@ func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opt
 	}
 	tran, exists := dg.getTransport(transport)
 	if !exists {
-		return nil, fmt.Errorf("transport=%q does not exists", transport)
+		return nil, fmt.Errorf("transport=%q does not exist", transport)
 	}
 
 	contactHDR := sip.ContactHeader{}

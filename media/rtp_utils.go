@@ -20,7 +20,7 @@ var rtpBufPool = sync.Pool{
 	},
 }
 
-func GetCurrentNTPTimestamp() uint64 {
+func CurrentNTPTimestamp() uint64 {
 	now := time.Now()
 	return NTPTimestamp(now)
 }

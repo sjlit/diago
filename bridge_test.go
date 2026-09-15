@@ -107,7 +107,7 @@ func TestIntegrationBridging(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := NewDiago(ua, WithTransport(
+	tu, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -161,7 +161,7 @@ func TestIntegrationBridging(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -223,7 +223,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := NewDiago(ua, WithTransport(
+	tu, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -262,7 +262,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	t.Run("BridgeAddRemove", func(t *testing.T) {
+	t.Run("bridge add remove", func(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
@@ -292,7 +292,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		assert.EqualValues(t, 0, bridgePtr.Load().stateRead())
 	})
 
-	t.Run("CheckMixing", func(t *testing.T) {
+	t.Run("check mixing", func(t *testing.T) {
 
 		mixedBuf := make([]byte, 12)
 		audio.PCMMix(mixedBuf, mixedBuf, ulawDecode([]byte("123450")))
@@ -301,7 +301,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		t.Log("Mixed", ulawEncode(mixedBuf), string(ulawEncode(mixedBuf)))
 	})
 
-	t.Run("SoundProxied", func(t *testing.T) {
+	t.Run("sound proxied", func(t *testing.T) {
 		defer func() {
 			for range 2 {
 				<-dialogExit

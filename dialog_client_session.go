@@ -450,7 +450,7 @@ func (d *DialogClientSession) waitAnswer(ctx context.Context, med *DialogMedia, 
 
 	remoteSDP := d.InviteResponse.Body()
 	if remoteSDP == nil {
-		return fmt.Errorf("no SDP in response: %w", ErrSDPMissing)
+		return fmt.Errorf("no sdp in response: %w", ErrSDPMissing)
 	}
 
 	if err := d.applyRemoteSDP(med, remoteSDP); err != nil {
@@ -618,7 +618,7 @@ func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *medi
 
 		remoteSDP := res.Body()
 		if err := ms.RemoteSDP(remoteSDP); err != nil {
-			return fmt.Errorf("sdp update media remote SDP applying failed: %w", err)
+			return fmt.Errorf("sdp update media remote sdp applying failed: %w", err)
 		}
 
 		return d.mediaUpdateUnsafe(ms)

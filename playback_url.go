@@ -97,7 +97,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 	switch mimeType {
 	case "audio/wav", "audio/x-wav", "audio/wav-x", "audio/vnd.wave":
 	default:
-		return fmt.Errorf("unsuported content type %q", contType)
+		return fmt.Errorf("unsupported content type %q", contType)
 	}
 
 	// Check can be streamed

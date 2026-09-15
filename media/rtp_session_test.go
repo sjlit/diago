@@ -433,7 +433,7 @@ func TestRTPSessionSourceLockProtection(t *testing.T) {
 	// RTPDebug = true
 
 	rtpSessRead, rtpSessWrite := pipeRTP(9876, 1234)
-	rtpSessRead.sourceLock = true // Enable source locking
+	rtpSessRead.isSourceLocked = true // Enable source locking
 
 	var writerDone sync.WaitGroup
 	writerDone.Add(1)

@@ -33,7 +33,7 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu, err := diago.NewDiago(ua, diago.WithDefaultTransport())
+	tu, err := diago.New(ua, diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}

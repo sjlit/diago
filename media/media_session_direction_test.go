@@ -26,7 +26,7 @@ func TestMediaSessionDirectionGates(t *testing.T) {
 		return data
 	}
 
-	t.Run("ReadRTP", func(t *testing.T) {
+	t.Run("read rtp", func(t *testing.T) {
 		raw := rawPkt(t)
 		for _, mode := range []string{sdp.ModeSendrecv, sdp.ModeRecvonly} {
 			s := &MediaSession{mode: mode}
@@ -50,7 +50,7 @@ func TestMediaSessionDirectionGates(t *testing.T) {
 		}
 	})
 
-	t.Run("WriteRTP", func(t *testing.T) {
+	t.Run("write rtp", func(t *testing.T) {
 		pkt := rtp.Packet{Payload: bytes.Repeat([]byte{0xAB}, 160)}
 		for _, mode := range []string{sdp.ModeSendrecv, sdp.ModeSendonly} {
 			s, sink := newDirectionWriteSession(mode)

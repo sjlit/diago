@@ -25,7 +25,7 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dg, err := NewDiago(ua, WithDefaultTransport(), WithLogger(logger))
+	dg, err := New(ua, WithDefaultTransport(), WithLogger(logger))
 	require.NoError(t, err)
 	require.Same(t, logger, dg.mediaConf.Logger)
 
@@ -34,7 +34,7 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	require.Same(t, logger, dg.mediaConfigForTransport(tran).Logger)
 
 	custom := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dg2, err := NewDiago(ua, WithDefaultTransport(), WithLogger(logger), WithMediaConfig(MediaConfig{
+	dg2, err := New(ua, WithDefaultTransport(), WithLogger(logger), WithMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		Logger: custom,
 	}))
@@ -67,49 +67,49 @@ func TestDialogMediaGuardsNotAnswered(t *testing.T) {
 	// Zero-value media: no session ever created (dialog was never answered).
 	d := &DialogMedia{}
 
-	t.Run("AudioReader", func(t *testing.T) {
+	t.Run("audio reader", func(t *testing.T) {
 		_, err := d.AudioReader()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("AudioWriter", func(t *testing.T) {
+	t.Run("audio writer", func(t *testing.T) {
 		_, err := d.AudioWriter()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("EchoContext", func(t *testing.T) {
+	t.Run("echo context", func(t *testing.T) {
 		assert.ErrorIs(t, d.EchoContext(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("ListenBackground", func(t *testing.T) {
+	t.Run("listen background", func(t *testing.T) {
 		_, err := d.ListenBackground()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("ListenContext", func(t *testing.T) {
+	t.Run("listen context", func(t *testing.T) {
 		assert.ErrorIs(t, d.ListenContext(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("CreatePlayback", func(t *testing.T) {
+	t.Run("create playback", func(t *testing.T) {
 		_, err := d.CreatePlayback()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("CreatePlaybackControl", func(t *testing.T) {
+	t.Run("create playback control", func(t *testing.T) {
 		_, err := d.CreatePlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("CreatePlaybackDTMF", func(t *testing.T) {
+	t.Run("create playback dtmf", func(t *testing.T) {
 		_, err := d.CreatePlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("CreateRingtonePlayback", func(t *testing.T) {
+	t.Run("create ringtone playback", func(t *testing.T) {
 		_, err := d.CreateRingtonePlayback()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("CreateDTMFReader", func(t *testing.T) {
+	t.Run("create dtmf reader", func(t *testing.T) {
 		_, err := d.CreateDTMFReader()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("CreateDTMFWriter", func(t *testing.T) {
+	t.Run("create dtmf writer", func(t *testing.T) {
 		_, err := d.CreateDTMFWriter()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
-	t.Run("DiscardQueuedRTP", func(t *testing.T) {
+	t.Run("discard queued rtp", func(t *testing.T) {
 		_, err := d.DiscardQueuedRTP()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
@@ -119,53 +119,53 @@ func TestDialogMediaGuardsClosed(t *testing.T) {
 	d := newTestDialogMedia(t)
 	require.NoError(t, d.Close())
 
-	t.Run("AudioReader", func(t *testing.T) {
+	t.Run("audio reader", func(t *testing.T) {
 		_, err := d.AudioReader()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("AudioWriter", func(t *testing.T) {
+	t.Run("audio writer", func(t *testing.T) {
 		_, err := d.AudioWriter()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("EchoContext", func(t *testing.T) {
+	t.Run("echo context", func(t *testing.T) {
 		assert.ErrorIs(t, d.EchoContext(context.Background()), ErrDialogClosed)
 	})
-	t.Run("ListenBackground", func(t *testing.T) {
+	t.Run("listen background", func(t *testing.T) {
 		_, err := d.ListenBackground()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("ListenContext", func(t *testing.T) {
+	t.Run("listen context", func(t *testing.T) {
 		assert.ErrorIs(t, d.ListenContext(context.Background()), ErrDialogClosed)
 	})
-	t.Run("CreatePlayback", func(t *testing.T) {
+	t.Run("create playback", func(t *testing.T) {
 		_, err := d.CreatePlayback()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("CreatePlaybackControl", func(t *testing.T) {
+	t.Run("create playback control", func(t *testing.T) {
 		_, err := d.CreatePlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("CreatePlaybackDTMF", func(t *testing.T) {
+	t.Run("create playback dtmf", func(t *testing.T) {
 		_, err := d.CreatePlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("CreateRingtonePlayback", func(t *testing.T) {
+	t.Run("create ringtone playback", func(t *testing.T) {
 		_, err := d.CreateRingtonePlayback()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("CreateDTMFReader", func(t *testing.T) {
+	t.Run("create dtmf reader", func(t *testing.T) {
 		_, err := d.CreateDTMFReader()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("CreateDTMFWriter", func(t *testing.T) {
+	t.Run("create dtmf writer", func(t *testing.T) {
 		_, err := d.CreateDTMFWriter()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("DiscardQueuedRTP", func(t *testing.T) {
+	t.Run("discard queued rtp", func(t *testing.T) {
 		_, err := d.DiscardQueuedRTP()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
-	t.Run("CloseIsIdempotent", func(t *testing.T) {
+	t.Run("close is idempotent", func(t *testing.T) {
 		assert.NoError(t, d.Close())
 	})
 }
@@ -173,16 +173,16 @@ func TestDialogMediaGuardsClosed(t *testing.T) {
 func TestDialogClientGuardsNotAnswered(t *testing.T) {
 	d := &DialogClientSession{DialogClientSession: &sipgo.DialogClientSession{}}
 
-	t.Run("Hold", func(t *testing.T) {
+	t.Run("hold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Hold(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("Unhold", func(t *testing.T) {
+	t.Run("unhold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Unhold(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("ReInvite", func(t *testing.T) {
+	t.Run("re invite", func(t *testing.T) {
 		assert.ErrorIs(t, d.ReInvite(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("HangupWithoutResponse", func(t *testing.T) {
+	t.Run("hangup without response", func(t *testing.T) {
 		err := d.Hangup(context.Background())
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 		assert.ErrorContains(t, err, "bye:")
@@ -192,13 +192,13 @@ func TestDialogClientGuardsNotAnswered(t *testing.T) {
 func TestDialogServerGuardsNotAnswered(t *testing.T) {
 	d := &DialogServerSession{DialogServerSession: &sipgo.DialogServerSession{}}
 
-	t.Run("Hold", func(t *testing.T) {
+	t.Run("hold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Hold(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("Unhold", func(t *testing.T) {
+	t.Run("unhold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Unhold(context.Background()), ErrDialogNotAnswered)
 	})
-	t.Run("ReInvite", func(t *testing.T) {
+	t.Run("re invite", func(t *testing.T) {
 		assert.ErrorIs(t, d.ReInvite(context.Background()), ErrDialogNotAnswered)
 	})
 }

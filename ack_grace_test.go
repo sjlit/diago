@@ -16,7 +16,7 @@ import (
 func TestWaitAckOrGrace(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("AlreadyClosedWinsImmediately", func(t *testing.T) {
+	t.Run("already closed wins immediately", func(t *testing.T) {
 		ch := make(chan struct{})
 		close(ch)
 		start := time.Now()
@@ -24,7 +24,7 @@ func TestWaitAckOrGrace(t *testing.T) {
 		assert.Less(t, time.Since(start), time.Second)
 	})
 
-	t.Run("LateAckWithinGrace", func(t *testing.T) {
+	t.Run("late ack within grace", func(t *testing.T) {
 		ch := make(chan struct{})
 		go func() {
 			time.Sleep(10 * time.Millisecond)
@@ -33,14 +33,14 @@ func TestWaitAckOrGrace(t *testing.T) {
 		assert.True(t, waitAckOrGrace(ctx, ch, time.Second))
 	})
 
-	t.Run("NoAckBeyondGrace", func(t *testing.T) {
+	t.Run("no ack beyond grace", func(t *testing.T) {
 		ch := make(chan struct{})
 		start := time.Now()
 		assert.False(t, waitAckOrGrace(ctx, ch, 20*time.Millisecond))
 		assert.GreaterOrEqual(t, time.Since(start), 20*time.Millisecond)
 	})
 
-	t.Run("CancelledContext", func(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
 		ch := make(chan struct{})
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
@@ -49,7 +49,7 @@ func TestWaitAckOrGrace(t *testing.T) {
 		assert.Less(t, time.Since(start), time.Second)
 	})
 
-	t.Run("AckRacingCancellationStillWins", func(t *testing.T) {
+	t.Run("ack racing cancellation still wins", func(t *testing.T) {
 		ch := make(chan struct{})
 		cctx, cancel := context.WithCancel(ctx)
 		close(ch)
@@ -68,13 +68,13 @@ func TestIsAckWaitRaceError(t *testing.T) {
 func TestAckWaitFailure(t *testing.T) {
 	base := errors.New("No ACK received")
 
-	t.Run("EndedDialogMapsToSentinel", func(t *testing.T) {
+	t.Run("ended dialog maps to sentinel", func(t *testing.T) {
 		err := ackWaitFailure(sip.DialogStateEnded, base)
 		assert.ErrorIs(t, err, ErrDialogEnded)
 		assert.ErrorIs(t, err, base)
 	})
 
-	t.Run("EstablishedDialogKeepsError", func(t *testing.T) {
+	t.Run("established dialog keeps error", func(t *testing.T) {
 		err := ackWaitFailure(sip.DialogStateEstablished, base)
 		assert.NotErrorIs(t, err, ErrDialogEnded)
 		assert.ErrorIs(t, err, base)

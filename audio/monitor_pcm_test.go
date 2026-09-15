@@ -56,7 +56,7 @@ func TestMonitorPCMReaderWriter(t *testing.T) {
 		}
 	}
 
-	t.Run("Reader", func(t *testing.T) {
+	t.Run("reader", func(t *testing.T) {
 		rtpBufferReader := bytes.NewBuffer(audioAlawBuf)
 
 		recording := bytes.NewBuffer([]byte{})
@@ -75,7 +75,7 @@ func TestMonitorPCMReaderWriter(t *testing.T) {
 		expectRecordedGap(t, recording)
 	})
 
-	t.Run("Writer", func(t *testing.T) {
+	t.Run("writer", func(t *testing.T) {
 		// Lets
 		recording := bytes.NewBuffer([]byte{})
 		mon := &MonitorPCMWriter{}
@@ -102,7 +102,7 @@ func TestMonitorPCMReaderWriterStopped(t *testing.T) {
 	_, err := EncodeAlawTo(audioAlawBuf, bytes.Repeat([]byte("0123456789"), media.CodecAudioAlaw.Samples16()*4/10))
 	require.NoError(t, err)
 
-	t.Run("Reader", func(t *testing.T) {
+	t.Run("reader", func(t *testing.T) {
 		rtpBufferReader := bytes.NewBuffer(audioAlawBuf)
 
 		recording := bytes.NewBuffer([]byte{})
@@ -123,7 +123,7 @@ func TestMonitorPCMReaderWriterStopped(t *testing.T) {
 		assert.Equal(t, frameSize, recording.Len())
 	})
 
-	t.Run("Writer", func(t *testing.T) {
+	t.Run("writer", func(t *testing.T) {
 		// Lets
 		recording := bytes.NewBuffer([]byte{})
 		mon := &MonitorPCMWriter{}
@@ -170,7 +170,7 @@ func TestMonitorPCMFailOpen(t *testing.T) {
 		return ro
 	}
 
-	t.Run("ReaderPropagatesWithoutFailOpen", func(t *testing.T) {
+	t.Run("reader propagates without fail open", func(t *testing.T) {
 		mon := &MonitorPCMReader{}
 		require.NoError(t, mon.Init(readOnlyFile(t), codec, bytes.NewBuffer(audioAlawBuf)))
 
@@ -181,7 +181,7 @@ func TestMonitorPCMFailOpen(t *testing.T) {
 		require.Error(t, gotErr, "without FailOpen the sink error must reach the media path")
 	})
 
-	t.Run("WriterPropagatesWithoutFailOpen", func(t *testing.T) {
+	t.Run("writer propagates without fail open", func(t *testing.T) {
 		mon := &MonitorPCMWriter{}
 		require.NoError(t, mon.Init(readOnlyFile(t), codec, io.Discard))
 
@@ -192,7 +192,7 @@ func TestMonitorPCMFailOpen(t *testing.T) {
 		require.Error(t, gotErr, "without FailOpen the sink error must reach the media path")
 	})
 
-	t.Run("ReaderSwallowsWriteError", func(t *testing.T) {
+	t.Run("reader swallows write error", func(t *testing.T) {
 		mon := &MonitorPCMReader{}
 		mon.FailOpen = true
 		require.NoError(t, mon.Init(readOnlyFile(t), codec, bytes.NewBuffer(audioAlawBuf)))
@@ -209,7 +209,7 @@ func TestMonitorPCMFailOpen(t *testing.T) {
 		require.ErrorIs(t, mon.Err(), syscall.EBADF)
 	})
 
-	t.Run("WriterSwallowsWriteError", func(t *testing.T) {
+	t.Run("writer swallows write error", func(t *testing.T) {
 		mon := &MonitorPCMWriter{}
 		mon.FailOpen = true
 		require.NoError(t, mon.Init(readOnlyFile(t), codec, io.Discard))
@@ -224,7 +224,7 @@ func TestMonitorPCMFailOpen(t *testing.T) {
 		assert.ErrorContains(t, mon.Err(), "recording degraded", "Err must carry degradation context")
 	})
 
-	t.Run("FlushStillReports", func(t *testing.T) {
+	t.Run("flush still reports", func(t *testing.T) {
 		// Fail-open protects the media path only; the finalize path must
 		// still surface the degraded sink so callers learn the recording is
 		// incomplete.
@@ -424,7 +424,7 @@ func TestMonitorPCMStereoPauseResume(t *testing.T) {
 func TestMonitorPCMStereoCallerSpoolOwnership(t *testing.T) {
 	codec := media.CodecAudioAlaw
 
-	t.Run("CloseKeepsCallerFiles", func(t *testing.T) {
+	t.Run("close keeps caller files", func(t *testing.T) {
 		dir := t.TempDir()
 		callerRead, err := os.CreateTemp(dir, "caller-read-*.raw")
 		require.NoError(t, err)
@@ -454,7 +454,7 @@ func TestMonitorPCMStereoCallerSpoolOwnership(t *testing.T) {
 		assert.NoError(t, callerWrite.Close(), "caller fd must still be open and closable after Close")
 	})
 
-	t.Run("InitFailureRollbackKeepsCallerFiles", func(t *testing.T) {
+	t.Run("init failure rollback keeps caller files", func(t *testing.T) {
 		dir := t.TempDir()
 		callerRead, err := os.CreateTemp(dir, "caller-read-*.raw")
 		require.NoError(t, err)
@@ -564,7 +564,7 @@ func TestMonitorPCMStereo(t *testing.T) {
 	audioPCMBuf := make([]byte, 4*320)
 	DecodeAlawTo(audioPCMBuf, audioAlawBuf)
 
-	t.Run("SmallData", func(t *testing.T) {
+	t.Run("small data", func(t *testing.T) {
 		mon := &MonitorPCMStereo{}
 		recording := bytes.NewBuffer([]byte{})
 		err = mon.Init(recording, media.CodecAudioAlaw, media.CodecAudioAlaw, bytes.NewBuffer(audioAlawBuf), bytes.NewBuffer([]byte{}))
@@ -600,7 +600,7 @@ func TestMonitorPCMStereo(t *testing.T) {
 		assert.Equal(t, audioPCMBuf[:2], stereo[2:4])
 	})
 
-	t.Run("BigData", func(t *testing.T) {
+	t.Run("big data", func(t *testing.T) {
 		audioAlawBufBig := bytes.Repeat(audioAlawBuf, 20)
 
 		mon := &MonitorPCMStereo{}

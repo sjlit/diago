@@ -80,7 +80,7 @@ type DialogMedia struct {
 	remoteContactTarget *sip.ContactHeader
 
 	// dtmfSendMu serializes SendDTMF callers: per-digit writers are separate
-	// RTPDtmfWriter instances whose internal locks do not serialize against
+	// RTPDTMFWriter instances whose internal locks do not serialize against
 	// each other, so without this gate two concurrent SendDTMF calls would
 	// interleave different digits' event packets on the same payload type.
 	// It is taken outside d.mu (the event write blocks ~7*SampleDur).
@@ -110,7 +110,7 @@ type DialogMedia struct {
 	// sending — the remote put us on hold. Maintained by updateRemoteHeldUnsafe
 	// on every media install (inbound offers via sdpUpdateUnsafe, answers via
 	// mediaUpdateUnsafe/initRTPSessionUnsafe); queried via IsRemoteHeld.
-	remoteHeld bool
+	isRemoteHeld bool
 
 	closed bool
 }
@@ -285,11 +285,11 @@ func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media
 // marks us held.
 func (d *DialogMedia) updateRemoteHeldUnsafe() {
 	if d.mediaSession == nil {
-		d.remoteHeld = false
+		d.isRemoteHeld = false
 		return
 	}
 	dir := d.mediaSession.NegotiatedDirection()
-	d.remoteHeld = dir == sdp.ModeRecvonly || dir == sdp.ModeInactive
+	d.isRemoteHeld = dir == sdp.ModeRecvonly || dir == sdp.ModeInactive
 }
 
 // applyLateOfferAnswerUnsafe applies the SDP answer carried by a late-offer
@@ -329,7 +329,7 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	}
 
 	if conf.SRTP.Mode < SecureRTPNone || conf.SRTP.Mode > SecureRTPDTLS {
-		return fmt.Errorf("invalid SRTP mode %d: use SecureRTPNone, SecureRTPSDES or SecureRTPDTLS", conf.SRTP.Mode)
+		return fmt.Errorf("invalid srtp mode %d: use SecureRTPNone, SecureRTPSDES or SecureRTPDTLS", conf.SRTP.Mode)
 	}
 
 	// Set before the early return: precreated sessions (fake IO in tests,
@@ -442,7 +442,7 @@ func (d *DialogMedia) checkEarlyMedia(remoteSDP []byte) error {
 func (d *DialogMedia) sdpUpdateUnsafe(remoteSDP []byte) error {
 	msess := d.mediaSession.Fork()
 	if err := msess.RemoteSDP(remoteSDP); err != nil {
-		return fmt.Errorf("sdp update media remote SDP applying failed: %w", err)
+		return fmt.Errorf("sdp update media remote sdp applying failed: %w", err)
 	}
 
 	if err := d.replaceRTPSessionUnsafe(msess); err != nil {
@@ -479,7 +479,7 @@ func (d *DialogMedia) replaceRTPSessionUnsafe(msess *media.MediaSession) error {
 	}
 	oldRTPSess := d.rtpSession
 	if oldRTPSess == nil {
-		return fmt.Errorf("RTP Session is nil while trying to update it")
+		return fmt.Errorf("rtp session is nil while trying to update it")
 	}
 	// This will block until read  RTCP is closed fully, which we need before starting new one
 	if err := oldRTPSess.MonitorClose(); err != nil {
@@ -524,7 +524,7 @@ func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderO
 
 		reader := d.rtpPacketReader.Reader()
 		if reader == nil {
-			return fmt.Errorf("no RTP reader setup")
+			return fmt.Errorf("no rtp reader setup")
 		}
 
 		jitter, err := media.NewRTPJitterBuffer(reader, codec.SampleDur, opts)
@@ -539,7 +539,7 @@ func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderO
 			if err := session.Sess.StartRTP(1); err != nil {
 				d.rtpPacketReader.UpdateReader(reader)
 				_ = jitter.Close()
-				return fmt.Errorf("failed to start jitter buffer RTP reader: %w", err)
+				return fmt.Errorf("failed to start jitter buffer rtp reader: %w", err)
 			}
 		}
 
@@ -876,7 +876,7 @@ func (d *DialogMedia) CreateRingtonePlayback() (*AudioRingtone, error) {
 func (d *DialogMedia) IsRemoteHeld() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.remoteHeld
+	return d.isRemoteHeld
 }
 
 // PauseAudioRead pauses the dialog audio reader: reads through the audio
@@ -1071,7 +1071,7 @@ type DTMFReader struct {
 	// packetReader is the stable audio read handle used for ctx-driven
 	// interrupts; the pointer never changes across media updates
 	packetReader *media.RTPPacketReader
-	dtmfReader   *media.RTPDtmfReader
+	dtmfReader   *media.RTPDTMFReader
 
 	// mu guards onDTMF: it is installed by OnDTMF/Listen/ListenContext on
 	// the application/media goroutine and read by deliverDTMF on SIP
@@ -1263,7 +1263,7 @@ func (d *DTMFReader) Read(buf []byte) (n int, err error) {
 }
 
 type DTMFWriter struct {
-	dtmfWriter *media.RTPDtmfWriter
+	dtmfWriter *media.RTPDTMFWriter
 }
 
 // CreateDTMFWriter is DTMF over RTP on the write side.
@@ -1299,7 +1299,7 @@ func (w *DTMFWriter) WriteDTMFContext(ctx context.Context, dtmf rune) error {
 }
 
 // AudioReader exposes DTMF audio writer. You should use this for parallel audio processing
-func (w *DTMFWriter) AudioWriter() *media.RTPDtmfWriter {
+func (w *DTMFWriter) AudioWriter() *media.RTPDTMFWriter {
 	return w.dtmfWriter
 }
 

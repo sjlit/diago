@@ -83,13 +83,13 @@ func (r *countingChanRTPReader) ReadRTP(buf []byte, p *rtp.Packet) (int, error) 
 }
 
 func TestRTPJitterBuffer(t *testing.T) {
-	t.Run("packetDurationRequired", func(t *testing.T) {
+	t.Run("packet duration required", func(t *testing.T) {
 		jb, err := NewRTPJitterBuffer(&sliceRTPReader{}, 0, RTPJitterBufferOptions{})
 		require.ErrorIs(t, err, ErrInvalidPacketDuration)
 		require.Nil(t, jb)
 	})
 
-	t.Run("inOrder", func(t *testing.T) {
+	t.Run("in order", func(t *testing.T) {
 		jb := newTestRTPJitterBuffer(t, rtpPackets(1234, 0, 1, 2))
 
 		require.Equal(t, uint16(0), readJitterSeq(t, jb))
@@ -98,7 +98,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		requireJitterEOF(t, jb)
 	})
 
-	t.Run("outOfOrder", func(t *testing.T) {
+	t.Run("out of order", func(t *testing.T) {
 		jb := newTestRTPJitterBuffer(t, rtpPackets(1234, 0, 2, 1, 3))
 
 		require.Equal(t, uint16(0), readJitterSeq(t, jb))
@@ -107,7 +107,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint16(3), readJitterSeq(t, jb))
 	})
 
-	t.Run("missingPacket", func(t *testing.T) {
+	t.Run("missing packet", func(t *testing.T) {
 		jb := newTestRTPJitterBuffer(t, rtpPackets(1234, 0, 2))
 
 		require.Equal(t, uint16(0), readJitterSeq(t, jb))
@@ -115,7 +115,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint64(1), jb.Statistics().PacketsLost)
 	})
 
-	t.Run("duplicatePacket", func(t *testing.T) {
+	t.Run("duplicate packet", func(t *testing.T) {
 		jb := newTestRTPJitterBuffer(t, rtpPackets(1234, 0, 1, 1, 2))
 
 		require.Equal(t, uint16(0), readJitterSeq(t, jb))
@@ -124,7 +124,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint64(1), jb.Statistics().PacketsDuplicate)
 	})
 
-	t.Run("sequenceWrap", func(t *testing.T) {
+	t.Run("sequence wrap", func(t *testing.T) {
 		jb := newTestRTPJitterBuffer(t, rtpPackets(1234, 65534, 0, 65535, 1))
 
 		require.Equal(t, uint16(65534), readJitterSeq(t, jb))
@@ -133,7 +133,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint16(1), readJitterSeq(t, jb))
 	})
 
-	t.Run("latePacket", func(t *testing.T) {
+	t.Run("late packet", func(t *testing.T) {
 		reader := newChanRTPReader()
 		jb := mustNewRTPJitterBuffer(t, reader, time.Millisecond, RTPJitterBufferOptions{
 			DelayPackets: 1,
@@ -159,7 +159,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint64(1), jb.Statistics().PacketsLate)
 	})
 
-	t.Run("ssrcReset", func(t *testing.T) {
+	t.Run("ssrc reset", func(t *testing.T) {
 		reader := newChanRTPReader()
 		jb := mustNewRTPJitterBuffer(t, reader, time.Millisecond, RTPJitterBufferOptions{
 			DelayPackets: 1,
@@ -182,7 +182,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint64(1), jb.Statistics().SSRCResets)
 	})
 
-	t.Run("startupEarlierPacket", func(t *testing.T) {
+	t.Run("startup earlier packet", func(t *testing.T) {
 		jb := newTestRTPJitterBuffer(t, rtpPackets(1234, 2, 0, 1, 3))
 
 		require.Equal(t, uint16(0), readJitterSeq(t, jb))
@@ -191,7 +191,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint16(3), readJitterSeq(t, jb))
 	})
 
-	t.Run("forwardWindowDrop", func(t *testing.T) {
+	t.Run("forward window drop", func(t *testing.T) {
 		jb := mustNewRTPJitterBuffer(t, &sliceRTPReader{packets: rtpPackets(1234, 0, 4, 1)}, time.Millisecond, RTPJitterBufferOptions{
 			DelayPackets: 2,
 			MaxPackets:   4,
@@ -203,7 +203,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint64(1), jb.Statistics().PacketsDropped)
 	})
 
-	t.Run("shortBufferRetry", func(t *testing.T) {
+	t.Run("short buffer retry", func(t *testing.T) {
 		jb := mustNewRTPJitterBuffer(t, &sliceRTPReader{packets: rtpPackets(1234, 7)}, time.Millisecond, RTPJitterBufferOptions{
 			DelayPackets: 1,
 			MaxPackets:   2,
@@ -215,7 +215,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.Equal(t, uint16(7), readJitterSeq(t, jb))
 	})
 
-	t.Run("slotReuse", func(t *testing.T) {
+	t.Run("slot reuse", func(t *testing.T) {
 		reader := &chanRTPReader{packets: make(chan rtp.Packet, 3)}
 		jb := mustNewRTPJitterBuffer(t, reader, time.Millisecond, RTPJitterBufferOptions{
 			DelayPackets: 2,
@@ -255,7 +255,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 
 func TestRTPJitterBufferOverflow(t *testing.T) {
 	t.Skip("Jitter Buffer Overflow needs WORK")
-	t.Run("continuesReading", func(t *testing.T) {
+	t.Run("continues reading", func(t *testing.T) {
 		reader := &countingChanRTPReader{
 			chanRTPReader: &chanRTPReader{packets: make(chan rtp.Packet, 32)},
 		}
@@ -286,7 +286,7 @@ func TestRTPJitterBufferOverflow(t *testing.T) {
 			"upstream reading must continue when all playout slots are occupied")
 	})
 
-	t.Run("discardsStalePackets", func(t *testing.T) {
+	t.Run("discards stale packets", func(t *testing.T) {
 		reader := &countingChanRTPReader{
 			chanRTPReader: &chanRTPReader{packets: make(chan rtp.Packet, 32)},
 		}

@@ -24,7 +24,7 @@ func TestDiagoMediaConfigForTransport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := NewDiago(ua, WithMediaConfig(MediaConfig{
+	dg, err := New(ua, WithMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		Network: NetworkConfig{
 			RTPNAT:       media.RTPNATSymetric,
@@ -65,7 +65,7 @@ func TestDiagoMediaConfigTransportZeroInherits(t *testing.T) {
 		},
 		SRTP: SRTPConfig{Mode: SecureRTPSDES, Alg: 2},
 	}
-	dg, err := NewDiago(ua, WithMediaConfig(global), WithDefaultTransport())
+	dg, err := New(ua, WithMediaConfig(global), WithDefaultTransport())
 	require.NoError(t, err)
 
 	conf := dg.mediaConfigForTransport(&Transport{Transport: "udp"})
@@ -96,7 +96,7 @@ func TestDiagoMediaConfigTransportZeroInherits(t *testing.T) {
 // reach the created media session end to end.
 func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 		return sip.NewResponseFromRequest(req, 200, "OK", body)
 	}, WithMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
@@ -123,9 +123,9 @@ func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 // flows into the MediaSession and shows up in the local SDP "s=" line. Default
 // is preserved when the field is empty.
 func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
-	t.Run("Custom", func(t *testing.T) {
+	t.Run("custom", func(t *testing.T) {
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-			body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+			body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 			return sip.NewResponseFromRequest(req, 200, "OK", body)
 		}, WithMediaConfig(MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
@@ -142,9 +142,9 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 		assert.Contains(t, string(ms.LocalSDP()), "s=AcmePBX")
 	})
 
-	t.Run("DefaultWhenEmpty", func(t *testing.T) {
+	t.Run("default when empty", func(t *testing.T) {
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-			body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+			body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 			return sip.NewResponseFromRequest(req, 200, "OK", body)
 		}, WithMediaConfig(MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},

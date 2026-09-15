@@ -370,7 +370,7 @@ func reInviteExchange(ctx context.Context, t reInviteExchangeTransport, req *sip
 			ackContact = t.RemoteContact()
 		}
 		if ackContact == nil {
-			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ACK: %w", ErrRemoteContactMissing)
+			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ack: %w", ErrRemoteContactMissing)
 		}
 		if err := t.writeReInviteACK(ctx, ackContact.Address); err != nil {
 			return res, err

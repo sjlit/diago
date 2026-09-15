@@ -41,15 +41,15 @@ func TestTransportValidate(t *testing.T) {
 		{name: "tls4", transport: Transport{Transport: "tls4", TLSConf: tlsConf}},
 		{name: "empty", transport: Transport{}, wantErr: "invalid network"},
 		{name: "unknown", transport: Transport{Transport: "bogus"}, wantErr: "invalid network"},
-		{name: "badSuffix", transport: Transport{Transport: "tcp64"}, wantErr: "invalid network"},
+		{name: "bad suffix", transport: Transport{Transport: "tcp64"}, wantErr: "invalid network"},
 		{name: "sctp", transport: Transport{Transport: "sctp"}, wantErr: "invalid network"},
-		{name: "tlsWithoutConf", transport: Transport{Transport: "tls"}, wantErr: "requires TLSConf"},
-		{name: "wssWithoutConf", transport: Transport{Transport: "wss"}, wantErr: "requires TLSConf"},
-		{name: "tls6Unsupported", transport: Transport{Transport: "tls6", TLSConf: tlsConf}, wantErr: "not supported by the SIP stack"},
-		{name: "udpWithTLSConf", transport: Transport{Transport: "udp", TLSConf: tlsConf}, wantErr: "cannot carry TLSConf"},
-		{name: "tcpWithTLSConf", transport: Transport{Transport: "tcp", TLSConf: tlsConf}, wantErr: "cannot carry TLSConf"},
-		{name: "bindPortRange", transport: Transport{Transport: "udp", BindPort: 70000}, wantErr: "invalid bind port"},
-		{name: "externalPortRange", transport: Transport{Transport: "udp", ExternalPort: -1}, wantErr: "invalid external port"},
+		{name: "tls without conf", transport: Transport{Transport: "tls"}, wantErr: "requires TLSConf"},
+		{name: "wss without conf", transport: Transport{Transport: "wss"}, wantErr: "requires TLSConf"},
+		{name: "tls6 unsupported", transport: Transport{Transport: "tls6", TLSConf: tlsConf}, wantErr: "not supported by the sip stack"},
+		{name: "udp with tls conf", transport: Transport{Transport: "udp", TLSConf: tlsConf}, wantErr: "cannot carry TLSConf"},
+		{name: "tcp with tls conf", transport: Transport{Transport: "tcp", TLSConf: tlsConf}, wantErr: "cannot carry TLSConf"},
+		{name: "bind port range", transport: Transport{Transport: "udp", BindPort: 70000}, wantErr: "invalid bind port"},
+		{name: "external port range", transport: Transport{Transport: "udp", ExternalPort: -1}, wantErr: "invalid external port"},
 	}
 
 	for _, tc := range cases {
@@ -98,7 +98,7 @@ func TestServeTLS4Transport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := NewDiago(ua, WithTransport(Transport{
+	dg, err := New(ua, WithTransport(Transport{
 		Transport: "tls4",
 		BindHost:  "127.0.0.1",
 		TLSConf:   &tls.Config{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
@@ -115,16 +115,16 @@ func TestServeTLS4Transport(t *testing.T) {
 	conn.Close()
 }
 
-func TestNewDiagoRequiresTransport(t *testing.T) {
+func TestNewRequiresTransport(t *testing.T) {
 	ua, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	_, err = NewDiago(ua)
+	_, err = New(ua)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no transport configured")
 
-	dg, err := NewDiago(ua, WithDefaultTransport())
+	dg, err := New(ua, WithDefaultTransport())
 	require.NoError(t, err)
 	require.Len(t, dg.transports, 1)
 	assert.Equal(t, "udp", dg.transports[0].Transport)
@@ -132,26 +132,26 @@ func TestNewDiagoRequiresTransport(t *testing.T) {
 	assert.Equal(t, 5060, dg.transports[0].BindPort)
 }
 
-func TestNewDiagoRejectsInvalidTransport(t *testing.T) {
+func TestNewRejectsInvalidTransport(t *testing.T) {
 	ua, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	_, err = NewDiago(ua, WithTransport(Transport{Transport: "bogus"}))
+	_, err = New(ua, WithTransport(Transport{Transport: "bogus"}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid network")
 
-	_, err = NewDiago(ua, WithTransport(Transport{Transport: "tls", BindPort: 0}))
+	_, err = New(ua, WithTransport(Transport{Transport: "tls", BindPort: 0}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires TLSConf")
 
-	// WithTransport trims the suffix from Transport, so NewDiago must validate
+	// WithTransport trims the suffix from Transport, so New must validate
 	// the raw network it kept.
-	_, err = NewDiago(ua, WithTransport(Transport{Transport: "tls6", TLSConf: &tls.Config{}}))
+	_, err = New(ua, WithTransport(Transport{Transport: "tls6", TLSConf: &tls.Config{}}))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported by the SIP stack")
+	assert.Contains(t, err.Error(), "not supported by the sip stack")
 
-	dg, err := NewDiago(ua, WithTransport(Transport{Transport: "tls4", BindHost: "127.0.0.1", TLSConf: &tls.Config{}}))
+	dg, err := New(ua, WithTransport(Transport{Transport: "tls4", BindHost: "127.0.0.1", TLSConf: &tls.Config{}}))
 	require.NoError(t, err)
 	require.Len(t, dg.transports, 1)
 	assert.Equal(t, "tls4", dg.transports[0].network)
@@ -163,7 +163,7 @@ func TestNewDiagoRejectsInvalidTransport(t *testing.T) {
 // the call itself instead of through a pointer option.
 func TestReaderWriterWithProps(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 		return sip.NewResponseFromRequest(req, 200, "OK", body)
 	}, WithMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},

@@ -68,7 +68,7 @@ func TestSignalMediaConfigOverlay(t *testing.T) {
 }
 
 func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
-	t.Run("OverrideBaseConfig", func(t *testing.T) {
+	t.Run("override base config", func(t *testing.T) {
 		base := MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
 			SDP:    SDPConfig{SessionName: "BaseName"},
@@ -84,7 +84,7 @@ func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
 		assert.Equal(t, "BaseName", base.SDP.SessionName)
 	})
 
-	t.Run("UnsetLeavesBaseIntact", func(t *testing.T) {
+	t.Run("unset leaves base intact", func(t *testing.T) {
 		base := MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
 			SDP:    SDPConfig{SessionName: "BaseName"},
@@ -96,14 +96,14 @@ func TestSignalMediaConfigSDPSessionNameOverlay(t *testing.T) {
 		assert.Equal(t, "BaseName", got.SDP.SessionName)
 	})
 
-	t.Run("EmptyStringRejected", func(t *testing.T) {
+	t.Run("empty string rejected", func(t *testing.T) {
 		// Empty string carries no information — indistinguishable from "not set".
 		// Match WithMediaBindIP(nil) / WithContact(nil) convention and reject.
 		_, err := newTestParams([]SignalOption{WithSDPSessionName("")})
 		assert.Error(t, err)
 	})
 
-	t.Run("LineBreakRejected", func(t *testing.T) {
+	t.Run("line break rejected", func(t *testing.T) {
 		// CR/LF would inject extra SDP lines after "s=" — reject at option time.
 		_, err := newTestParams([]SignalOption{WithSDPSessionName("x\nm=audio 0")})
 		assert.Error(t, err)
@@ -125,7 +125,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 	defer uaSrv.Close()
 
-	dgSrv, err := NewDiago(uaSrv,
+	dgSrv, err := New(uaSrv,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15091}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
@@ -234,7 +234,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		return confirmed
 	}, 5*time.Second, 10*time.Millisecond)
 
-	t.Run("ClientInviteOptions", func(t *testing.T) {
+	t.Run("client invite options", func(t *testing.T) {
 		mu.Lock()
 		inv := inviteReq
 		mu.Unlock()
@@ -258,7 +258,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		assert.Equal(t, "7.7.7.7", ci.IP.String())
 	})
 
-	t.Run("ServerResponseOptions", func(t *testing.T) {
+	t.Run("server response options", func(t *testing.T) {
 		assert.Equal(t, "<ring>", ringAlertInfo)
 		// Custom contact user proves override (default would be ua name)
 		assert.Equal(t, "127.0.0.1:15091", okContact)
@@ -268,7 +268,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		assert.Equal(t, "yes", okMutated)
 	})
 
-	t.Run("HangupHeaders", func(t *testing.T) {
+	t.Run("hangup headers", func(t *testing.T) {
 		hctx, hcancel := context.WithTimeout(ctx, 10*time.Second)
 		defer hcancel()
 		err = dialog.Hangup(hctx, WithHeader("Reason", "Q.850;cause=16"))
@@ -285,25 +285,25 @@ func TestIntegrationSignalOptions(t *testing.T) {
 // TestSignalOptionsFieldCoverage directly exercises every SignalOption factory
 // so a field-application regression cannot slip past the scope-table tests.
 func TestSignalOptionsFieldCoverage(t *testing.T) {
-	t.Run("WithBody", func(t *testing.T) {
+	t.Run("with body", func(t *testing.T) {
 		p, err := newTestParams([]SignalOption{WithBody([]byte("custom-sdp"))})
 		require.NoError(t, err)
 		assert.Equal(t, []byte("custom-sdp"), p.Msg.Body)
 	})
 
-	t.Run("WithMediaSession rejects nil", func(t *testing.T) {
+	t.Run("with media session rejects nil", func(t *testing.T) {
 		_, err := newTestParams([]SignalOption{WithMediaSession(nil)})
 		assert.Error(t, err)
 	})
 
-	t.Run("WithMediaSession stores session", func(t *testing.T) {
+	t.Run("with media session stores session", func(t *testing.T) {
 		sess := &media.MediaSession{}
 		p, err := newTestParams([]SignalOption{WithMediaSession(sess)})
 		require.NoError(t, err)
 		assert.Same(t, sess, p.Media.MediaSession)
 	})
 
-	t.Run("WithMediaDTLS stores pointer copy", func(t *testing.T) {
+	t.Run("with media dtls stores pointer copy", func(t *testing.T) {
 		conf := media.DTLSConfig{ServerName: "sip.example"}
 		p, err := newTestParams([]SignalOption{WithMediaDTLS(conf)})
 		require.NoError(t, err)
@@ -313,17 +313,17 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		assert.Equal(t, "sip.example", p.Media.MediaDTLSConf.ServerName)
 	})
 
-	t.Run("WithMediaDTLS rejects empty config", func(t *testing.T) {
+	t.Run("with media dtls rejects empty config", func(t *testing.T) {
 		_, err := newTestParams([]SignalOption{WithMediaDTLS(media.DTLSConfig{})})
 		assert.Error(t, err)
 	})
 
-	t.Run("WithRequestMutator rejects nil fn", func(t *testing.T) {
+	t.Run("with request mutator rejects nil fn", func(t *testing.T) {
 		_, err := newTestParams([]SignalOption{WithRequestMutator(nil)})
 		assert.Error(t, err)
 	})
 
-	t.Run("WithRequestMutator runs on outgoing request", func(t *testing.T) {
+	t.Run("with request mutator runs on outgoing request", func(t *testing.T) {
 		called := false
 		p, err := newTestParams([]SignalOption{WithRequestMutator(func(req *sip.Request) error {
 			called = true
@@ -338,7 +338,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		assert.NotNil(t, req.GetHeader("X-Mutator"))
 	})
 
-	t.Run("WithResponseMutator", func(t *testing.T) {
+	t.Run("with response mutator", func(t *testing.T) {
 		p, err := newTestParams([]SignalOption{WithResponseMutator(func(res *sip.Response) error {
 			res.AppendHeader(sip.NewHeader("X-Out", "1"))
 			return nil
@@ -347,7 +347,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		require.NotNil(t, p.Msg.MutateResponse)
 	})
 
-	t.Run("WithDialogTransport / WithDialogTransportID", func(t *testing.T) {
+	t.Run("with dialog transport / with dialog transport id", func(t *testing.T) {
 		p, err := newTestParams([]SignalOption{
 			WithDialogTransport("tcp"),
 			WithDialogTransportID("tr-1"),
@@ -357,25 +357,25 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		assert.Equal(t, "tr-1", p.Dialog.TransportID)
 	})
 
-	t.Run("WithOriginator rejects nil", func(t *testing.T) {
+	t.Run("with originator rejects nil", func(t *testing.T) {
 		_, err := newTestParams([]SignalOption{WithOriginator(nil)})
 		assert.Error(t, err)
 	})
 
-	t.Run("WithAuthCredentials", func(t *testing.T) {
+	t.Run("with auth credentials", func(t *testing.T) {
 		p, err := newTestParams([]SignalOption{WithAuthCredentials("u", "p")})
 		require.NoError(t, err)
 		assert.Equal(t, "u", p.Dialog.Username)
 		assert.Equal(t, "p", p.Dialog.Password)
 	})
 
-	t.Run("WithEarlyMediaDetect", func(t *testing.T) {
+	t.Run("with early media detect", func(t *testing.T) {
 		p, err := newTestParams([]SignalOption{WithEarlyMediaDetect()})
 		require.NoError(t, err)
 		assert.True(t, p.Dialog.EarlyMediaDetect)
 	})
 
-	t.Run("WithOnMediaUpdate / WithOnRefer / WithOnResponse", func(t *testing.T) {
+	t.Run("with on media update / with on refer / with on response", func(t *testing.T) {
 		onMU := func(d *DialogMedia) {}
 		onRef := func(d *DialogClientSession) error { return nil }
 		onRes := func(res *sip.Response) error { return nil }
@@ -392,7 +392,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		assert.NotNil(t, p.Dialog.OnResponse)
 	})
 
-	t.Run("WithBody overrides signalMediaConfig precedence", func(t *testing.T) {
+	t.Run("with body overrides signal media config precedence", func(t *testing.T) {
 		// WithMediaSession takes precedence over granular Codecs/RTPNAT
 		// according to the documented precedence. Verify the configurator
 		// mirrors this: signalMediaConfig should be a no-op on a session
@@ -411,7 +411,7 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 		assert.Same(t, sess, p.Media.MediaSession)
 	})
 
-	t.Run("applyRequestSignal nil params is no-op", func(t *testing.T) {
+	t.Run("apply request signal nil params is no-op", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		require.NoError(t, applyRequestSignal(req, nil))
 	})
@@ -422,14 +422,14 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 func TestBuildReInviteRequest(t *testing.T) {
 	baseSDP := []byte("v=0\r\no=- 0 0\r\n")
 
-	t.Run("uses base SDP when no Body override", func(t *testing.T) {
+	t.Run("uses base sdp when no body override", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		require.NoError(t, buildReInviteRequest(req, baseSDP, nil, nil))
 		assert.Equal(t, baseSDP, req.Body())
 		assert.Equal(t, "application/sdp", req.GetHeader("Content-Type").Value())
 	})
 
-	t.Run("params.Msg.Body replaces base SDP", func(t *testing.T) {
+	t.Run("params.msg.body replaces base sdp", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		override := []byte("v=0\r\no=- custom\r\n")
 		p, err := newTestParams([]SignalOption{WithBody(override)})
@@ -438,7 +438,7 @@ func TestBuildReInviteRequest(t *testing.T) {
 		assert.Equal(t, override, req.Body())
 	})
 
-	t.Run("defaultContact applied when params.Msg.Contact unset", func(t *testing.T) {
+	t.Run("default contact applied when params.msg.contact unset", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		def := &sip.ContactHeader{Address: sip.Uri{User: "default", Host: "127.0.0.1", Port: 5060}}
 		require.NoError(t, buildReInviteRequest(req, baseSDP, def, nil))
@@ -448,7 +448,7 @@ func TestBuildReInviteRequest(t *testing.T) {
 		assert.Equal(t, "default", cont.Address.User)
 	})
 
-	t.Run("params.Msg.Contact overrides defaultContact", func(t *testing.T) {
+	t.Run("params.msg.contact overrides default contact", func(t *testing.T) {
 		req := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
 		def := &sip.ContactHeader{Address: sip.Uri{User: "default", Host: "127.0.0.1", Port: 5060}}
 		override := &sip.ContactHeader{Address: sip.Uri{User: "override", Host: "9.9.9.9", Port: 7777}}

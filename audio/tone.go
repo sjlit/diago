@@ -69,12 +69,12 @@ type ToneReader struct {
 	tone        Tone
 	sampleRate  int
 	numChannels int
-	loop        bool
+	isLoop      bool
 	// loopLen is the total sample count of one full pass over all segments
 	// (On+Off per segment), computed at the first wrap point. Zero means
 	// nothing to repeat: looping must not spin.
-	loopLen      int
-	loopComputed bool
+	loopLen        int
+	isLoopComputed bool
 
 	segIdx int
 	segPos int // samples consumed within the current segment
@@ -97,7 +97,7 @@ func NewToneReader(tone Tone, sampleRate, numChannels int) *ToneReader {
 // A tone without any audible or silent content (no segment, or every segment
 // with zero On and Off) is not loopable: the flag is ignored and Read still
 // returns io.EOF, so consumers cannot spin forever.
-func (r *ToneReader) Loop() { r.loop = true }
+func (r *ToneReader) Loop() { r.isLoop = true }
 
 // computeLoopLen sums the sample count of one pass over all segments. It is
 // evaluated lazily at the first wrap point, once the sample rate is known.
@@ -141,12 +141,12 @@ func (r *ToneReader) Read(p []byte) (int, error) {
 func (r *ToneReader) nextSample() (int16, bool) {
 	for {
 		if r.segIdx >= len(r.tone.Segments) {
-			if !r.loop {
+			if !r.isLoop {
 				return 0, false
 			}
-			if !r.loopComputed {
+			if !r.isLoopComputed {
 				r.loopLen = r.computeLoopLen()
-				r.loopComputed = true
+				r.isLoopComputed = true
 			}
 			if r.loopLen == 0 {
 				return 0, false
@@ -231,7 +231,7 @@ func ToneDTMFDigit(digit rune) (Tone, error) {
 		f, ok = dtmfToneFreqs[unicode.ToUpper(digit)]
 	}
 	if !ok {
-		return Tone{}, fmt.Errorf("tone: %q is not a DTMF digit", digit)
+		return Tone{}, fmt.Errorf("tone: %q is not a dtmf digit", digit)
 	}
 	return Tone{Segments: []ToneSegment{{Freqs: f[:], On: 80 * time.Millisecond}}}, nil
 }

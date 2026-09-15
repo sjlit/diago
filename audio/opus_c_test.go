@@ -41,14 +41,14 @@ func TestPCMEncoderOpus(t *testing.T) {
 	// 	input    []byte
 	// 	expected []byte
 	// }{
-	// 	{"PCMDecoding", FORMAT_TYPE_OPUS, nil, encodedOpus},
+	// 	{"PCMDecoding", FormatTypeOpus, nil, encodedOpus},
 	// }
 
-	t.Run("Encode", func(t *testing.T) {
+	t.Run("encode", func(t *testing.T) {
 		var outputBuffer bytes.Buffer
 
 		// Create the PCM encoder
-		encoder, err := NewPCMEncoderWriter(FORMAT_TYPE_OPUS, &outputBuffer)
+		encoder, err := NewPCMEncoderWriter(FormatTypeOpus, &outputBuffer)
 		require.NoError(t, err)
 
 		// Write the PCM data
@@ -75,12 +75,12 @@ func TestPCMEncoderOpus(t *testing.T) {
 	n, _ = samplesInt16ToBytes(expectedPCM, expectedLpcm)
 	require.Equal(t, n, len(expectedLpcm))
 
-	t.Run("Decode", func(t *testing.T) {
+	t.Run("decode", func(t *testing.T) {
 		// Create a buffer to simulate the encoded input
 		inputBuffer := bytes.NewReader(encodedOpus)
 
 		// Create the PCM decoder
-		decoder, err := NewPCMDecoderReader(FORMAT_TYPE_OPUS, inputBuffer)
+		decoder, err := NewPCMDecoderReader(FormatTypeOpus, inputBuffer)
 		require.NoError(t, err)
 
 		// Prepare a buffer to read the decoded PCM data into
@@ -99,12 +99,12 @@ func TestPCMEncoderOpus(t *testing.T) {
 		assert.Equal(t, expectedLpcm, fullPCM)
 	})
 
-	t.Run("DecodeWithSmallBuffer", func(t *testing.T) {
+	t.Run("decode with small buffer", func(t *testing.T) {
 		// Create a buffer to simulate the encoded input
 		inputBuffer := bytes.NewReader(encodedOpus)
 
 		// Create the PCM decoder
-		decoder, err := NewPCMDecoderReader(FORMAT_TYPE_OPUS, inputBuffer)
+		decoder, err := NewPCMDecoderReader(FormatTypeOpus, inputBuffer)
 		require.NoError(t, err)
 
 		decodedPCM := make([]byte, 512)

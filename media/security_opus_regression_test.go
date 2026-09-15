@@ -67,7 +67,7 @@ a=sendrecv`
 // otherwise media would silently fall back to plain RTP.
 func TestMediaSession_RemoteSDP_ArmsFinalizeWhenNotEstablished(t *testing.T) {
 	m := newDTLSTestSessionOnPort(t, 2, 23118)
-	require.False(t, m.dtlsEstablished)
+	require.False(t, m.isDTLSEstablished)
 	fp, err := dtlsSHA256Fingerprint(testdata.ServerCertificate())
 	require.NoError(t, err)
 	sd := `v=0
@@ -133,7 +133,7 @@ func TestMediaSession_LocalSDP_NoConnectionAttribute(t *testing.T) {
 	first := string(m.LocalSDP())
 	require.NotContains(t, first, "a=connection:")
 
-	m.dtlsEstablished = true
+	m.isDTLSEstablished = true
 	second := string(m.LocalSDP())
 	require.NotContains(t, second, "a=connection:")
 }

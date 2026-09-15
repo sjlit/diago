@@ -173,7 +173,7 @@ func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints, log
 		log = DefaultLogger()
 	}
 	if len(fingerprints) == 0 {
-		return fmt.Errorf("dtls: no SDP fingerprints offered, refusing (RFC 5763)")
+		return fmt.Errorf("dtls: no sdp fingerprints offered, refusing (RFC 5763)")
 	}
 	if len(state.PeerCertificates) == 0 {
 		return fmt.Errorf("no certificate found in dtls")
@@ -193,7 +193,7 @@ func dtlsVerifyConnection(state *dtls.State, fingerprints []sdpFingerprints, log
 		}
 	}
 
-	return fmt.Errorf("dtls peer certificate does not match any of the %d offered SDP fingerprint(s)", len(fingerprints))
+	return fmt.Errorf("dtls peer certificate does not match any of the %d offered sdp fingerprint(s)", len(fingerprints))
 }
 
 // certificateFingerprint hashes raw certificate bytes with the RFC 8122 hash

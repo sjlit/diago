@@ -57,7 +57,7 @@ type RTPPacketWriter struct {
 func NewRTPPacketWriter(writer RTPWriter, codec Codec) *RTPPacketWriter {
 	w := RTPPacketWriter{
 		writer:    writer,
-		seqWriter: NewRTPSequencer(),
+		seqWriter: NewRTPExtendedSequenceNumber(),
 		SSRC:      rand.Uint32(),
 		codec:     codec,
 		// RFC 3550 section 5.1: the initial timestamp SHOULD be random so
@@ -70,7 +70,7 @@ func NewRTPPacketWriter(writer RTPWriter, codec Codec) *RTPPacketWriter {
 	}
 
 	w.nextTimestamp = w.initTimestamp
-	w.clockReset()
+	w.resetClock()
 	return &w
 }
 
@@ -86,7 +86,7 @@ func NewRTPPacketWriterSession(sess *RTPSession) *RTPPacketWriter {
 	return w
 }
 
-func (w *RTPPacketWriter) clockReset() {
+func (w *RTPPacketWriter) resetClock() {
 	cod := w.codec
 	w.sampleRateTimestamp = cod.SampleTimestamp()
 	if w.clockTicker != nil {
@@ -218,7 +218,7 @@ func (w *RTPPacketWriter) UpdateRTPSession(rtpSess *RTPSession) {
 	w.writer = rtpSess
 
 	// In case of codec cha
-	w.clockReset()
+	w.resetClock()
 	// rtpSess.writeStats.SSRC = w.SSRC
 	// rtpSess.writeStats.sampleRate = w.sampleRate
 }

@@ -40,7 +40,7 @@ func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Respons
 	})
 
 	opts = append(opts, WithDefaultTransport(), WithClient(client))
-	dg, err := NewDiago(ua, opts...)
+	dg, err := New(ua, opts...)
 	require.NoError(t, err)
 	return dg
 }
@@ -91,7 +91,7 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 
 	ctx := context.TODO()
 
-	t.Run("SignalOptionCredentials", func(t *testing.T) {
+	t.Run("signal option credentials", func(t *testing.T) {
 		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 
@@ -100,7 +100,7 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 		assert.Contains(t, authValue.Load(), `username="aliceFromSignal"`)
 	})
 
-	t.Run("RegisterTransactionCredentialsFallback", func(t *testing.T) {
+	t.Run("register transaction credentials fallback", func(t *testing.T) {
 		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "bob", Host: "localhost"}, WithAuthCredentials("bobFromOpts", "pw"))
 		require.NoError(t, err)
 
@@ -139,7 +139,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 
 	ctx := context.TODO()
 
-	t.Run("TransactionOptionsShapeEveryAttempt", func(t *testing.T) {
+	t.Run("transaction options shape every attempt", func(t *testing.T) {
 		var reqs []*sip.Request
 		dg2 := testDiagoClient(t, registerTestCapture(&reqs))
 
@@ -167,7 +167,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("PerCallMutatorRunsOnTopOfTransaction", func(t *testing.T) {
+	t.Run("per call mutator runs on top of transaction", func(t *testing.T) {
 		var reqs []*sip.Request
 		dg2 := testDiagoClient(t, registerTestCapture(&reqs))
 
@@ -191,7 +191,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 		assert.Equal(t, "last", registerTestHeaderValue(t, reqs[0], "X-PerCall"))
 	})
 
-	t.Run("ContactOverride", func(t *testing.T) {
+	t.Run("contact override", func(t *testing.T) {
 		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "heidi", Host: "localhost"},
 			WithContact(&sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "heidi", Host: "example.com", Port: 5060}}))
 		require.NoError(t, err)
@@ -200,14 +200,14 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 		assert.Equal(t, "example.com", cont.Address.Host)
 	})
 
-	t.Run("ProxyHostDestination", func(t *testing.T) {
+	t.Run("proxy host destination", func(t *testing.T) {
 		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "grace", Host: "localhost"},
 			WithRegisterProxyHost("127.0.0.1:9999"))
 		require.NoError(t, err)
 		assert.Equal(t, "127.0.0.1:9999", rtx.Origin.Destination())
 	})
 
-	t.Run("OnRegisteredFiresOnce", func(t *testing.T) {
+	t.Run("on registered fires once", func(t *testing.T) {
 		var registered atomic.Int32
 		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "frank", Host: "localhost"},
 			WithOnRegistered(func() { registered.Add(1) }))
@@ -239,7 +239,7 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	reqCh := make(chan *sip.Request, 4)
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		reqCh <- req
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 		return sip.NewResponseFromRequest(req, 200, "OK", body)
 	})
 
@@ -264,7 +264,7 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
 	var runs atomic.Int32
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 		return sip.NewResponseFromRequest(req, 200, "OK", body)
 	})
 
@@ -284,7 +284,7 @@ func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
 
 func TestDiagoInviteCallerID(t *testing.T) {
 
-	t.Run("NoSDPInResponse", func(t *testing.T) {
+	t.Run("no sdp in response", func(t *testing.T) {
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
 		})
@@ -292,7 +292,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 		_, err := dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		if assert.Error(t, err) {
 			assert.ErrorIs(t, err, ErrSDPMissing)
-			assert.Equal(t, "no SDP in response: sdp missing", err.Error())
+			assert.Equal(t, "no sdp in response: sdp missing", err.Error())
 		}
 	})
 
@@ -302,7 +302,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 		return sip.NewResponseFromRequest(req, 500, "", nil)
 	})
 
-	t.Run("DefaultCallerID", func(t *testing.T) {
+	t.Run("default caller id", func(t *testing.T) {
 		go dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		req := <-reqCh
 
@@ -343,7 +343,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 		assert.Equal(t, tc.expectedMediaHost, connInfo.IP.String())
 	}
 
-	t.Run("ExternalHost", func(t *testing.T) {
+	t.Run("external host", func(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
 				Transport:    "udp",
@@ -358,7 +358,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 		doTest(tc)
 	})
 
-	t.Run("ExternalHostFQDN", func(t *testing.T) {
+	t.Run("external host fqdn", func(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
 				Transport:    "udp",
@@ -373,7 +373,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 		doTest(tc)
 	})
 
-	t.Run("ExternalHostFQDNExternalMedia", func(t *testing.T) {
+	t.Run("external host fqdn external media", func(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
 				Transport:    "udp",
@@ -394,18 +394,18 @@ func TestDiagoTransportConfs(t *testing.T) {
 
 func TestDiagoNewDialog(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 		return sip.NewResponseFromRequest(req, 200, "OK", body)
 	})
 	ctx := context.TODO()
 
-	t.Run("CloseNoError", func(t *testing.T) {
+	t.Run("close no error", func(t *testing.T) {
 		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		dialog.Close()
 	})
 
-	// t.Run("NoAcked", func(t *testing.T) {
+	// t.Run("no acked", func(t *testing.T) {
 	// 	dialog, err := dg.NewDialog( sip.Uri{User: "alice", Host: "localhost"}, NewDialogOpts{})
 	// 	require.NoError(t, err)
 	// 	defer dialog.Close()
@@ -415,7 +415,7 @@ func TestDiagoNewDialog(t *testing.T) {
 	// 	dialog.Audio
 	// })
 
-	t.Run("FullDialog", func(t *testing.T) {
+	t.Run("full dialog", func(t *testing.T) {
 		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		defer dialog.Close()
@@ -446,7 +446,7 @@ func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := NewDiago(ua, WithTransport(tran))
+	dg, err := New(ua, WithTransport(tran))
 	require.NoError(t, err)
 
 	err = dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
@@ -476,7 +476,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := NewDiago(ua,
+		dg, err := New(ua,
 			WithTransport(
 				Transport{
 					ID:        "tcp",
@@ -508,7 +508,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := NewDiago(ua,
+	dg, err := New(ua,
 		WithTransport(
 			Transport{
 				ID:        "tcp",
@@ -546,7 +546,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := NewDiago(ua,
+		dg, err := New(ua,
 			WithTransport(
 				Transport{
 					ID:        "tcp",
@@ -581,7 +581,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := NewDiago(ua,
+	dg, err := New(ua,
 		WithTransport(
 			Transport{
 				ID:        "tcp",
@@ -634,7 +634,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := NewDiago(ua,
+		dg, err := New(ua,
 			WithTransport(
 				Transport{
 					ID:        "tcp",
@@ -675,7 +675,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := NewDiago(ua,
+	dg, err := New(ua,
 		WithTransport(
 			Transport{
 				ID:        "tcp",

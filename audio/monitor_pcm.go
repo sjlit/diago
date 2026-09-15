@@ -20,12 +20,12 @@ var (
 )
 
 type pcmBufioWriter struct {
-	writer   *bufio.Writer // Lets use Buffered flushing
-	mu       sync.Mutex
-	stopped  bool
-	lastTime time.Time
-	codec    media.Codec
-	silence  []byte
+	writer    *bufio.Writer // Lets use Buffered flushing
+	mu        sync.Mutex
+	isStopped bool
+	lastTime  time.Time
+	codec     media.Codec
+	silence   []byte
 
 	// FailOpen makes recording best-effort: the first write error to the
 	// PCM sink (disk full, IO degradation) is recorded in brokenErr and
@@ -70,7 +70,7 @@ func (m *pcmBufioWriter) writePCM(now time.Time, lpcm []byte) error {
 	// We need this, because user can stop monitoring, but still keep underhood stream active
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.stopped || m.brokenErr != nil {
+	if m.isStopped || m.brokenErr != nil {
 		return nil // paused, or recording already degraded (fail-open)
 	}
 
@@ -112,13 +112,13 @@ func (m *pcmBufioWriter) Err() error {
 
 func (m *pcmBufioWriter) Stop() {
 	m.mu.Lock()
-	m.stopped = true
+	m.isStopped = true
 	m.mu.Unlock()
 }
 
 func (m *pcmBufioWriter) Start() {
 	m.mu.Lock()
-	m.stopped = false
+	m.isStopped = false
 	m.mu.Unlock()
 }
 
@@ -242,8 +242,8 @@ type MonitorPCMStereo struct {
 
 	// ownedRead/ownedWrite mark the spool files Init created itself; only
 	// those are closed and removed by Close / Init rollback.
-	ownedRead  bool
-	ownedWrite bool
+	isOwnedRead  bool
+	isOwnedWrite bool
 
 	recording io.Writer
 }
@@ -299,7 +299,7 @@ func (m *MonitorPCMStereo) Init(record io.Writer, readerCodec, writerCodec media
 			if err != nil {
 				return err
 			}
-			m.ownedRead = true
+			m.isOwnedRead = true
 		}
 
 		if m.PCMFileWrite == nil {
@@ -308,7 +308,7 @@ func (m *MonitorPCMStereo) Init(record io.Writer, readerCodec, writerCodec media
 			if err != nil {
 				return err
 			}
-			m.ownedWrite = true
+			m.isOwnedWrite = true
 		}
 
 		if err := m.MonitorPCMReader.Init(m.PCMFileRead, readerCodec, audioReader); err != nil {
@@ -330,18 +330,18 @@ func (m *MonitorPCMStereo) Init(record io.Writer, readerCodec, writerCodec media
 // removeTmpFiles closes and removes the spool files Init created itself
 // (ownedRead/ownedWrite). Caller-provided files are left open and in place.
 func (m *MonitorPCMStereo) removeTmpFiles() (err error) {
-	if m.ownedRead && m.PCMFileRead != nil {
+	if m.isOwnedRead && m.PCMFileRead != nil {
 		e1 := m.PCMFileRead.Close()
 		e2 := os.Remove(m.PCMFileRead.Name())
 		err = errors.Join(err, e1, e2)
-		m.ownedRead = false
+		m.isOwnedRead = false
 	}
 
-	if m.ownedWrite && m.PCMFileWrite != nil {
+	if m.isOwnedWrite && m.PCMFileWrite != nil {
 		e1 := m.PCMFileWrite.Close()
 		e2 := os.Remove(m.PCMFileWrite.Name())
 		err = errors.Join(err, e1, e2)
-		m.ownedWrite = false
+		m.isOwnedWrite = false
 	}
 	return err
 }

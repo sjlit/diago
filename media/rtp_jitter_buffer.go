@@ -23,7 +23,7 @@ const (
 
 // ErrInvalidPacketDuration is returned by NewRTPJitterBuffer when the packet
 // duration derived from the codec is not greater than zero.
-var ErrInvalidPacketDuration = errors.New("media: RTP jitter buffer packetDuration must be greater than zero")
+var ErrInvalidPacketDuration = errors.New("media: rtp jitter buffer packetDuration must be greater than zero")
 
 var rtpJitterDebug = envBool("JITTER_DEBUG")
 
@@ -112,23 +112,23 @@ type RTPJitterBuffer struct {
 	// ssrc identifies the RTP source currently accepted by the buffer.
 	ssrc uint32
 	// ssrcSet reports whether the buffer has learned an RTP source.
-	ssrcSet bool
+	isSSRCSet bool
 	// expectedSeq is the next sequence number scheduled for playout.
 	expectedSeq uint16
 	// expectedSet reports whether expectedSeq has been initialized.
-	expectedSet bool
+	isExpectedSet bool
 
 	// initialTimer limits how long startup waits to collect delayPackets.
 	initialTimer *time.Timer
 	// playoutTimer schedules the next packet release or loss decision.
 	playoutTimer *time.Timer
 	// playout reports whether the initial buffering phase has completed.
-	playout bool
+	isPlayout bool
 	// releaseNow reports that the next expected sequence may be processed now.
-	releaseNow bool
+	isReleaseNow bool
 
 	// inputClosed reports that readLoop has stopped producing packet events.
-	inputClosed bool
+	isInputClosed bool
 	// readErr stores the terminal upstream error returned after queued packets drain.
 	readErr error
 	// lastArrivalTime is used only for JITTER_DEBUG receive-side diagnostics.
@@ -136,7 +136,7 @@ type RTPJitterBuffer struct {
 	// lastArrivalSeq is the previous RTP sequence observed by readLoop.
 	lastArrivalSeq uint16
 	// lastArrivalSet reports whether receive-side debug arrival state is initialized.
-	lastArrivalSet bool
+	isLastArrivalSet bool
 	// stats uses atomics so Statistics may run concurrently with ReadRTP.
 	stats rtpJitterBufferStats
 }
@@ -221,7 +221,7 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 	j.start()
 
 	for {
-		if j.playout && j.releaseNow {
+		if j.isPlayout && j.isReleaseNow {
 			position := int(j.expectedSeq) % j.maxPackets
 			slotIndex := j.sequence[position]
 			if slotIndex >= 0 && j.slots[slotIndex].seq == j.expectedSeq {
@@ -233,7 +233,7 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 				j.sequence[position] = -1
 				j.queued--
 				j.expectedSeq++
-				j.releaseNow = false
+				j.isReleaseNow = false
 				j.resetPlayoutTimer()
 
 				n := copy(buf, slot.raw[:slot.n])
@@ -250,11 +250,11 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 
 			j.stats.packetsLost.Add(1)
 			j.expectedSeq++
-			j.releaseNow = false
+			j.isReleaseNow = false
 			j.resetPlayoutTimer()
 		}
 
-		if j.inputClosed && j.queued == 0 {
+		if j.isInputClosed && j.queued == 0 {
 			j.stopTimers()
 			if j.readErr != nil {
 				return 0, j.readErr
@@ -263,12 +263,12 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 		}
 
 		var initialC <-chan time.Time
-		if !j.playout && j.expectedSet {
+		if !j.isPlayout && j.isExpectedSet {
 			initialC = j.initialTimer.C
 		}
 
 		var playoutC <-chan time.Time
-		if j.playout && !j.releaseNow {
+		if j.isPlayout && !j.isReleaseNow {
 			playoutC = j.playoutTimer.C
 		}
 
@@ -289,17 +289,17 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 
 		case input, ok := <-j.input:
 			if !ok {
-				j.inputClosed = true
+				j.isInputClosed = true
 				continue
 			}
 			if input.err != nil {
 				j.readErr = input.err
-				j.inputClosed = true
+				j.isInputClosed = true
 				continue
 			}
 
 			j.handleSlot(input.slot)
-			if !j.playout && j.queued >= j.delayPackets {
+			if !j.isPlayout && j.queued >= j.delayPackets {
 				j.debugPlayoutStarted("delay_packets")
 				j.startPlayout()
 			}
@@ -309,7 +309,7 @@ func (j *RTPJitterBuffer) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 			j.startPlayout()
 
 		case <-playoutC:
-			j.releaseNow = true
+			j.isReleaseNow = true
 		}
 	}
 }
@@ -374,8 +374,8 @@ func (j *RTPJitterBuffer) handleSlot(slotIndex int) {
 	slot := &j.slots[slotIndex]
 	j.stats.packetsRead.Add(1)
 
-	if !j.ssrcSet || j.ssrc != slot.ssrc {
-		if j.ssrcSet {
+	if !j.isSSRCSet || j.ssrc != slot.ssrc {
+		if j.isSSRCSet {
 			j.stats.ssrcResets.Add(1)
 		}
 		j.resetStream(slot.ssrc, slot.seq)
@@ -383,7 +383,7 @@ func (j *RTPJitterBuffer) handleSlot(slotIndex int) {
 
 	distance := int16(slot.seq - j.expectedSeq)
 	if distance < 0 {
-		if j.playout {
+		if j.isPlayout {
 			j.stats.packetsLate.Add(1)
 			j.debugPacketDecision("late", slot, "behind_playout")
 			j.recycleSlot(slotIndex)
@@ -440,11 +440,11 @@ func (j *RTPJitterBuffer) canMoveExpectedBack(seq uint16) bool {
 func (j *RTPJitterBuffer) resetStream(ssrc uint32, seq uint16) {
 	j.clearSequence()
 	j.ssrc = ssrc
-	j.ssrcSet = true
+	j.isSSRCSet = true
 	j.expectedSeq = seq
-	j.expectedSet = true
-	j.playout = false
-	j.releaseNow = false
+	j.isExpectedSet = true
+	j.isPlayout = false
+	j.isReleaseNow = false
 	j.stopAndDrainTimer(j.playoutTimer)
 	j.resetTimer(j.initialTimer, time.Duration(j.delayPackets)*j.packetDuration)
 }
@@ -462,8 +462,8 @@ func (j *RTPJitterBuffer) clearSequence() {
 
 func (j *RTPJitterBuffer) startPlayout() {
 	j.stopAndDrainTimer(j.initialTimer)
-	j.playout = true
-	j.releaseNow = true
+	j.isPlayout = true
+	j.isReleaseNow = true
 }
 
 func (j *RTPJitterBuffer) resetPlayoutTimer() {
@@ -532,7 +532,7 @@ func (j *RTPJitterBuffer) debugArrival(slot *rtpJitterSlot) {
 	}
 
 	now := time.Now()
-	if j.lastArrivalSet {
+	if j.isLastArrivalSet {
 		arrivalDelta := now.Sub(j.lastArrivalTime)
 		if arrivalDelta > j.packetDuration+j.packetDuration/2 {
 			jitterDebugf("event=delayed_arrival seq=%d prev_seq=%d arrival_delta=%s packet_duration=%s",
@@ -556,7 +556,7 @@ func (j *RTPJitterBuffer) debugArrival(slot *rtpJitterSlot) {
 
 	j.lastArrivalTime = now
 	j.lastArrivalSeq = slot.seq
-	j.lastArrivalSet = true
+	j.isLastArrivalSet = true
 }
 
 func (j *RTPJitterBuffer) debugPacketDecision(event string, slot *rtpJitterSlot, reason string) {

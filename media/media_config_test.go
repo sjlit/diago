@@ -25,7 +25,7 @@ func TestMediaSessionPortRangeFromConfig(t *testing.T) {
 		}
 	}
 
-	t.Run("InstanceRange", func(t *testing.T) {
+	t.Run("instance range", func(t *testing.T) {
 		t.Cleanup(func() { rtpPortOffset.Store(0) })
 		for i := 0; i < 3; i++ {
 			s := newSession(16000, 16020)
@@ -39,7 +39,7 @@ func TestMediaSessionPortRangeFromConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("ForkCarriesConfig", func(t *testing.T) {
+	t.Run("fork carries config", func(t *testing.T) {
 		s := newSession(16000, 16020)
 		s.SDPCodecPreferLocalOrder = 1
 		f := s.Fork()
@@ -56,14 +56,14 @@ func TestMediaSessionCodecOrderPerSession(t *testing.T) {
 	local := []Codec{CodecAudioUlaw, CodecAudioAlaw}
 	remote := []Codec{CodecAudioAlaw, CodecAudioUlaw}
 
-	t.Run("SessionFieldLocalOrder", func(t *testing.T) {
+	t.Run("session field local order", func(t *testing.T) {
 		s := &MediaSession{Codecs: local, SDPCodecPreferLocalOrder: 1}
 		n := s.updateRemoteCodecs(remote, true)
 		require.Equal(t, 2, n)
 		assert.Equal(t, "PCMU", s.filterCodecs[0].Name, "local order must win")
 	})
 
-	t.Run("DefaultOffererOrder", func(t *testing.T) {
+	t.Run("default offerer order", func(t *testing.T) {
 		s := &MediaSession{Codecs: local}
 		n := s.updateRemoteCodecs(remote, true)
 		require.Equal(t, 2, n)

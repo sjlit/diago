@@ -198,18 +198,18 @@ func TestMediaSessionForkReusesEstablishedDTLSSRTP(t *testing.T) {
 	require.NoError(t, err)
 
 	m := &MediaSession{
-		Codecs:          []Codec{CodecAudioUlaw},
-		Mode:            sdp.ModeSendrecv,
-		SecureRTP:       2,
-		SRTPAlg:         SRTPProfileAes128CmHmacSha1_80,
-		dtlsEstablished: true,
-		localCtxSRTP:    ctx,
-		remoteCtxSRTP:   ctx,
-		Laddr:           net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+		Codecs:            []Codec{CodecAudioUlaw},
+		Mode:              sdp.ModeSendrecv,
+		SecureRTP:         2,
+		SRTPAlg:           SRTPProfileAes128CmHmacSha1_80,
+		isDTLSEstablished: true,
+		localCtxSRTP:      ctx,
+		remoteCtxSRTP:     ctx,
+		Laddr:             net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
 	}
 
 	fork := m.Fork()
-	require.True(t, fork.dtlsEstablished)
+	require.True(t, fork.isDTLSEstablished)
 	require.Same(t, ctx, fork.localCtxSRTP)
 	require.Same(t, ctx, fork.remoteCtxSRTP)
 

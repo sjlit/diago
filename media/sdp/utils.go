@@ -26,16 +26,16 @@ func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode st
 	formatsMap := []string{}
 	for _, f := range fmts {
 		switch f {
-		case FORMAT_TYPE_ULAW:
+		case FormatTypeULaw:
 			formatsMap = append(formatsMap, "a=rtpmap:0 PCMU/8000")
-		case FORMAT_TYPE_ALAW:
+		case FormatTypeALaw:
 			formatsMap = append(formatsMap, "a=rtpmap:8 PCMA/8000")
-		case FORMAT_TYPE_OPUS:
+		case FormatTypeOpus:
 			formatsMap = append(formatsMap, "a=rtpmap:96 opus/48000/2")
 			// Providing 0 when FEC cannot be used on the receiving side is RECOMMENDED.
 			// https://datatracker.ietf.org/doc/html/rfc7587
 			formatsMap = append(formatsMap, "a=fmtp:96 useinbandfec=0")
-		case FORMAT_TYPE_TELEPHONE_EVENT:
+		case FormatTypeTelephoneEvent:
 			formatsMap = append(formatsMap, "a=rtpmap:101 telephone-event/8000")
 			formatsMap = append(formatsMap, "a=fmtp:101 0-16")
 		}

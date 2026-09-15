@@ -30,7 +30,7 @@ type RTPExtendedSequenceNumber struct {
 	badSeq uint16
 }
 
-func NewRTPSequencer() RTPExtendedSequenceNumber {
+func NewRTPExtendedSequenceNumber() RTPExtendedSequenceNumber {
 	// There are more safer approaches but best is just SRTP
 	seq := uint16(rand.Uint32())
 	sn := RTPExtendedSequenceNumber{}

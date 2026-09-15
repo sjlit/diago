@@ -273,7 +273,7 @@ a=sendrecv`
 }
 
 func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
-	t.Run("DefaultSessionName", func(t *testing.T) {
+	t.Run("default session name", func(t *testing.T) {
 		m := MediaSession{
 			Codecs: []Codec{CodecAudioAlaw, CodecAudioUlaw},
 			Laddr:  net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
@@ -284,7 +284,7 @@ func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
 		require.Contains(t, string(m.LocalSDP()), "s=Sip Go Media")
 	})
 
-	t.Run("CustomSessionName", func(t *testing.T) {
+	t.Run("custom session name", func(t *testing.T) {
 		m := MediaSession{
 			Codecs:         []Codec{CodecAudioAlaw, CodecAudioUlaw},
 			Laddr:          net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
@@ -298,7 +298,7 @@ func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
 		require.NotContains(t, string(sdpBytes), "s=Sip Go Media")
 	})
 
-	t.Run("CustomSessionNameCarriedThroughFork", func(t *testing.T) {
+	t.Run("custom session name carried through fork", func(t *testing.T) {
 		m := MediaSession{
 			Codecs:         []Codec{CodecAudioAlaw, CodecAudioUlaw},
 			Laddr:          net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
@@ -311,7 +311,7 @@ func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
 		require.Contains(t, string(forked.LocalSDP()), "s=Forked UA")
 	})
 
-	t.Run("LineBreakFallsBackToDefault", func(t *testing.T) {
+	t.Run("line break falls back to default", func(t *testing.T) {
 		// A session name with CR/LF would inject extra SDP lines. LocalSDP has
 		// no error return, so it logs and falls back to the default name
 		// instead of emitting the injected payload.
@@ -328,7 +328,7 @@ func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
 		require.NotContains(t, sdpBytes, "s=x\n")
 	})
 
-	t.Run("ValidateSDPSessionName", func(t *testing.T) {
+	t.Run("validate sdp session name", func(t *testing.T) {
 		require.NoError(t, ValidateSDPSessionName("AcmePBX"))
 		require.NoError(t, ValidateSDPSessionName(""))
 		require.Error(t, ValidateSDPSessionName("x\ny"))
@@ -337,7 +337,7 @@ func TestMediaSessionLocalSDPCustomSessionName(t *testing.T) {
 }
 
 func TestMediaNegotiaton(t *testing.T) {
-	t.Run("UnsupportedRTPProfile", func(t *testing.T) {
+	t.Run("unsupported rtp profile", func(t *testing.T) {
 		sd := `v=0
 o=- 3948988145 3948988145 IN IP4 192.168.178.54
 s=Sip Go Media
@@ -358,7 +358,7 @@ a=sendrecv`
 		require.Contains(t, err.Error(), "unsupported media description protocol")
 	})
 
-	t.Run("ValidRTPSDP", func(t *testing.T) {
+	t.Run("valid rtp sdp", func(t *testing.T) {
 		sd := `v=0
 o=- 3948988145 3948988145 IN IP4 192.168.178.54
 s=Sip Go Media
@@ -378,7 +378,7 @@ a=sendrecv`
 		require.NoError(t, err)
 	})
 
-	t.Run("SecuredWithoutCrypto", func(t *testing.T) {
+	t.Run("secured without crypto", func(t *testing.T) {
 		sd := `v=0
 o=- 3948988145 3948988145 IN IP4 192.168.178.54
 s=Sip Go Media
@@ -398,10 +398,10 @@ a=sendrecv`
 		}
 		err := m.RemoteSDP([]byte(sd))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "remote requested secure RTP, but no context is created")
+		require.Contains(t, err.Error(), "remote requested secure rtp, but no context is created")
 	})
 
-	t.Run("Secured", func(t *testing.T) {
+	t.Run("secured", func(t *testing.T) {
 		sd := `v=0
 o=- 3948988145 3948988145 IN IP4 192.168.178.54
 s=Sip Go Media

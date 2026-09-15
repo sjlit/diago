@@ -91,13 +91,13 @@ func (s *MediaSession) CodecForPayloadType(payloadType uint8) (Codec, bool) {
 func CodecAudioFromPayloadType(payloadType uint8) (Codec, error) {
 	f := strconv.Itoa(int(payloadType))
 	switch f {
-	case sdp.FORMAT_TYPE_ALAW:
+	case sdp.FormatTypeALaw:
 		return CodecAudioAlaw, nil
-	case sdp.FORMAT_TYPE_ULAW:
+	case sdp.FormatTypeULaw:
 		return CodecAudioUlaw, nil
-	case sdp.FORMAT_TYPE_OPUS:
+	case sdp.FormatTypeOpus:
 		return CodecAudioOpus, nil
-	case sdp.FORMAT_TYPE_TELEPHONE_EVENT:
+	case sdp.FormatTypeTelephoneEvent:
 		return CodecTelephoneEvent8000, nil
 	}
 	return Codec{}, fmt.Errorf("non supported codec: %d", payloadType)

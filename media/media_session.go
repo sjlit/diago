@@ -221,7 +221,7 @@ type MediaSession struct {
 	// dtlsEstablished is set after the first successful DTLS handshake.
 	// Carried through Fork so a re-INVITE reuses the established association
 	// and its SRTP contexts instead of downgrading to plain RTP.
-	dtlsEstablished bool
+	isDTLSEstablished bool
 
 	onFinalize func() error
 
@@ -307,7 +307,7 @@ func (s *MediaSession) InitWithSDP(localSDP []byte) error {
 	s.sdp = localSDP
 	sd := sdp.SessionDescription{}
 	if err := sdp.Unmarshal(localSDP, &sd); err != nil {
-		return fmt.Errorf("fail to parse received SDP: %w", err)
+		return fmt.Errorf("fail to parse received sdp: %w", err)
 	}
 
 	ci, err := sd.ConnectionInformation()
@@ -398,7 +398,7 @@ func (s *MediaSession) Fork() *MediaSession {
 		srtpRemoteTag: s.srtpRemoteTag,
 		DTLSConf:      s.DTLSConf,
 		// Established association is reused (see the context carry-over below).
-		dtlsEstablished: s.dtlsEstablished,
+		isDTLSEstablished: s.isDTLSEstablished,
 
 		// Carry creation-time config so re-INVITE forks keep the same
 		// port range and negotiation policy.
@@ -409,7 +409,7 @@ func (s *MediaSession) Fork() *MediaSession {
 		Logger:                   s.Logger,
 	}
 
-	if cp.SecureRTP == 2 && cp.dtlsEstablished {
+	if cp.SecureRTP == 2 && cp.isDTLSEstablished {
 		// The DTLS association is reused, not renegotiated: RemoteSDP detects
 		// the carried contexts and does not re-arm the handshake.
 		cp.localCtxSRTP = s.localCtxSRTP
@@ -559,7 +559,7 @@ func (s *MediaSession) LocalSDP() []byte {
 	if s.sessionID == 0 {
 		// Use NTP seconds for the SDP o= session id (mainstream practice); the full 64-bit
 		// NTP value exceeds int64 when parsed as signed, breaking strict peers (488).
-		s.sessionID = GetCurrentNTPTimestamp() >> 32
+		s.sessionID = CurrentNTPTimestamp() >> 32
 		s.sessionVersion = s.sessionID
 	} else {
 		s.sessionVersion++
@@ -622,7 +622,7 @@ func ValidateSDPSessionName(name string) error {
 func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	sd := sdp.SessionDescription{}
 	if err := sdp.Unmarshal(sdpReceived, &sd); err != nil {
-		return fmt.Errorf("fail to parse received SDP: %w", err)
+		return fmt.Errorf("fail to parse received sdp: %w", err)
 	}
 
 	si, err := sd.SessionInformation()
@@ -668,10 +668,10 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	// callers map these errors to 488.
 	isDTLSRemote := md.Proto == "UDP/TLS/RTP/SAVP" || md.Proto == "UDP/TLS/RTP/SAVPF"
 	if s.SecureRTP == 2 && !isDTLSRemote {
-		return fmt.Errorf("sdp: proto mismatch: DTLS-SRTP configured but remote offered proto=%q", md.Proto)
+		return fmt.Errorf("sdp: proto mismatch: dtls-srtp configured but remote offered proto=%q", md.Proto)
 	}
 	if s.SecureRTP != 2 && isDTLSRemote {
-		return fmt.Errorf("sdp: proto mismatch: remote offered DTLS-SRTP but local SecureRTP=%d", s.SecureRTP)
+		return fmt.Errorf("sdp: proto mismatch: remote offered dtls-srtp but local SecureRTP=%d", s.SecureRTP)
 	}
 
 	codecs := make([]Codec, len(md.Formats))
@@ -688,7 +688,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		s.logger().Warn("reading codecs from SDP was not full", "error", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("no codecs found in SDP")
+		return fmt.Errorf("no codecs found in sdp")
 	}
 
 	// https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
@@ -802,7 +802,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		// rejected. Otherwise stripping fingerprints downgrades to
 		// unverified transport and bypasses N1 protection.
 		if len(fingerprints) == 0 {
-			return fmt.Errorf("sdp: missing a=fingerprint for DTLS-SRTP")
+			return fmt.Errorf("sdp: missing a=fingerprint for dtls-srtp")
 		}
 
 		// Reuse path: a fork carried the established SRTP contexts over
@@ -810,7 +810,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		// RTP reader on the shared socket, and the existing association keys
 		// stay in effect. setup/fingerprint were parsed and validated above,
 		// so a malformed re-offer is still rejected.
-		if s.dtlsEstablished && s.localCtxSRTP != nil && s.remoteCtxSRTP != nil {
+		if s.isDTLSEstablished && s.localCtxSRTP != nil && s.remoteCtxSRTP != nil {
 			s.logger().Debug("DTLS association reused for media update")
 			return nil
 		}
@@ -890,20 +890,20 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 
 			s.localCtxSRTP, err = srtp.CreateContext(clientKey, clientSalt, p)
 			if err != nil {
-				return fmt.Errorf("failed to create SRTP context: %w", err)
+				return fmt.Errorf("failed to create srtp context: %w", err)
 			}
 
 			// s.localCtxSRTP, err = srtp.CreateContext(serverKey, serverSalt, p)
 			s.remoteCtxSRTP, err = srtp.CreateContext(serverKey, serverSalt, p)
 			if err != nil {
-				return fmt.Errorf("failed to create SRTP context: %w", err)
+				return fmt.Errorf("failed to create srtp context: %w", err)
 			}
 
 			if s.localCtxSRTP == nil && s.remoteCtxSRTP == nil {
-				return fmt.Errorf("dtls - no SRTP context was set up")
+				return fmt.Errorf("dtls - no srtp context was set up")
 			}
 
-			s.dtlsEstablished = true
+			s.isDTLSEstablished = true
 			s.logger().Debug("DTLS SRTP setuped")
 			return nil
 		}
@@ -917,7 +917,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 	}
 
 	if secureRequest && s.remoteCtxSRTP == nil {
-		return fmt.Errorf("remote requested secure RTP, but no context is created proto=%q", md.Proto)
+		return fmt.Errorf("remote requested secure rtp, but no context is created proto=%q", md.Proto)
 	}
 	return nil
 }
@@ -1113,7 +1113,7 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 	if m.remoteCtxSRTP != nil {
 		decrypted, err := m.remoteCtxSRTP.DecryptRTP(buf, buf[:n], &pkt.Header)
 		if err != nil {
-			return n, fmt.Errorf("Read SRTP Decrypt error: %w", err)
+			return n, fmt.Errorf("read srtp decrypt error: %w", err)
 		}
 		if len(decrypted) > len(buf) {
 			m.logger().Warn("Growing Decrypted RTP buffer", "diff", len(decrypted)-len(buf))
@@ -1211,7 +1211,7 @@ func (m *MediaSession) DiscardQueuedRTP() (int, error) {
 	if m.rtpConn == nil {
 		return 0, nil
 	}
-	if m.SecureRTP == 2 && !m.dtlsEstablished {
+	if m.SecureRTP == 2 && !m.isDTLSEstablished {
 		m.logger().Debug("DiscardQueuedRTP skipped: DTLS handshake not established")
 		return 0, nil
 	}
@@ -1343,14 +1343,14 @@ func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
 
 	n, err := p.MarshalTo(writeBuf)
 	if err != nil {
-		return fmt.Errorf("failed to marshal to write RTP buf: %w", err)
+		return fmt.Errorf("failed to marshal to write rtp buf: %w", err)
 	}
 	data := writeBuf[:n]
 
 	if m.localCtxSRTP != nil {
 		data, err = m.localCtxSRTP.EncryptRTP(writeBuf, data, &p.Header)
 		if err != nil {
-			return fmt.Errorf("failed to encrypt written RTP: %w", err)
+			return fmt.Errorf("failed to encrypt written rtp: %w", err)
 		}
 	}
 
@@ -1509,7 +1509,7 @@ type dtlsSetup struct {
 }
 
 func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string, log *slog.Logger) []byte {
-	// ntpTime := GetCurrentNTPTimestamp()
+	// ntpTime := CurrentNTPTimestamp()
 	if len(codecs) == 0 {
 		// Nothing usable to advertise (ex. opus-only configuration without
 		// with_opus_c). RFC 4566 requires at least one fmt; emit a rejected

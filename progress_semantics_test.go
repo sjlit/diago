@@ -30,7 +30,7 @@ func TestProgressSemantics(t *testing.T) {
 
 	uaSrv, _ := sipgo.NewUA()
 	defer uaSrv.Close()
-	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := New(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15250,
 	}))
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestProgressSemantics(t *testing.T) {
 
 	uaCli, _ := sipgo.NewUA()
 	defer uaCli.Close()
-	dgCli, err := NewDiago(uaCli, WithTransport(Transport{
+	dgCli, err := New(uaCli, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15251,
 	}))
 	require.NoError(t, err)

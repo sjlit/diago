@@ -15,7 +15,7 @@ import (
 )
 
 type toneConfig struct {
-	loop   bool
+	isLoop bool
 	volume float64
 }
 
@@ -26,7 +26,7 @@ type ToneOption func(*toneConfig) error
 // tone plays once.
 func WithToneLoop() ToneOption {
 	return func(c *toneConfig) error {
-		c.loop = true
+		c.isLoop = true
 		return nil
 	}
 }
@@ -81,7 +81,7 @@ func (d *DialogMedia) PlayTone(ctx context.Context, tone audio.Tone, opts ...Ton
 	}
 
 	tr := audio.NewToneReader(tone, int(props.Codec.SampleRate), props.Codec.NumChannels)
-	if cfg.loop {
+	if cfg.isLoop {
 		tr.Loop()
 	}
 

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-type RTPDtmfWriter struct {
+type RTPDTMFWriter struct {
 	codec        Codec
 	writer       io.Writer
 	packetWriter *RTPPacketWriter
@@ -19,10 +19,10 @@ type RTPDtmfWriter struct {
 	mu sync.Mutex
 }
 
-// RTP DTMF writer is midleware for passing RTP DTMF event.
-// If it is chained it uses to block writer while writing DTFM events
-func NewRTPDTMFWriter(codec Codec, rtpPacketizer *RTPPacketWriter, writer io.Writer) *RTPDtmfWriter {
-	return &RTPDtmfWriter{
+// RTP DTMF writer is middleware for passing RTP DTMF events.
+// If it is chained it is used to block the writer while writing DTMF events.
+func NewRTPDTMFWriter(codec Codec, rtpPacketizer *RTPPacketWriter, writer io.Writer) *RTPDTMFWriter {
+	return &RTPDTMFWriter{
 		codec:        codec,
 		packetWriter: rtpPacketizer,
 		writer:       writer,
@@ -30,7 +30,7 @@ func NewRTPDTMFWriter(codec Codec, rtpPacketizer *RTPPacketWriter, writer io.Wri
 }
 
 // Write is RTP io.Writer which adds more sync mechanism
-func (w *RTPDtmfWriter) Write(b []byte) (int, error) {
+func (w *RTPDTMFWriter) Write(b []byte) (int, error) {
 	// If locked it means writer is currently writing DTMF over same stream
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -47,14 +47,14 @@ func (w *RTPDtmfWriter) Write(b []byte) (int, error) {
 // (volume 10, 80ms hold). It blocks for the whole event (~7 * codec.SampleDur).
 // A concurrent PauseWrite gate is waited out; use WriteDTMFContext when that
 // wait must be cancellable.
-func (w *RTPDtmfWriter) WriteDTMF(dtmf rune) error {
+func (w *RTPDTMFWriter) WriteDTMF(dtmf rune) error {
 	return w.WriteDTMFContext(context.Background(), dtmf)
 }
 
 // WriteDTMFContext is WriteDTMF with a context: ctx never starts the event
 // once canceled and it interrupts a wait spent behind the PauseWrite gate.
 // An event whose first packet was accepted completes regardless.
-func (w *RTPDtmfWriter) WriteDTMFContext(ctx context.Context, dtmf rune) error {
+func (w *RTPDTMFWriter) WriteDTMFContext(ctx context.Context, dtmf rune) error {
 	return w.WriteDTMFWithOptionsContext(ctx, dtmf, DTMFEncodeOptions{})
 }
 
@@ -62,7 +62,7 @@ func (w *RTPDtmfWriter) WriteDTMFContext(ctx context.Context, dtmf rune) error {
 // The event packets ride on the packet writer's SSRC with their own timestamp
 // (no audio clock advance), paced one codec.SampleDur per packet. It works at
 // any telephone-event clock rate (8k/16k/32k/48k per RFC 4733).
-func (w *RTPDtmfWriter) WriteDTMFWithOptions(dtmf rune, opts DTMFEncodeOptions) error {
+func (w *RTPDTMFWriter) WriteDTMFWithOptions(dtmf rune, opts DTMFEncodeOptions) error {
 	return w.WriteDTMFWithOptionsContext(context.Background(), dtmf, opts)
 }
 
@@ -71,7 +71,7 @@ func (w *RTPDtmfWriter) WriteDTMFWithOptions(dtmf rune, opts DTMFEncodeOptions) 
 // paused write gate (returning ctx.Err()); once the first packet is accepted
 // the event completes, so cancellation latency is one event with the gate
 // open and immediate while it stays closed.
-func (w *RTPDtmfWriter) WriteDTMFWithOptionsContext(ctx context.Context, dtmf rune, opts DTMFEncodeOptions) error {
+func (w *RTPDTMFWriter) WriteDTMFWithOptionsContext(ctx context.Context, dtmf rune, opts DTMFEncodeOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (w *RTPDtmfWriter) WriteDTMFWithOptionsContext(ctx context.Context, dtmf ru
 // unchanged so the event stream stays intact. The wait is interruptible:
 // ctx (carried down from WriteDTMFWithOptionsContext) bounds it when the
 // gate would otherwise never release.
-func (w *RTPDtmfWriter) writeDTMFSample(ctx context.Context, data []byte, marker bool) error {
+func (w *RTPDTMFWriter) writeDTMFSample(ctx context.Context, data []byte, marker bool) error {
 	for {
 		_, err := w.packetWriter.WriteSamples(data, 0, marker, w.codec.PayloadType)
 		if !errors.Is(err, ErrWritePaused) {

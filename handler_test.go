@@ -18,7 +18,7 @@ import (
 )
 
 func TestHandlerErrorResponseMapping(t *testing.T) {
-	t.Run("Sentinels", func(t *testing.T) {
+	t.Run("sentinels", func(t *testing.T) {
 		cases := []struct {
 			err  error
 			code int
@@ -35,7 +35,7 @@ func TestHandlerErrorResponseMapping(t *testing.T) {
 		}
 	})
 
-	t.Run("ResponseError", func(t *testing.T) {
+	t.Run("response error", func(t *testing.T) {
 		code, reason, headers := handlerErrorResponse(&ResponseError{
 			Code:    402,
 			Reason:  "Payment Required",
@@ -83,29 +83,29 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 		wantCode int
 	}{
 		{
-			name:     "Decline",
+			name:     "decline",
 			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrDecline },
 			wantCode: sip.StatusTemporarilyUnavailable,
 		},
 		{
-			name:     "Busy",
+			name:     "busy",
 			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrBusy },
 			wantCode: sip.StatusBusyHere,
 		},
 		{
-			name:     "NotFound",
+			name:     "not found",
 			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrNotFound },
 			wantCode: sip.StatusNotFound,
 		},
 		{
-			name: "CustomResponse",
+			name: "custom response",
 			handler: func(ctx context.Context, d *DialogServerSession) error {
 				return &ResponseError{Code: 402, Reason: "Payment Required"}
 			},
 			wantCode: 402,
 		},
 		{
-			name: "GenericError",
+			name: "generic error",
 			handler: func(ctx context.Context, d *DialogServerSession) error {
 				return errors.New("internal boom")
 			},
@@ -114,12 +114,12 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 		{
 			// A handler context error while the dialog is alive must not
 			// leave the INVITE unanswered.
-			name:     "HandlerContextError",
+			name:     "handler context error",
 			handler:  func(ctx context.Context, d *DialogServerSession) error { return context.DeadlineExceeded },
 			wantCode: sip.StatusInternalServerError,
 		},
 		{
-			name:     "NilHandler",
+			name:     "nil handler",
 			handler:  nil, // Serve maps nil to the 503 default handler
 			wantCode: sip.StatusServiceUnavailable,
 		},
@@ -136,7 +136,7 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			uaSrv, err := sipgo.NewUA(sipgo.WithUserAgent("server"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaSrv.Close() })
-			dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
+			dgSrv, err := New(uaSrv, WithTransport(Transport{
 				Transport: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
 			}))
 			require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaCli.Close() })
-			dgCli, err := NewDiago(uaCli, WithTransport(Transport{
+			dgCli, err := New(uaCli, WithTransport(Transport{
 				Transport: "udp", BindHost: "127.0.0.1", BindPort: cliPort,
 			}))
 			require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	t.Cleanup(func() { uaSrv.Close() })
 
 	handlerCtxErr := make(chan error, 1)
-	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := New(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15230,
 	}))
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := NewDiago(uaCli, WithTransport(Transport{
+	dgCli, err := New(uaCli, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15231,
 	}))
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaSrv.Close() })
 
-	dgSrv, err := NewDiago(uaSrv, WithTransport(Transport{
+	dgSrv, err := New(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15240,
 	}))
 	require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := NewDiago(uaCli,
+	dgCli, err := New(uaCli,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15241}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {

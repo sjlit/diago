@@ -53,8 +53,8 @@ func TestPCMEncoderWrite(t *testing.T) {
 		codec    uint8
 		expected []byte
 	}{
-		{"UlawEncoding", FORMAT_TYPE_ULAW, expectedULaw},
-		{"AlawEncoding", FORMAT_TYPE_ALAW, expectedALaw},
+		{"UlawEncoding", FormatTypeULaw, expectedULaw},
+		{"AlawEncoding", FormatTypeALaw, expectedALaw},
 	}
 
 	for _, tt := range tests {
@@ -97,9 +97,9 @@ func TestPCMDecoderRead(t *testing.T) {
 		input    []byte
 		expected []byte
 	}{
-		{"UlawDecoding", FORMAT_TYPE_ULAW, encodedUlaw, g711.DecodeUlaw(encodedUlaw)},
-		{"AlawDecoding", FORMAT_TYPE_ALAW, encodedAlaw, g711.DecodeAlaw(encodedAlaw)},
-		{"AlawDecodingCut", FORMAT_TYPE_ALAW, encodedAlaw[:len(encodedAlaw)-48], g711.DecodeAlaw(encodedAlaw[:len(encodedAlaw)-48])},
+		{"UlawDecoding", FormatTypeULaw, encodedUlaw, g711.DecodeUlaw(encodedUlaw)},
+		{"AlawDecoding", FormatTypeALaw, encodedAlaw, g711.DecodeAlaw(encodedAlaw)},
+		{"AlawDecodingCut", FormatTypeALaw, encodedAlaw[:len(encodedAlaw)-48], g711.DecodeAlaw(encodedAlaw[:len(encodedAlaw)-48])},
 	}
 
 	for _, tt := range tests {

@@ -20,8 +20,8 @@ var ErrRecordingClosed = errors.New("recording already closed")
 type RecordingOption func(*recordingConfig) error
 
 type recordingConfig struct {
-	failOpen bool
-	spoolDir string
+	isFailOpen bool
+	spoolDir   string
 }
 
 // WithRecordingFailOpen controls what a PCM write failure (disk full, IO
@@ -31,7 +31,7 @@ type recordingConfig struct {
 // the reader/writer chain instead (the pre-existing tap behaviour), which lets
 // a full disk interrupt bridged media.
 func WithRecordingFailOpen(b bool) RecordingOption {
-	return func(c *recordingConfig) error { c.failOpen = b; return nil }
+	return func(c *recordingConfig) error { c.isFailOpen = b; return nil }
 }
 
 // WithRecordingSpoolDir sets the directory holding the two per-direction raw
@@ -73,7 +73,7 @@ type StereoRecording struct {
 // it. Close the underlying file (and, for a recording to a fresh file, handle
 // its fd) after Close returns.
 func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOption) (*StereoRecording, error) {
-	cfg := recordingConfig{failOpen: true}
+	cfg := recordingConfig{isFailOpen: true}
 	for _, o := range opts {
 		if o == nil {
 			continue
@@ -113,8 +113,8 @@ func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOp
 		_ = wavWriter.Close()
 		return nil, err
 	}
-	mon.MonitorPCMReader.FailOpen = cfg.failOpen
-	mon.MonitorPCMWriter.FailOpen = cfg.failOpen
+	mon.MonitorPCMReader.FailOpen = cfg.isFailOpen
+	mon.MonitorPCMWriter.FailOpen = cfg.isFailOpen
 
 	rec := &StereoRecording{
 		dm:     d,

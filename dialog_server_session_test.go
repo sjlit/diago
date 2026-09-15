@@ -52,7 +52,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -71,7 +71,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := NewDiago(ua, WithTransport(
+	dg, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -151,7 +151,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -175,7 +175,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := NewDiago(ua, WithTransport(
+	dg, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -209,7 +209,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
-	uas, err := NewDiago(ua, WithTransport(Transport{
+	uas, err := New(ua, WithTransport(Transport{
 		Transport: "udp",
 		BindHost:  "127.0.0.1",
 		BindPort:  15080,
@@ -307,7 +307,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("dialer"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -353,7 +353,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
@@ -385,7 +385,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := NewDiago(ua, WithTransport(
+	dg, err := New(ua, WithTransport(
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
@@ -403,7 +403,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	t.Run("Successfull", func(t *testing.T) {
+	t.Run("successfull", func(t *testing.T) {
 		dialCall()
 		d := <-waitDialog
 		defer d.Hangup(ctx)
@@ -421,7 +421,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		assert.Equal(t, 200, <-referState)
 	})
 
-	t.Run("UnreachableRefer", func(t *testing.T) {
+	t.Run("unreachable refer", func(t *testing.T) {
 		dialCall()
 		d := <-waitDialog
 		defer d.Hangup(ctx)
@@ -439,7 +439,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		assert.Equal(t, sip.StatusTemporarilyUnavailable, <-referState)
 	})
 
-	t.Run("BusyRefer", func(t *testing.T) {
+	t.Run("busy refer", func(t *testing.T) {
 		dialCall()
 		d := <-waitDialog
 		defer d.Hangup(ctx)
@@ -504,7 +504,7 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uas"))
 		defer ua.Close()
 
-		dg, err := NewDiago(ua, WithTransport(
+		dg, err := New(ua, WithTransport(
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",

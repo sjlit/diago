@@ -53,7 +53,7 @@ func RTCPUnmarshal(data []byte, packets []rtcp.Packet) (n int, err error) {
 
 		err = h.Unmarshal(data)
 		if err != nil {
-			// fmt.Errorf("unmarshal RTCP error: %w", err)
+			// fmt.Errorf("unmarshal rtcp error: %w", err)
 			return 0, errors.Join(err, errRTCPFailedToUnmarshal)
 		}
 

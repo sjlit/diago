@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testDTMFLoopSequence(r *RTPDtmfReader, sequence []DTMFEvent) string {
+func testDTMFLoopSequence(r *RTPDTMFReader, sequence []DTMFEvent) string {
 	detected := strings.Builder{}
 	for i, ev := range sequence {
 		fmt.Println("Processing", ev, i, i%7 == 0)
@@ -25,7 +25,7 @@ func testDTMFLoopSequence(r *RTPDtmfReader, sequence []DTMFEvent) string {
 }
 
 func TestDTMFReader(t *testing.T) {
-	r := RTPDtmfReader{}
+	r := RTPDTMFReader{}
 
 	// DTMF 109
 	sequence := []DTMFEvent{
@@ -57,7 +57,7 @@ func TestDTMFReader(t *testing.T) {
 }
 
 func TestDTMFReaderRepeated(t *testing.T) {
-	r := RTPDtmfReader{}
+	r := RTPDTMFReader{}
 
 	// DTMF 109
 	sequence := []DTMFEvent{
@@ -89,7 +89,7 @@ func TestDTMFReaderRepeated(t *testing.T) {
 }
 
 func TestDTMFReaderLatePacket(t *testing.T) {
-	r := RTPDtmfReader{}
+	r := RTPDTMFReader{}
 
 	// DTMF 109
 	sequence := []DTMFEvent{
@@ -108,7 +108,7 @@ func TestDTMFReaderLatePacket(t *testing.T) {
 
 func TestDTMFReaderCases(t *testing.T) {
 	t.Skip("We need to check can this be test valid")
-	r := RTPDtmfReader{}
+	r := RTPDTMFReader{}
 
 	// DTMF 109
 	sequence := []DTMFEvent{
@@ -126,7 +126,7 @@ func TestDTMFReaderCases(t *testing.T) {
 }
 
 func TestDTMFReaderSinglePacketEvent(t *testing.T) {
-	r := RTPDtmfReader{}
+	r := RTPDTMFReader{}
 
 	// RFC 4733 §3.6: a short event may fit one packet carrying both marker
 	// and end bit. It must surface a digit, and its retransmissions (same
@@ -148,7 +148,7 @@ func TestDTMFReaderSinglePacketEvent(t *testing.T) {
 }
 
 func TestDTMFReaderIgnoresLineEvents(t *testing.T) {
-	r := RTPDtmfReader{}
+	r := RTPDTMFReader{}
 
 	// RFC 4733 event codes above 15 are line events (ex. flash), not DTMF
 	// keys. Both single-packet and multi-packet shapes must be ignored.

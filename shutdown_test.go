@@ -18,7 +18,7 @@ import (
 )
 
 func shutdownTestSDP() []byte {
-	return sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FORMAT_TYPE_ALAW}, "")
+	return sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 }
 
 func cacheCountClientDialogs(dg *Diago) int {
@@ -71,7 +71,7 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg, err := New(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -87,7 +87,7 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	assert.False(t, dg.serving.Load(), "listeners must be stopped after Shutdown")
 
 	// Already-serving must be rejected while up.
-	dg2, err := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg2, err := New(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 	require.NoError(t, dg2.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
@@ -108,7 +108,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaS.Close() })
 
-	dgS, err := NewDiago(uaS, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dgS, err := New(uaS, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 	handlerDone := make(chan struct{})
 	var handlerOnce atomic.Bool
@@ -129,7 +129,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	uaC, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { uaC.Close() })
-	dgC, err := NewDiago(uaC, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dgC, err := New(uaC, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 
 	d, err := dgC.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
@@ -201,7 +201,7 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 	t.Cleanup(func() { occupied.Close() })
 	occupiedPort := occupied.LocalAddr().(*net.UDPAddr).Port
 
-	dg, err := NewDiago(ua,
+	dg, err := New(ua,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: occupiedPort}),
 	)

@@ -69,7 +69,7 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 	)
 	defer ua.Close()
 
-	tu, err := diago.NewDiago(ua, diago.WithTransport(
+	tu, err := diago.New(ua, diago.WithTransport(
 		diago.Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",

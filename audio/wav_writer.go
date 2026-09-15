@@ -14,9 +14,9 @@ type WavWriter struct {
 	NumChans    int
 	AudioFormat int
 
-	W              io.WriteSeeker
-	headersWritten bool
-	dataSize       int64
+	W                 io.WriteSeeker
+	hasWrittenHeaders bool
+	dataSize          int64
 }
 
 func NewWavWriter(w io.WriteSeeker) *WavWriter {
@@ -38,7 +38,7 @@ func (ww *WavWriter) Write(audio []byte) (int, error) {
 
 func (ww *WavWriter) writeData(audio []byte) (int, error) {
 	w := ww.W
-	if ww.headersWritten {
+	if ww.hasWrittenHeaders {
 		return w.Write(audio)
 	}
 
@@ -46,7 +46,7 @@ func (ww *WavWriter) writeData(audio []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	ww.headersWritten = true
+	ww.hasWrittenHeaders = true
 
 	n, err := w.Write(audio)
 	return n, err

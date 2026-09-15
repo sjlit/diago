@@ -25,7 +25,7 @@ func main() {
 	examples.SetupLogger()
 
 	ua, _ := sipgo.NewUA()
-	dg, err := diago.NewDiago(ua,
+	dg, err := diago.New(ua,
 		diago.WithTransport(
 			diago.Transport{
 				ID:        "tcp",

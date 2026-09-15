@@ -24,9 +24,9 @@ const (
 	ReadBuffer = 160
 
 	// TODO: this type should defined once. For now we have this on sdp package as well
-	FORMAT_TYPE_ULAW = 0
-	FORMAT_TYPE_ALAW = 8
-	FORMAT_TYPE_OPUS = 96
+	FormatTypeULaw = 0
+	FormatTypeALaw = 8
+	FormatTypeOpus = 96
 )
 
 type PCMDecoder struct {
@@ -54,11 +54,11 @@ func (dec *PCMDecoder) Init(codec media.Codec) error {
 	dec.samplesSize = codec.SamplesPCM(16) // for now we only support 16 bit
 
 	switch codec.PayloadType {
-	case FORMAT_TYPE_ULAW:
+	case FormatTypeULaw:
 		dec.DecoderTo = DecodeUlawTo
-	case FORMAT_TYPE_ALAW:
+	case FormatTypeALaw:
 		dec.DecoderTo = DecodeAlawTo
-	case FORMAT_TYPE_OPUS:
+	case FormatTypeOpus:
 		opusDec := OpusDecoder{}
 		if err := opusDec.Init(int(codec.SampleRate), codec.NumChannels, codec.Samples16()); err != nil {
 			return fmt.Errorf("failed to create opus decoder: %w", err)
@@ -207,12 +207,12 @@ func NewPCMEncoder(payloadType uint8) (*PCMEncoder, error) {
 func (enc *PCMEncoder) Init(codec media.Codec) error {
 	enc.samplesSize = codec.SamplesPCM(16) // For now we only support 16 bit
 	switch codec.PayloadType {
-	case FORMAT_TYPE_ULAW:
+	case FormatTypeULaw:
 		enc.EncoderTo = EncodeUlawTo
-	case FORMAT_TYPE_ALAW:
+	case FormatTypeALaw:
 		enc.EncoderTo = EncodeAlawTo
 
-	case FORMAT_TYPE_OPUS:
+	case FormatTypeOpus:
 		// TODO handle mono
 		opusEnc := OpusEncoder{}
 		if err := opusEnc.Init(int(codec.SampleRate), codec.NumChannels, codec.Samples16()); err != nil {

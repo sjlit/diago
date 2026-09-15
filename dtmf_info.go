@@ -34,7 +34,7 @@ func parseDTMFRelay(body []byte) (dtmf rune, dur time.Duration, err error) {
 		case "duration":
 			ms, convErr := strconv.Atoi(val)
 			if convErr != nil || ms < 0 {
-				return 0, 0, fmt.Errorf("invalid DTMF duration value=%q", val)
+				return 0, 0, fmt.Errorf("invalid dtmf duration value=%q", val)
 			}
 			dur = time.Duration(ms) * time.Millisecond
 		default:
@@ -43,11 +43,11 @@ func parseDTMFRelay(body []byte) (dtmf rune, dur time.Duration, err error) {
 	}
 
 	if signal == "" {
-		return 0, 0, fmt.Errorf("DTMF signal missing")
+		return 0, 0, fmt.Errorf("dtmf signal missing")
 	}
 	r, ok := dtmfRelaySignal(signal)
 	if !ok {
-		return 0, 0, fmt.Errorf("invalid DTMF signal=%q", signal)
+		return 0, 0, fmt.Errorf("invalid dtmf signal=%q", signal)
 	}
 	return r, dur, nil
 }

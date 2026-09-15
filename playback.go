@@ -102,7 +102,7 @@ func (p *AudioPlayback) play(ctx context.Context, reader io.Reader, mimeType str
 	case "audio/pcm":
 		written, err = p.streamPCM(ctx, reader, p.writer)
 	default:
-		return 0, fmt.Errorf("unsuported content type %q", mimeType)
+		return 0, fmt.Errorf("unsupported content type %q", mimeType)
 	}
 
 	p.totalWritten += written
@@ -161,7 +161,7 @@ func (p *AudioPlayback) streamPCM(ctx context.Context, body io.Reader, playWrite
 
 	enc := &audio.PCMEncoderWriter{}
 	if err := enc.Init(codec, playWriter); err != nil {
-		return 0, fmt.Errorf("failed to create PCM encoder: %w", err)
+		return 0, fmt.Errorf("failed to create pcm encoder: %w", err)
 	}
 
 	written, err := media.CopyWithBufContext(ctx, body, enc, payloadBuf)
@@ -195,7 +195,7 @@ func (p *AudioPlayback) streamWav(ctx context.Context, body io.Reader, playWrite
 
 	enc := &audio.PCMEncoderWriter{}
 	if err := enc.Init(codec, playWriter); err != nil {
-		return 0, fmt.Errorf("failed to create PCM encoder: %w", err)
+		return 0, fmt.Errorf("failed to create pcm encoder: %w", err)
 	}
 
 	written, err := media.CopyWithBufContext(ctx, wavReader, enc, payloadBuf)

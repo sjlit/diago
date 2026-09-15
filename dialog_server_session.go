@@ -466,7 +466,7 @@ func (d *DialogServerSession) answerSession(ctx context.Context, rtpSess *media.
 	sess := rtpSess.Sess
 	sdp := d.InviteRequest.Body()
 	if sdp == nil {
-		return fmt.Errorf("no sdp present in INVITE: %w", ErrSDPMissing)
+		return fmt.Errorf("no sdp present in invite: %w", ErrSDPMissing)
 	}
 
 	if err := sess.RemoteSDP(sdp); err != nil {
@@ -518,7 +518,7 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 	sess := rtpSess.Sess
 	sdp := d.InviteRequest.Body()
 	if sdp == nil {
-		return fmt.Errorf("no sdp present in INVITE: %w", ErrSDPMissing)
+		return fmt.Errorf("no sdp present in invite: %w", ErrSDPMissing)
 	}
 
 	if err := sess.RemoteSDP(sdp); err != nil {
@@ -714,7 +714,7 @@ func (d *DialogServerSession) reInviteMediaSession(ctx context.Context, ms *medi
 
 		remoteSDP := res.Body()
 		if err := ms.RemoteSDP(remoteSDP); err != nil {
-			return fmt.Errorf("sdp update media remote SDP applying failed: %w", err)
+			return fmt.Errorf("sdp update media remote sdp applying failed: %w", err)
 		}
 		return d.mediaUpdateUnsafe(ms)
 	}()

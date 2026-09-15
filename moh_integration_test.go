@@ -38,7 +38,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
-	uas, err := NewDiago(ua,
+	uas, err := New(ua,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15082}),
 		WithMediaConfig(MediaConfig{
 			Codecs:      []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
@@ -108,7 +108,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
-	uas, err := NewDiago(ua,
+	uas, err := New(ua,
 		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15084}),
 	)
 	require.NoError(t, err)

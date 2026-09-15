@@ -104,7 +104,7 @@ func TestMediaSessionDiscardQueuedRTPDTLSPendingHandshake(t *testing.T) {
 	assert.Equal(t, uint16(1), pkt.SequenceNumber)
 
 	// Once the handshake is done the same session drains normally.
-	sess.dtlsEstablished = true
+	sess.isDTLSEstablished = true
 	n, err = sess.DiscardQueuedRTP()
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)

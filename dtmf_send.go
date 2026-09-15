@@ -30,11 +30,11 @@ const (
 )
 
 type dtmfSendConfig struct {
-	method    DTMFMethod
-	interval  time.Duration
-	eventDur  time.Duration
-	volume    uint8
-	volumeSet bool
+	method      DTMFMethod
+	interval    time.Duration
+	eventDur    time.Duration
+	volume      uint8
+	isVolumeSet bool
 }
 
 // DTMFSendOption tunes DialogMedia.SendDTMF.
@@ -87,7 +87,7 @@ func WithDTMFVolume(v uint8) DTMFSendOption {
 			return fmt.Errorf("WithDTMFVolume: %d out of range 0-63", v)
 		}
 		c.volume = v
-		c.volumeSet = true
+		c.isVolumeSet = true
 		return nil
 	}
 }
@@ -219,7 +219,7 @@ func (m *DialogMedia) sendDTMFRTP(ctx context.Context, digit rune, cfg dtmfSendC
 	}
 	return w.WriteDTMFWithOptionsContext(ctx, digit, media.DTMFEncodeOptions{
 		Volume:        cfg.volume,
-		VolumeSet:     cfg.volumeSet,
+		VolumeSet:     cfg.isVolumeSet,
 		EventDuration: cfg.eventDur,
 	})
 }
@@ -227,7 +227,7 @@ func (m *DialogMedia) sendDTMFRTP(ctx context.Context, digit rune, cfg dtmfSendC
 // dtmfWriterForDigit snapshots the current DTMF write path under the dialog
 // lock. It returns a writer whose packet handle stays valid after unlock; the
 // passthrough writer is unused by the event path, so it is not captured.
-func (m *DialogMedia) dtmfWriterForDigit() (*media.RTPDtmfWriter, error) {
+func (m *DialogMedia) dtmfWriterForDigit() (*media.RTPDTMFWriter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {

@@ -65,9 +65,9 @@ type Bridge struct {
 
 	// Lifecycle (#21): closed rejects Add; proxyRunning/proxyDone track the
 	// current proxyMedia generation so Remove/Close can interrupt and wait.
-	closed       bool
-	proxyRunning bool
-	proxyDone    chan struct{}
+	closed         bool
+	isProxyRunning bool
+	proxyDone      chan struct{}
 
 	// initOnce makes Init idempotent and lets ensureInit prepare the zero
 	// value lazily, so a Bridge built as a literal is usable too.
@@ -222,10 +222,10 @@ func (b *Bridge) claimProxyUnsafe() (chan struct{}, error) {
 	if b.closed {
 		return nil, ErrBridgeClosed
 	}
-	if b.proxyRunning {
+	if b.isProxyRunning {
 		return nil, fmt.Errorf("proxy media already running")
 	}
-	b.proxyRunning = true
+	b.isProxyRunning = true
 	b.proxyDone = make(chan struct{})
 	return b.proxyDone, nil
 }
@@ -233,7 +233,7 @@ func (b *Bridge) claimProxyUnsafe() (chan struct{}, error) {
 // releaseProxy ends the claimed generation and wakes Close/Remove waiters.
 func (b *Bridge) releaseProxy(done chan struct{}) {
 	b.mu.Lock()
-	b.proxyRunning = false
+	b.isProxyRunning = false
 	select {
 	case <-done:
 	default:
@@ -264,7 +264,7 @@ func (b *Bridge) RemoveDialogSession(d DialogSession) error {
 		b.mu.Unlock()
 		return nil
 	}
-	running := b.proxyRunning
+	running := b.isProxyRunning
 	done := b.proxyDone
 	snapshot := slices.Clone(b.dialogs)
 	b.mu.Unlock()
@@ -310,7 +310,7 @@ func (b *Bridge) Close() error {
 		return nil
 	}
 	b.closed = true
-	running := b.proxyRunning
+	running := b.isProxyRunning
 	done := b.proxyDone
 	snapshot := slices.Clone(b.dialogs)
 	b.mu.Unlock()
@@ -963,7 +963,7 @@ func (b *BridgeMix) mixLoop(rwStreams []*bridgePCMStream, poll bool) error {
 					}
 
 					// Mixing has been stopped or network problem
-					w.markGone = true
+					w.isMarkGone = true
 					continue
 
 				}
@@ -984,9 +984,9 @@ type bridgePCMStream struct {
 	buf []byte
 	n   int
 
-	pipeRead  chan int
-	pipeWrite chan []byte
-	markGone  bool
+	pipeRead   chan int
+	pipeWrite  chan []byte
+	isMarkGone bool
 }
 
 func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream *bridgePCMStream, wg *sync.WaitGroup, firstDialogCodec *media.Codec, poll bool) error {
@@ -1002,7 +1002,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 	}
 
 	if firstDialogCodec.SampleRate != p.Codec.SampleRate || firstDialogCodec.SampleDur != p.Codec.SampleDur {
-		return fmt.Errorf("Codec missmatch. Resampling or transcoding is not supported")
+		return fmt.Errorf("codec mismatch: resampling or transcoding is not supported")
 	}
 
 	rtr, err := func() (io.Reader, error) {
@@ -1141,7 +1141,7 @@ func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte,
 	err := func() error {
 		handledStreams := len(rwStreams)
 		for _, r := range rwStreams {
-			if r.markGone {
+			if r.isMarkGone {
 				handledStreams--
 				continue
 			}
@@ -1150,7 +1150,7 @@ func (b *BridgeMix) mixAllStreams(rwStreams []*bridgePCMStream, mixedBuf []byte,
 			select {
 			case bw, more := <-r.pipeWrite:
 				if !more {
-					r.markGone = true
+					r.isMarkGone = true
 					continue
 				}
 				n := copy(r.buf, bw)
