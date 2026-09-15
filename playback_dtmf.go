@@ -73,7 +73,7 @@ type AudioPlaybackDTMF struct {
 	dtmfCh     chan rune
 	dtmfReader *DTMFReader
 	// dm resolves the stable read handle at use time so the read loop
-	// survives media updates (re-INVITE) - docs/contracts.md §4
+	// survives media updates (re-INVITE)
 	dm *DialogMedia
 
 	// readCtx is canceled by Close to interrupt the read loop through the

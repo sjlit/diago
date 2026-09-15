@@ -102,8 +102,7 @@ func (d *DialogServerSession) ID() string {
 
 // Close frees local resources (media stack and dialog cleanup hooks).
 // It is idempotent and does NOT send any SIP message. Server dialogs are
-// closed by the framework when the serve handler returns
-// (docs/contracts.md §6).
+// closed by the framework when the serve handler returns.
 func (d *DialogServerSession) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
@@ -588,7 +587,7 @@ func (d *DialogServerSession) readAck(req *sip.Request, tx sip.ServerTransaction
 // Hangup terminates dialog. When dialog is confirmed BYE is sent,
 // otherwise the INVITE is declined with 480 (and nil is returned — declining
 // succeeded). Options allow customizing headers (ex. Reason), Contact and body
-// of the outgoing message. See docs/contracts.md §7 for the full matrix.
+// of the outgoing message.
 // Scope: WithHeaders, WithContact, WithRequestMutator (BYE),
 // WithResponseMutator (480 decline).
 func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) error {

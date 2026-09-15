@@ -45,7 +45,7 @@ func WithToneVolume(scale float64) ToneOption {
 
 // PlayTone synthesizes a tone and streams it to the dialog's audio writer.
 // It blocks until the tone finishes; with WithToneLoop it runs until ctx is
-// canceled and then returns ctx.Err() (docs/contracts.md §9 cancellation
+// canceled and then returns ctx.Err() (cancellation
 // style — cancellation latency is one packet interval).
 //
 // While the dialog's write gate is paused by another component

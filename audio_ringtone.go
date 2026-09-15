@@ -20,7 +20,7 @@ type AudioRingtone struct {
 	ringtone   []byte
 	sampleSize int
 	// dm resolves the stable write handle at use time; stop goes through the
-	// write gate (docs/contracts.md §4)
+	// write gate
 	dm *DialogMedia
 }
 

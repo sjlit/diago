@@ -41,7 +41,7 @@ func (d *DialogClientSession) DialogMedia() *DialogMedia {
 // Close frees local resources (media stack and dialog cleanup hooks).
 // It is idempotent and does NOT send any SIP message: closing without Hangup
 // leaves the remote leg up. Signaling teardown is the caller's responsibility
-// on client dialogs (docs/contracts.md §6, §7).
+// on client dialogs.
 func (d *DialogClientSession) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
@@ -59,7 +59,7 @@ func (d *DialogClientSession) ID() string {
 // Options allow customizing headers of the BYE request (ex. Reason header),
 // Contact and to mutate the final request.
 //
-// Behavior by dialog state (docs/contracts.md §7):
+// Behavior by dialog state:
 //   - no response received yet: error ErrDialogNotAnswered (cancel the Invite
 //     context instead, which sends CANCEL)
 //   - provisional response received (early dialog): BYE on the early dialog

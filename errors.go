@@ -13,7 +13,7 @@ import (
 // Lifecycle sentinels for dialog media operations. All media entry points
 // (audio readers/writers, playback factories, Listen*, Echo) return errors
 // matching these instead of panicking or returning bare errors when the dialog
-// is in the corresponding lifecycle state. See docs/contracts.md §8.
+// is in the corresponding lifecycle state.
 var (
 	// ErrDialogNotAnswered is returned when an operation requires an answered
 	// dialog with negotiated media, but no active media session exists yet

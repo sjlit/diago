@@ -17,7 +17,7 @@ import (
 // TestDialogMediaSessionReplacementDTMF is the regression test for the
 // snapshot-vs-replace design defect: a DTMF reader created before a media
 // update (re-INVITE) must keep working after the update. The reader resolves
-// the current media session at use time (docs/contracts.md §4) and the stable
+// the current media session at use time and the stable
 // reader/writer handles are hot-swapped, never replaced.
 func TestDialogMediaSessionReplacementDTMF(t *testing.T) {
 	d := newTestDialogMedia(t)

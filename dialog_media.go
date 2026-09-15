@@ -38,7 +38,7 @@ func init() {
 
 // DialogMedia is the media half shared by server and client dialog sessions.
 //
-// Ownership contract (docs/contracts.md §1): DialogMedia is the sole owner of
+// Ownership contract: DialogMedia is the sole owner of
 // the active *media.MediaSession and *media.RTPSession. It owns exactly one of
 // each at a time; re-INVITEs and media updates replace them under mu, while
 // the RTPPacketReader and RTPPacketWriter accessors expose stable handles
@@ -46,7 +46,7 @@ func init() {
 // media-session services (deadlines, codecs) must resolve them through
 // DialogMedia at use time and never capture a *media.MediaSession pointer.
 //
-// Concurrency contract (docs/contracts.md §5): all mutable media state is
+// Concurrency contract: all mutable media state is
 // guarded by mu; accessor methods (MediaSession, RTPSession, AudioReader,
 // AudioWriter, RemoteContact) are safe from any goroutine. Option functions
 // passed to AudioReader/AudioWriter run under mu and must not block or call
@@ -123,23 +123,23 @@ type dialogMedia = DialogMedia
 
 // RTPPacketReader returns the dialog's stable RTP read handle. It is created
 // on the first media init and never replaced; its internals are hot-swapped on
-// media updates, so code that needs the handle should resolve it per use
-// (docs/contracts.md §4). Safe from any goroutine.
+// media updates, so code that needs the handle should resolve it per use.
+// Safe from any goroutine.
 func (d *DialogMedia) RTPPacketReader() *media.RTPPacketReader {
 	return d.rtpPacketReader
 }
 
 // RTPPacketWriter returns the dialog's stable RTP write handle. It is created
 // on the first media init and never replaced; its internals are hot-swapped on
-// media updates, so code that needs the handle should resolve it per use
-// (docs/contracts.md §4). Safe from any goroutine.
+// media updates, so code that needs the handle should resolve it per use.
+// Safe from any goroutine.
 func (d *DialogMedia) RTPPacketWriter() *media.RTPPacketWriter {
 	return d.rtpPacketWriter
 }
 
 // currentMediaSession returns the currently active media session or nil.
 // Safe from any goroutine; components must resolve the session at use time
-// instead of capturing it (docs/contracts.md §4).
+// instead of capturing it.
 func (d *DialogMedia) currentMediaSession() *media.MediaSession {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -248,7 +248,7 @@ func (d *DialogMedia) onCloseUnsafe(f func() error) {
 //
 // Deprecated: Media session creation is owned by DialogMedia and driven by the
 // signaling lifecycle (ProgressMedia/Answer, re-INVITE). Manual initialization
-// is not supported; see docs/contracts.md for the ownership model.
+// is not supported.
 func (d *DialogMedia) InitMediaSession(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -871,8 +871,7 @@ func (d *DialogMedia) CreateRingtonePlayback() (*AudioRingtone, error) {
 // Deprecated: Use DialogMedia.StartStereoRecording instead. It self-installs
 // the tap into the current audio chain atomically (no deprecated setter, no
 // half-wired window), is fail-open by default so a full disk cannot interrupt
-// bridged media, and supports Pause/Resume and configurable spool. See
-// docs/contracts.md §12 for the install-before-Bridge timing contract.
+// bridged media, and supports Pause/Resume and configurable spool.
 // This method will be removed in a future release; do not use in new code.
 func (d *DialogMedia) AudioStereoRecordingCreate(wavFile *os.File) (*AudioStereoRecordingWav, error) {
 	mpropsW := MediaProps{}
@@ -950,7 +949,7 @@ func (d *DialogMedia) PauseAudioWrite() (StopFunc, error) {
 // Bridge.DiscardQueuedOnStart) - so forwarding begins from live media instead
 // of replaying a backlog that piled up while nobody was reading. Replaying
 // that backlog at the line rate is a common source of permanent one-way delay
-// for answer-before-bridge B2BUAs (see docs/contracts.md §15).
+// for answer-before-bridge B2BUAs.
 //
 // Precondition: no other component is reading this dialog's audio at the same
 // time. The drain reads the socket directly, bypassing the audio chain, so
@@ -1137,7 +1136,7 @@ func (d *DialogMedia) StartRTP(rw int8, dur time.Duration) error {
 
 type DTMFReader struct {
 	// dm resolves the CURRENT media session at use time so that deadline
-	// control survives media updates (re-INVITE) - docs/contracts.md §4
+	// control survives media updates (re-INVITE)
 	dm *DialogMedia
 	// packetReader is the stable audio read handle used for ctx-driven
 	// interrupts; the pointer never changes across media updates
@@ -1187,7 +1186,7 @@ func (m *DialogMedia) dtmfCodec() media.Codec {
 // Unlike the WithAudioReaderDTMF option, the returned reader is NOT installed
 // into the dialog audio pipeline: it wraps the current audio reader chain at
 // creation time. Deadline control resolves the current media session at use
-// time (docs/contracts.md §4).
+// time.
 func (m *DialogMedia) CreateDTMFReader() (*DTMFReader, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1340,7 +1339,7 @@ type DTMFWriter struct {
 //
 // Unlike the WithAudioWriterDTMF option, the returned writer is NOT installed
 // into the dialog audio pipeline: it wraps the current audio writer chain at
-// creation time (docs/contracts.md §4).
+// creation time.
 func (m *DialogMedia) CreateDTMFWriter() (*DTMFWriter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -55,7 +55,7 @@ type Bridge struct {
 	// DiscardQueuedOnStart drops RTP already queued on each leg's socket right
 	// before the proxy loop starts, so bridging begins from live media instead
 	// of replaying a pre-bridge backlog at the line rate - which otherwise
-	// turns into permanent one-way latency (docs/contracts.md §15).
+	// turns into permanent one-way latency.
 	//
 	// Opt-in (default false). Enable it for answer-before-bridge B2BUAs,
 	// where the peer starts sending media before the second leg joins and
@@ -927,7 +927,7 @@ type bridgePCMStream struct {
 	r  io.Reader
 	w  io.Writer
 	// dm resolves the CURRENT media session at use time so mix-loop deadline
-	// control survives media updates (re-INVITE) - docs/contracts.md §4
+	// control survives media updates (re-INVITE)
 	dm *DialogMedia
 	// read buf
 	buf []byte

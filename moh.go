@@ -20,10 +20,10 @@ import (
 // it with DialogMedia.PlayMusicOnHold and stop it with Stop (or
 // DialogMedia.StopMusicOnHold). The handle is safe for concurrent use.
 //
-// The loop re-resolves the dialog writer and negotiated codec every frame
-// (docs/contracts.md §4), so it survives re-INVITEs and re-renders the tone at
+// The loop re-resolves the dialog writer and negotiated codec every frame,
+// so it survives re-INVITEs and re-renders the tone at
 // a changed sample rate without a resampler. It assumes the exclusive write
-// path while active (docs/contracts.md §5 single-writer rule): stop other
+// path while active (single-writer rule): stop other
 // playback before starting hold music.
 type MusicOnHold struct {
 	// auto marks handles started by Hold; Unhold stops only those.

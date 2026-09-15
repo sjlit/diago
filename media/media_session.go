@@ -149,7 +149,7 @@ func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
 // MediaSession represents a single media (audio) session with RTP/RTCP over
 // one Laddr <-> Raddr pair.
 //
-// Lifecycle contract (see docs/contracts.md §2):
+// Lifecycle contract:
 //   - Config phase: fields may be set freely before Init().
 //   - Active phase: after a completed offer/answer exchange the session is
 //     FROZEN. Only IO (ReadRTP/WriteRTP/ReadRTCP/WriteRTCP/StopRTP/StartRTP)
@@ -286,7 +286,7 @@ func (s *MediaSession) Init() error {
 // InitWithListeners wires pre-created RTP/RTCP listeners into the session.
 //
 // Deprecated: MediaSession setup is performed by diago's signaling layer
-// (see docs/contracts.md). Construct sessions through diago APIs instead;
+// Construct sessions through diago APIs instead;
 // manual init is not part of the supported flow.
 func (s *MediaSession) InitWithListeners(lRTP net.PacketConn, lRTCP net.PacketConn, raddr *net.UDPAddr) {
 	s.Mode = sdp.ModeSendrecv
@@ -308,7 +308,7 @@ func (s *MediaSession) String() string {
 // InitWithSDP allows creating media session with own SDP and bypassing other needs
 //
 // Deprecated: MediaSession setup is performed by diago's signaling layer
-// (see docs/contracts.md). Construct sessions through diago APIs instead.
+// Construct sessions through diago APIs instead.
 func (s *MediaSession) InitWithSDP(localSDP []byte) error {
 	s.sdp = localSDP
 	sd := sdp.SessionDescription{}
@@ -378,7 +378,7 @@ func (s *MediaSession) StartRTP(rw int8) error {
 // (Raddr, rtcpRaddr, negotiated mode, filterCodecs, SRTP/DTLS state, NAT-learned
 // addresses) is reset and must be re-established via RemoteSDP on the draft.
 // The draft becomes active only when installed through diago's DialogMedia
-// (docs/contracts.md §3); mutating the active session in place is forbidden.
+// mutating the active session in place is forbidden.
 //
 // An established DTLS-SRTP association is the exception: its keys cannot be
 // re-derived without re-running the handshake (which is impossible while media
@@ -454,7 +454,7 @@ func (s *MediaSession) SetRemoteAddr(raddr *net.UDPAddr) {
 // allocates the o= session id, every call increments its version, and on an
 // SRTP offer it creates the local crypto context. SDES setup failures are
 // logged and the SDP continues in plaintext. It must never be called in
-// parallel to RemoteSDP; see docs/contracts.md §2.
+// parallel to RemoteSDP.
 func (s *MediaSession) LocalSDP() []byte {
 	if len(s.sdp) > 0 {
 		// If media session is static then just return sdp.
@@ -1198,7 +1198,7 @@ func (m *MediaSession) ReadRTPRaw(buf []byte) (int, error) {
 // ReadRTPRawDeadline reads raw RTP bytes with a one-shot read deadline.
 //
 // Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
-// gates on RTPPacketReader (PauseRead, ReadContext); see docs/contracts.md §5.
+// gates on RTPPacketReader (PauseRead, ReadContext).
 func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) {
 	m.rtpConn.SetReadDeadline(t)
 	return m.ReadRTPRaw(buf)
@@ -1208,7 +1208,7 @@ func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) 
 // returns how many were discarded. It exists for the moment a media consumer
 // starts (ex. a Bridge about to proxy): without it, whatever arrived while
 // nobody was reading is replayed at the line rate and becomes permanent
-// one-way latency (see docs/contracts.md §15).
+// one-way latency.
 //
 // The caller must guarantee that no other component is reading this session
 // concurrently - the drain consumes datagrams from the same socket. Packets
@@ -1330,7 +1330,7 @@ func (m *MediaSession) ReadRTCPRaw(buf []byte) (int, net.Addr, error) {
 // ReadRTCPRawDeadline reads raw RTCP bytes with a one-shot read deadline.
 //
 // Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
-// gates on RTPPacketReader (PauseRead, ReadContext); see docs/contracts.md §5.
+// gates on RTPPacketReader (PauseRead, ReadContext).
 func (m *MediaSession) ReadRTCPRawDeadline(buf []byte, t time.Time) (int, error) {
 	if m.rtcpConn == nil {
 		// just block
@@ -1430,7 +1430,7 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 // WriteRTCPDeadline writes an RTCP packet with a one-shot write deadline.
 //
 // Deprecated: Use RTPPacketWriter (stable handle) for writing; deadline pokes
-// from component code are forbidden, see docs/contracts.md §5.
+// from component code are forbidden.
 func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) error {
 	m.rtcpConn.SetWriteDeadline(deadline)
 	return m.WriteRTCP(p)
@@ -1438,7 +1438,7 @@ func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) erro
 
 // Use this to write Multi RTCP packets if they can fit in MTU=1500
 //
-// Deprecated: Use RTPPacketWriter (stable handle) for writing; see docs/contracts.md §5.
+// Deprecated: Use RTPPacketWriter (stable handle) for writing.
 func (m *MediaSession) WriteRTCPs(pkts []rtcp.Packet) error {
 	data, err := rtcpMarshal(pkts)
 	if err != nil {

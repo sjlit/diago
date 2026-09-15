@@ -67,7 +67,7 @@ type StereoRecording struct {
 //
 // It must be called before the dialog joins a Bridge: BridgeMix resolves each
 // leg's reader/writer exactly once at AddDialogSession, so a tap installed
-// afterwards is bypassed by bridged traffic. See docs/contracts.md.
+// afterwards is bypassed by bridged traffic.
 //
 // The caller keeps ownership of w: StartStereoRecording and Close never close
 // it. Close the underlying file (and, for a recording to a fresh file, handle

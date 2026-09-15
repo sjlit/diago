@@ -66,7 +66,7 @@ func Record(ctx context.Context, inDialog *diago.DialogServerSession) error {
 	defer wavFile.Close()
 
 	// Install a stereo recording tap into the audio pipeline. It must be
-	// started before the dialog joins a Bridge (see docs/contracts.md §12).
+	// started before the dialog joins a Bridge.
 	// The tap is fail-open by default: a full disk degrades the recording
 	// (surfacing via rec.Err) but never interrupts the call.
 	rec, err := inDialog.StartStereoRecording(wavFile)

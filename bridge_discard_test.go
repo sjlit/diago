@@ -67,7 +67,7 @@ func newQueuedRTPDialog(t *testing.T) (*DialogServerSession, func(n int)) {
 
 // Regression: queued pre-bridge RTP must not be replayed by the proxy -
 // replaying it at the line rate turns the pre-bridge backlog into permanent
-// one-way latency (docs/contracts.md §15). Callers can opt out.
+// one-way latency. Callers can opt out.
 func TestBridgeDiscardQueuedRTPOnStart(t *testing.T) {
 	for _, discard := range []bool{true, false} {
 		name := "forward_queued"

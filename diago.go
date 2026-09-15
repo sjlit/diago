@@ -672,7 +672,7 @@ func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id s
 // Serve starts 'Server' handle for SIP.
 // Should be called for UAS but can be skipped for UAC behavior
 //
-// Handler contract (docs/contracts.md §6): when the DialogHandler returns,
+// Handler contract: when the DialogHandler returns,
 // the framework tears the call down — a nil error hangs up the dialog (BYE
 // once confirmed, otherwise a 480 decline) with a 10s timeout, then closes
 // the dialog and its media. A non-nil error is mapped to a final response
@@ -826,7 +826,7 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //  2. It stops the SIP listeners started by Serve/ServeBackground and waits
 //     for them to exit.
 //
-// Ownership boundaries (docs/contracts.md §11):
+// Ownership boundaries:
 //   - The UserAgent is NOT closed: it is caller-owned and may be shared by
 //     multiple Diago instances. Call ua.Close() yourself when done.
 //   - Outgoing dialogs that never reached an answer are not in the cache;

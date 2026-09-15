@@ -13,7 +13,7 @@ import (
 )
 
 // TestMediaSessionForkContract locks the documented Fork semantics
-// (docs/contracts.md §3): drafts share connections, copy configuration, and
+// drafts share connections, copy configuration, and
 // reset everything negotiated. If Fork starts copying or dropping fields
 // differently, this test and the doc must be updated together.
 func TestMediaSessionForkContract(t *testing.T) {

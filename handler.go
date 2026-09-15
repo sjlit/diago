@@ -13,7 +13,7 @@ import (
 
 // DialogHandler handles one inbound dialog (call leg).
 //
-// Contract (docs/contracts.md §6):
+// Contract:
 //   - ctx is canceled when the serve context is canceled (Shutdown) or the
 //     dialog terminates. Long-running work must honor it.
 //   - Returning nil hands the call back to the framework, which hangs it up

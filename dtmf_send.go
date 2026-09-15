@@ -99,7 +99,7 @@ func WithDTMFVolume(v uint8) DTMFSendOption {
 // event completes first, so with the gate open cancellation latency is
 // bounded by one event.
 //
-// The media pipeline is resolved at use time per docs/contracts.md §4:
+// The media pipeline is resolved at use time:
 // auto mode picks RFC 4733 on the negotiated telephone-event payload type,
 // and falls back to inband dual tones when the peer does not support it.
 // Explicit DTMFMethodRTP without negotiation returns ErrDTMFUnsupported.
