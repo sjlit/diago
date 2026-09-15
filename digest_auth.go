@@ -198,7 +198,14 @@ func (s *DigestAuthServer) AuthorizeDialog(d *DialogServerSession, auth DigestAu
 		if err == nil {
 			err = fmt.Errorf("not authorized")
 		}
-		return errors.Join(err, d.WriteResponse(res))
+		// ErrResponseSent tells the framework the 401/403/400 was already
+		// written, so the handler error mapping must not answer again. Only
+		// claim that when the write actually succeeded: otherwise the INVITE
+		// would be left without any final response.
+		if werr := d.WriteResponse(res); werr != nil {
+			return errors.Join(err, werr)
+		}
+		return errors.Join(ErrResponseSent, err)
 	}
 	return errors.Join(err, nil)
 }

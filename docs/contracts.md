@@ -198,11 +198,21 @@ Dialog states come from `sipgo`/`sip` (`sip.DialogState*`):
 
 ### Handler-return semantics (server side)
 
-**When your `ServeDialogFunc` returns, the framework tears the call down**: it
-attempts `Hangup` (BYE once confirmed, otherwise a 480 decline to the INVITE)
-with a hardcoded 10-second timeout, then closes the dialog and its media. This
-is intentional and documented behavior:
+**When your `DialogHandler` returns, the framework tears the call down** with a
+hardcoded 10-second timeout and then closes the dialog and its media:
 
+- A `nil` error attempts `Hangup` (BYE once confirmed, otherwise a 480 decline
+  to the INVITE).
+- A non-nil error is mapped to a final response (`ErrDecline` 480, `ErrBusy`
+  486, `ErrNotFound` 404, `*ResponseError` custom, otherwise 500) or, when the
+  call is already confirmed, to BYE carrying an RFC 3326 `Reason` header.
+- Returning `ErrResponseSent` (wrapped) tells the framework the handler already
+  wrote its own final response (ex. `Authorize`); it only cleans up.
+
+This is intentional and documented behavior:
+
+- The handler receives a context that is canceled when either the serve
+  context is canceled (Shutdown) or the dialog ends.
 - A handler that wants the call alive **must block** until the call is over
   (read media, wait on `dialog.Context().Done()`, etc.) or call `Hangup` itself
   before returning.

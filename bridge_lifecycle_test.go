@@ -24,6 +24,9 @@ func (f *fakeBridgeDialog) Context() context.Context { return context.Background
 func (f *fakeBridgeDialog) Hangup(ctx context.Context, opts ...SignalOption) error {
 	return nil
 }
+func (f *fakeBridgeDialog) HangupAndClose(ctx context.Context, opts ...SignalOption) error {
+	return f.Close()
+}
 func (f *fakeBridgeDialog) Media() *DialogMedia      { return f.dm }
 func (f *fakeBridgeDialog) DialogSIP() *sipgo.Dialog { return nil }
 func (f *fakeBridgeDialog) Close() error             { return nil }

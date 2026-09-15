@@ -43,7 +43,7 @@ func main() {
 			},
 		))
 
-	err := dg.Serve(ctx, func(d *diago.DialogServerSession) {
+	err := dg.Serve(ctx, func(_ context.Context, d *diago.DialogServerSession) error {
 		d.Trying()
 		if err := d.Answer(); err != nil {
 			panic(err)
@@ -53,6 +53,7 @@ func main() {
 		err := d.Echo()
 		slog.Info("Echo finished with", "error", err)
 
+		return nil
 	})
 	if err != nil {
 		slog.Error("serve stopped", "error", err)

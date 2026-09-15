@@ -75,9 +75,10 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 
 	// Start listening incoming calls
 	go func() {
-		tu.Serve(ctx, func(inDialog *diago.DialogServerSession) {
+		tu.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
 			slog.Info("New dialog request", "id", inDialog.ID())
 			defer slog.Info("Dialog finished", "id", inDialog.ID())
+			return nil
 		})
 	}()
 

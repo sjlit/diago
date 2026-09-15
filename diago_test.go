@@ -289,7 +289,8 @@ func TestDiagoInviteCallerID(t *testing.T) {
 
 		_, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		if assert.Error(t, err) {
-			assert.Equal(t, "no SDP in response", err.Error())
+			assert.ErrorIs(t, err, ErrSDPMissing)
+			assert.Equal(t, "no SDP in response: sdp missing", err.Error())
 		}
 	})
 
@@ -444,7 +445,9 @@ func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 
 	dg := NewDiago(ua, WithTransport(tran))
 
-	err := dg.ServeBackground(context.TODO(), func(d *DialogServerSession) {})
+	err := dg.ServeBackground(context.TODO(), func(_ context.Context, d *DialogServerSession) error {
+		return nil
+	})
 	require.NoError(t, err)
 
 	newTran, _ := dg.getTransport("udp")
@@ -484,7 +487,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 				},
 			))
 
-		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 			d.Trying()
 			if err := d.Answer(); err != nil {
 				panic(err)
@@ -493,6 +496,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 			err := d.Echo()
 			slog.Info("Echo finished with", "error", err)
 
+			return nil
 		})
 		require.NoError(t, err)
 	}
@@ -552,7 +556,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 				},
 			))
 
-		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 			d.Trying()
 			if err := d.Answer(); err != nil {
 				panic(err)
@@ -561,6 +565,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 			err := d.Echo()
 			slog.Info("Echo finished with", "error", err)
 
+			return nil
 		})
 		require.NoError(t, err)
 	}
@@ -637,7 +642,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				},
 			))
 
-		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 			d.Trying()
 			if err := d.Answer(); err != nil {
 				panic(err)
@@ -646,6 +651,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 			err := d.Echo()
 			slog.Info("Echo finished with", "error", err)
 
+			return nil
 		})
 		require.NoError(t, err)
 	}

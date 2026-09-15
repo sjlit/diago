@@ -57,7 +57,9 @@ func TestDiagoShutdownTearsDownClientDialogs(t *testing.T) {
 	require.NoError(t, dg.Shutdown(ctx))
 
 	// Serving after Shutdown is refused.
-	err = dg.serve(ctx, func(d *DialogServerSession) {}, func() {})
+	err = dg.serve(ctx, func(_ context.Context, d *DialogServerSession) error {
+		return nil
+	}, func() {})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "shut down")
 
@@ -74,7 +76,9 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	require.NoError(t, dg.ServeBackground(ctx, func(d *DialogServerSession) {}))
+	require.NoError(t, dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+		return nil
+	}))
 	require.NotZero(t, dg.transports[0].BindPort, "listener must have bound an ephemeral port")
 	assert.True(t, dg.serving.Load())
 
@@ -83,9 +87,13 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 
 	// Already-serving must be rejected while up.
 	dg2 := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
-	require.NoError(t, dg2.ServeBackground(ctx, func(d *DialogServerSession) {}))
+	require.NoError(t, dg2.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+		return nil
+	}))
 	t.Cleanup(func() { dg2.Shutdown(context.Background()) })
-	err = dg2.serve(ctx, func(d *DialogServerSession) {}, func() {})
+	err = dg2.serve(ctx, func(_ context.Context, d *DialogServerSession) error {
+		return nil
+	}, func() {})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "already serving")
 }
@@ -104,13 +112,14 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	require.NoError(t, dgS.ServeBackground(ctx, func(d *DialogServerSession) {
+	require.NoError(t, dgS.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		d.Trying()
 		require.NoError(t, d.Answer())
 		<-d.Context().Done()
 		if handlerOnce.CompareAndSwap(false, true) {
 			close(handlerDone)
 		}
+		return nil
 	}))
 	serverPort := dgS.transports[0].BindPort
 
@@ -185,7 +194,9 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 
 	chErr := make(chan error, 1)
 	go func() {
-		chErr <- dg.ServeBackground(context.Background(), func(d *DialogServerSession) {})
+		chErr <- dg.ServeBackground(context.Background(), func(_ context.Context, d *DialogServerSession) error {
+			return nil
+		})
 	}()
 	select {
 	case err := <-chErr:
@@ -193,4 +204,12 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("ServeBackground did not report the bind failure")
 	}
+
+	// The failure must stop the working listener too: Serve returning an
+	// error means nothing is serving anymore, so its port is bindable again.
+	port := dg.transports[0].BindPort
+	require.NotZero(t, port, "working listener must have bound an ephemeral port")
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
+	require.NoError(t, err, "listeners must be stopped after a partial serve failure")
+	conn.Close()
 }

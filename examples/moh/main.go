@@ -63,17 +63,17 @@ func run(ctx context.Context) error {
 		diago.WithMediaConfig(diago.MediaConfig{MusicOnHold: holdTone}),
 	)
 
-	return dg.Serve(ctx, func(inDialog *diago.DialogServerSession) {
+	return dg.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
 		if err := inDialog.Answer(); err != nil {
 			slog.Error("Answer failed", "error", err)
-			return
+			return err
 		}
 
 		// DTMF reader for Hold (1) and Unhold (2).
 		reader, err := inDialog.CreateDTMFReader()
 		if err != nil {
 			slog.Error("CreateDTMFReader failed", "error", err)
-			return
+			return err
 		}
 		reader.OnDTMF(func(r rune) error {
 			switch r {
@@ -93,5 +93,6 @@ func run(ctx context.Context) error {
 
 		// Block until the call ends (server Serve tears it down on return).
 		<-inDialog.Context().Done()
+		return nil
 	})
 }

@@ -28,8 +28,6 @@ var (
 	DefaultPlaybackHTTPClient = http.Client{
 		Timeout: 20 * time.Second,
 	}
-
-	errNoRTPSession = errors.New("no rtp session")
 )
 
 func init() {
@@ -158,6 +156,11 @@ func (d *DialogMedia) Close() error {
 
 	onClose := d.onClose
 	d.onClose = nil
+	// Detach DTMF readers so SIP INFO digits arriving during/after teardown
+	// cannot reach callbacks of a closed dialog. In-flight deliverDTMF calls
+	// that already copied the reader list are harmless: the callbacks are
+	// user-owned and may observe ErrDialogClosed at worst.
+	d.dtmfReaders = nil
 	m := d.mediaSession
 	rtpSess := d.rtpSession
 	w := d.RTPPacketWriter
@@ -283,6 +286,10 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	if conf.SecureRTP < SecureRTPNone || conf.SecureRTP > SecureRTPDTLS {
+		return fmt.Errorf("invalid SRTP mode %d: use SecureRTPNone, SecureRTPSDES or SecureRTPDTLS", conf.SecureRTP)
+	}
+
 	// Set before the early return: precreated sessions (fake IO in tests,
 	// WithMediaSession) must still pick up the dialog-level hold music.
 	d.mohTone = conf.MusicOnHold
@@ -370,7 +377,7 @@ func (d *DialogMedia) handleMediaUpdate(req *sip.Request, tx sip.ServerTransacti
 // Must be protected with lock
 func (d *DialogMedia) sdpReInviteUnsafe(sdp []byte) error {
 	if d.mediaSession == nil {
-		return fmt.Errorf("no media session present")
+		return fmt.Errorf("no media session present: %w", ErrMediaSessionMissing)
 	}
 
 	if err := d.sdpUpdateUnsafe(sdp); err != nil {
@@ -384,7 +391,7 @@ func (d *DialogMedia) checkEarlyMedia(remoteSDP []byte) error {
 	defer d.mu.Unlock()
 	// RTP Session is only created when negotiation is finished. We use this to detect existing media
 	if d.rtpSession == nil {
-		return errNoRTPSession
+		return ErrMediaSessionMissing
 	}
 	return d.sdpUpdateUnsafe(remoteSDP)
 }

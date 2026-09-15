@@ -43,12 +43,25 @@ type RegisterTransaction struct {
 	client *sipgo.Client
 	log    *slog.Logger
 
+	// expiry tracks the server's Expires value for the current registration.
+	// It is runtime state, not configuration: doRegister refreshes it from the
+	// response.
 	expiry time.Duration
+	// retryAfter carries the server-requested Retry-After delay for the next
+	// attempt. It is set by the retry orchestration (Diago.Register) after a
+	// retryable failure and cleared on the next successful REGISTER.
+	retryAfter time.Duration
+	// after is the timer factory used between REGISTER attempts. It is a
+	// field so tests can drive the retry loop without wall-clock waits.
+	after func(time.Duration) <-chan time.Time
 }
 
-func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, params *SignalParams) *RegisterTransaction {
+func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, params *SignalParams, after func(time.Duration) <-chan time.Time) *RegisterTransaction {
 	if params == nil {
 		params = &SignalParams{}
+	}
+	if after == nil {
+		after = time.After
 	}
 	reg := params.Register
 	expiry, allowHDRS := reg.Expiry, reg.AllowHeaders
@@ -91,6 +104,7 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 		mutateRequest: params.Msg.MutateRequest,
 		client:        client,
 		log:           log.With("caller", "Register"),
+		after:         after,
 	}
 
 	return t
@@ -256,6 +270,9 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *SignalPara
 		}
 		t.expiry = time.Duration(val) * time.Second
 	}
+	// The attempt succeeded: a Retry-After override from a previous failure
+	// must not leak into the healthy re-registration pacing.
+	t.retryAfter = 0
 
 	return nil
 }
@@ -264,42 +281,44 @@ func (t *RegisterTransaction) QualifyLoop(ctx context.Context) error {
 	// t.expiry tracks the server's Expires response header (set by Qualify)
 	// and is re-read on every loop iteration, so server-driven expiry
 	// changes adjust the retry pacing automatically.
-	expiry := t.expiry
-	retry := t.calcRetry(expiry)
+	retry := t.calcRetry(t.expiry)
 	return t.reregisterLoop(ctx, retry)
 }
 
 func (t *RegisterTransaction) reregisterLoop(ctx context.Context, retry time.Duration) error {
-	ticker := time.NewTicker(retry)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C: // TODO make configurable
+		case <-t.after(retry):
 		}
-		expiry := t.expiry
-		err := t.Qualify(ctx)
-		if err != nil {
+
+		prevExpiry := t.expiry
+		if err := t.Qualify(ctx); err != nil {
 			return err
 		}
 
-		if t.expiry != expiry {
-			// expiry got updated
-			expiry = t.expiry
-			retry = t.calcRetry(expiry)
-
-			t.log.Info("Register expiry changed", "expiry_old", expiry, "expiry_new", t.expiry, "retry", retry)
-			ticker.Reset(retry)
+		// A successful Qualify refreshes expiry (and clears any Retry-After
+		// override). Recompute the pacing whenever either changed so a
+		// transient failure's delay does not become sticky.
+		newRetry := t.calcRetry(t.expiry)
+		if t.expiry != prevExpiry || newRetry != retry {
+			t.log.Info("Register retry interval changed",
+				"expiry", t.expiry, "retry", newRetry, "retry_old", retry)
+			retry = newRetry
 		}
 	}
 }
 
 func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
-	// Allow caller to use own interval
+	// Explicit caller interval has the final word.
 	if t.register.RetryInterval != 0 {
 		return t.register.RetryInterval
+	}
+
+	// Server-requested Retry-After is next; it is honored as given.
+	if t.retryAfter > 0 {
+		return t.retryAfter
 	}
 
 	calc := expiry.Seconds() * 0.75

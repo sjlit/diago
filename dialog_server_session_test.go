@@ -79,10 +79,11 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	))
 
 	waitDialog := make(chan *DialogServerSession)
-	err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+	err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		t.Log("Call received")
 		waitDialog <- d
 		<-d.Context().Done()
+		return nil
 	})
 	require.NoError(t, err)
 
@@ -180,10 +181,11 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 	))
 
 	waitDialog := make(chan *DialogServerSession)
-	err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+	err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		t.Log("Call received")
 		waitDialog <- d
 		<-d.Context().Done()
+		return nil
 	})
 	require.NoError(t, err)
 	d := <-waitDialog
@@ -209,7 +211,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 		BindPort:        15080,
 		MediaExternalIP: net.IPv4(203, 0, 113, 10),
 	}))
-	err := uas.ServeBackground(ctx, func(d *DialogServerSession) {
+	err := uas.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		// This is the reported role: the peer sends the initial INVITE and
 		// Diago answers it as the UAS. RTP NAT must not change the SIP flow.
 		err := d.Answer(
@@ -223,13 +225,16 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 			_, _ = reader.Read(make([]byte, 160))
 		}()
 		<-d.Context().Done()
+		return nil
 	})
 	require.NoError(t, err)
 
 	peerUA, _ := sipgo.NewUA(sipgo.WithUserAgent("peer"))
 	defer peerUA.Close()
 	peer := newDialer(peerUA)
-	err = peer.ServeBackground(ctx, func(*DialogServerSession) {})
+	err = peer.ServeBackground(ctx, func(_ context.Context, _ *DialogServerSession) error {
+		return nil
+	})
 	require.NoError(t, err)
 
 	dialog, err := peer.Invite(ctx, sip.Uri{User: "service", Host: "127.0.0.1", Port: 15080})
@@ -348,21 +353,22 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 			},
 		))
 
-		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 			t.Log("Call INVITE due to REFER received")
 			// waitReferDialog <- d
 			switch d.ToUser() {
 			case "busy":
 				d.Respond(sip.StatusBusyHere, "Busy Here", nil)
-				return
+				return nil
 			case "noanswer":
 				d.Ringing()
-				return
+				return nil
 			default:
 				d.Answer()
 			}
 
 			<-d.Context().Done()
+			return nil
 		})
 		require.NoError(t, err)
 	}
@@ -379,10 +385,11 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	))
 
 	waitDialog := make(chan *DialogServerSession)
-	err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+	err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		t.Log("Call received")
 		waitDialog <- d
 		<-d.Context().Done()
+		return nil
 	})
 	require.NoError(t, err)
 
@@ -495,7 +502,7 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 			},
 		))
 
-		err := dg.ServeBackground(ctx, func(d *DialogServerSession) {
+		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 			waitDialog <- d
 			// Blocks until the ACK is processed (RemoteSDP applied).
 			answerLateErr <- d.AnswerLate()
@@ -503,7 +510,7 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 			reader, err := d.AudioReader()
 			if err != nil {
 				t.Log("AudioReader failed", err)
-				return
+				return nil
 			}
 			go func() {
 				buf := make([]byte, media.RTPBufSize)
@@ -514,6 +521,7 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 				audioGot <- n
 			}()
 			<-d.Context().Done()
+			return nil
 		})
 		require.NoError(t, err)
 	}

@@ -115,7 +115,7 @@ func TestIntegrationBridging(t *testing.T) {
 		},
 	))
 
-	err := tu.ServeBackground(ctx, func(in *DialogServerSession) {
+	err := tu.ServeBackground(ctx, func(_ context.Context, in *DialogServerSession) error {
 		in.Trying()
 		in.Ringing()
 		in.Answer()
@@ -129,13 +129,13 @@ func TestIntegrationBridging(t *testing.T) {
 		// Add us in bridge
 		if err := bridge.AddDialogSession(in); err != nil {
 			t.Log("Adding dialog in bridge failed", err)
-			return
+			return nil
 		}
 
 		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: 5091}, bridge)
 		if err != nil {
 			t.Log("Dialing failed", err)
-			return
+			return nil
 		}
 
 		outCtx := out.Context()
@@ -152,6 +152,7 @@ func TestIntegrationBridging(t *testing.T) {
 		}
 
 		// How to now do bridging
+		return nil
 	})
 	assert.NoError(t, err)
 
@@ -167,7 +168,7 @@ func TestIntegrationBridging(t *testing.T) {
 			},
 		))
 
-		err := dg.ServeBackground(context.Background(), func(d *DialogServerSession) {
+		err := dg.ServeBackground(context.Background(), func(_ context.Context, d *DialogServerSession) error {
 			ctx := d.Context()
 			err = d.Answer()
 			require.NoError(t, err)
@@ -183,6 +184,7 @@ func TestIntegrationBridging(t *testing.T) {
 			require.NoError(t, err)
 
 			<-ctx.Done()
+			return nil
 		})
 		require.NoError(t, err)
 	}
@@ -234,7 +236,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	var bridgePtr atomic.Pointer[BridgeMix]
 	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
-	err := tu.ServeBackground(ctx, func(in *DialogServerSession) {
+	err := tu.ServeBackground(ctx, func(_ context.Context, in *DialogServerSession) error {
 		defer func() { dialogExit <- in.ID() }()
 
 		in.Trying()
@@ -245,7 +247,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		t.Log("Adding into bridge", in.ID())
 		if err := bridgePtr.Load().AddDialogSession(in); err != nil {
 			t.Log("Adding dialog in bridge failed", err)
-			return
+			return nil
 		}
 		defer func() {
 			t.Log("Removing from bridge", in.ID())
@@ -253,6 +255,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		}()
 
 		<-in.Context().Done()
+		return nil
 	})
 	assert.NoError(t, err)
 

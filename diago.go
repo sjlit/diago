@@ -22,15 +22,13 @@ import (
 	"github.com/sjlit/diago/media"
 )
 
-type ServeDialogFunc func(d *DialogServerSession)
-
 type Diago struct {
 	ua         *sipgo.UserAgent
 	client     *sipgo.Client
 	server     *sipgo.Server
 	transports []Transport
 
-	serveHandler ServeDialogFunc
+	serveHandler DialogHandler
 
 	auth      sipgo.DigestAuth
 	mediaConf MediaConfig
@@ -40,14 +38,21 @@ type Diago struct {
 	cache            DialogCachePool
 	serverMiddleware func(next sipgo.RequestHandler) sipgo.RequestHandler
 
+	// registerAfter is the timer factory used between REGISTER attempts of
+	// Register/RegisterTransaction. It defaults to time.After and exists as a
+	// field so tests can exercise retry pacing without wall-clock waits.
+	registerAfter func(time.Duration) <-chan time.Time
+
 	// Serve lifecycle state. serveWG tracks the listener goroutines started
 	// by serve(); serveCancel cancels them. stopped is terminal: once
 	// Shutdown has run, serving is refused.
-	serveMu     sync.Mutex
-	serveCancel context.CancelFunc
-	serveWG     sync.WaitGroup
-	serving     atomic.Bool
-	stopped     atomic.Bool
+	serveMu          sync.Mutex
+	serveCtx         context.Context
+	serveCancel      context.CancelFunc
+	serveStartupDone chan struct{}
+	serveWG          sync.WaitGroup
+	serving          atomic.Bool
+	stopped          atomic.Bool
 }
 
 // We can extend this WithClientOptions, WithServerOptions
@@ -83,7 +88,8 @@ type Transport struct {
 
 	// MediaExternalIP changes SDP IP, by default it tries to use external host if it is IP defined
 	MediaExternalIP net.IP
-	// MediaSRTP offers SRTP. Values: 0-none, 1-sdes
+	// MediaSRTP offers SRTP. Values: SecureRTPNone, SecureRTPSDES or
+	// SecureRTPDTLS. Zero also auto-enables DTLS when MediaDTLSConf is set.
 	MediaSRTP     int
 	mediaBindIP   net.IP
 	MediaDTLSConf media.DTLSConfig
@@ -152,12 +158,22 @@ func WithTransport(t Transport) DiagoOption {
 	}
 }
 
+// Secure RTP modes accepted by Transport.MediaSRTP and
+// MediaConfig.SecureRTP. SecureRTPDTLS requires MediaDTLSConf / DTLSConf;
+// when a DTLS configuration is present and the mode is left at
+// SecureRTPNone, DTLS is enabled automatically.
+const (
+	SecureRTPNone = 0
+	SecureRTPSDES = 1
+	SecureRTPDTLS = 2
+)
+
 type MediaConfig struct {
 	Codecs []media.Codec
 	// Currently supported Single. Check media.SRTP... constants
 	// Experimental
 	SecureRTPAlg uint16
-	// SecureRTP 0 - none, 1 - sdes
+	// SecureRTP: SecureRTPNone, SecureRTPSDES or SecureRTPDTLS.
 	SecureRTP int
 	// BindIP is local IP used to bind RTP/RTCP listeners.
 	// When nil the interfaces IP is resolved on session creation.
@@ -228,10 +244,9 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 	dg := &Diago{
 		ua:  ua,
 		log: sip.DefaultLogger(),
-		serveHandler: func(d *DialogServerSession) {
-			fmt.Println("Serve Handler not implemented")
-		},
-		transports: []Transport{},
+		// Refuse calls until Serve installs a real handler.
+		serveHandler: defaultDialogHandler,
+		transports:   []Transport{},
 		mediaConf: MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 		},
@@ -240,6 +255,8 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 			client: &dialogCacheMap[*DialogClientSession]{sync.Map{}},
 			server: &dialogCacheMap[*DialogServerSession]{sync.Map{}},
 		},
+
+		registerAfter: time.After,
 	}
 
 	for _, o := range opts {
@@ -337,13 +354,22 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 			}
 		}()
 
-		dg.serveHandler(dWrap)
+		hctx, hcancel := dg.dialogHandlerContext(dialog.Context())
+		herr := dg.serveHandler(hctx, dWrap)
+		hcancel()
 
 		// Check is dialog closed
 		dialogCtx := dialog.Context()
 		// Always try hanguping call
 		ctx, cancel := context.WithTimeout(dialogCtx, 10*time.Second)
 		defer cancel()
+
+		if herr != nil {
+			if err := dWrap.respondHandlerError(ctx, herr); err != nil {
+				return fmt.Errorf("handler error handling failed: %w", err)
+			}
+			return nil
+		}
 
 		if err := dWrap.Hangup(ctx); err != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
@@ -526,28 +552,53 @@ func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id s
 // Serve starts 'Server' handle for SIP.
 // Should be called for UAS but can be skipped for UAC behavior
 //
-// Handler contract (docs/contracts.md §6): when the ServeDialogFunc returns,
-// the framework tears the call down — it hangs up the dialog (BYE once
-// confirmed, otherwise a 480 decline) with a 10s timeout, then closes the
-// dialog and its media. A handler that wants the call alive must block until
-// the call ends (or hang up itself before returning); goroutines spawned in
-// the handler must not rely on the dialog afterwards.
-func (dg *Diago) Serve(ctx context.Context, f ServeDialogFunc) error {
-	return dg.serve(ctx, f, func() {})
+// Handler contract (docs/contracts.md §6): when the DialogHandler returns,
+// the framework tears the call down — a nil error hangs up the dialog (BYE
+// once confirmed, otherwise a 480 decline) with a 10s timeout, then closes
+// the dialog and its media. A non-nil error is mapped to a final response
+// (or a BYE Reason header when already answered), see DialogHandler. A
+// handler that wants the call alive must block until the call ends (or hang
+// up itself before returning); goroutines spawned in the handler must not
+// rely on the dialog afterwards.
+//
+// Listener contract: Serve returns the first listener error joined with the
+// errors of the remaining listeners, and it only returns after every listener
+// has stopped — a non-nil return means nothing is serving. This also applies
+// to ServeBackground, which reports the same error while Serve is tearing the
+// remaining listeners down.
+func (dg *Diago) Serve(ctx context.Context, h DialogHandler) error {
+	return dg.serve(ctx, h, func() {})
 }
 
-func (dg *Diago) serve(ctx context.Context, f ServeDialogFunc, readyCh func()) error {
+func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) error {
 	if dg.stopped.Load() {
 		return fmt.Errorf("diago is shut down and cannot serve again")
 	}
 	if !dg.serving.CompareAndSwap(false, true) {
 		return fmt.Errorf("diago is already serving")
 	}
-	dg.HandleFunc(f)
+	if h == nil {
+		h = defaultDialogHandler
+	}
+	dg.serveHandler = h
 
 	// Derived ctx so Shutdown can stop the listeners even when Serve was
 	// called with a caller-owned context.
 	serveCtx, cancel := context.WithCancel(ctx)
+
+	// A listener is "settled" once it either reported ready (its socket
+	// exists) or exited. Cancelling before that can leak the listener inside
+	// sipgo: its ctx-watcher goroutine only closes the socket when it already
+	// has one, so a cancel during the startup window is lost.
+	var pending atomic.Int32
+	pending.Store(int32(len(dg.transports)))
+	startupDone := make(chan struct{})
+	markSettled := func() {
+		if pending.Add(-1) == 0 {
+			close(startupDone)
+		}
+	}
+
 	dg.serveMu.Lock()
 	if dg.stopped.Load() {
 		// Shutdown ran concurrently with this serve startup: refuse instead
@@ -556,19 +607,26 @@ func (dg *Diago) serve(ctx context.Context, f ServeDialogFunc, readyCh func()) e
 		cancel()
 		return fmt.Errorf("diago is shut down and cannot serve again")
 	}
+	dg.serveCtx = serveCtx
 	dg.serveCancel = cancel
+	dg.serveStartupDone = startupDone
 	dg.serveMu.Unlock()
 
 	defer dg.serving.Store(false)
 
 	server := dg.server
 	errCh := make(chan error, len(dg.transports))
+
 	for i, tran := range dg.transports {
 		hostport := net.JoinHostPort(tran.BindHost, strconv.Itoa(tran.BindPort))
+
+		var settled sync.Once
+		settle := func() { settled.Do(markSettled) }
 
 		dg.serveWG.Add(1)
 		go func(i int, tran Transport) {
 			defer dg.serveWG.Done()
+			defer settle()
 			// Update transport
 			ctx := context.WithValue(serveCtx, sipgo.ListenReadyCtxKey, sipgo.ListenReadyFuncCtxValue(func(network, addr string) {
 				// This now fixes port for empheral binding
@@ -580,6 +638,7 @@ func (dg *Diago) serve(ctx context.Context, f ServeDialogFunc, readyCh func()) e
 					tran.client = dg.createClient(tran)
 					dg.transports[i] = tran
 				}
+				settle()
 				readyCh()
 
 				dg.log.Info("Listening on transport", "addr", addr, "protocol", tran.network)
@@ -593,17 +652,25 @@ func (dg *Diago) serve(ctx context.Context, f ServeDialogFunc, readyCh func()) e
 		}(i, tran)
 	}
 
-	// Returns first error. On a partial failure (one transport fails while
-	// another serves) the remaining listeners keep serving until the context
-	// is canceled or Shutdown is called; cancel is NOT forced here, because
-	// canceling while a peer listener is still starting up hits a startup
-	// race inside sipgo's ListenAndServe.
-	return <-errCh
+	// On any listener failure, stop the remaining listeners and wait for them
+	// so Serve returning an error means nothing is serving anymore. The wait
+	// for startupDone first avoids the sipgo startup race described above.
+	firstErr := <-errCh
+	<-startupDone
+	cancel()
+
+	errs := make([]error, 0, len(dg.transports))
+	errs = append(errs, firstErr)
+	for i := 1; i < len(dg.transports); i++ {
+		errs = append(errs, <-errCh)
+	}
+	dg.serveWG.Wait()
+	return errors.Join(errs...)
 }
 
 // ServeBackground starts serving in background, but waits server listener to be started before returning
 // Checkout more info on Serve()
-func (dg *Diago) ServeBackground(ctx context.Context, f ServeDialogFunc) error {
+func (dg *Diago) ServeBackground(ctx context.Context, h DialogHandler) error {
 	readyCh := make(chan struct{}, len(dg.transports))
 	ready := func() {
 		readyCh <- struct{}{}
@@ -611,7 +678,7 @@ func (dg *Diago) ServeBackground(ctx context.Context, f ServeDialogFunc) error {
 	chErr := make(chan error, 1)
 
 	go func() {
-		chErr <- dg.serve(ctx, f, ready)
+		chErr <- dg.serve(ctx, h, ready)
 	}()
 
 	for range dg.transports {
@@ -662,7 +729,19 @@ func (dg *Diago) Shutdown(ctx context.Context) error {
 	// Phase 2: stop the listeners and wait for them to exit.
 	dg.serveMu.Lock()
 	cancel := dg.serveCancel
+	startupDone := dg.serveStartupDone
 	dg.serveMu.Unlock()
+
+	// Wait for every listener to settle (socket created or listener out of
+	// its startup window) before cancelling: cancelling earlier can leak a
+	// listener inside sipgo (see serve).
+	if startupDone != nil {
+		select {
+		case <-startupDone:
+		case <-ctx.Done():
+			errs = append(errs, fmt.Errorf("shutdown timed out waiting for listeners to start: %w", ctx.Err()))
+		}
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -707,11 +786,6 @@ func shutdownDialog(ctx context.Context, id string, d DialogSession) []error {
 		errs = append(errs, fmt.Errorf("close dialog %s: %w", id, err))
 	}
 	return errs
-}
-
-// HandleFunc registers you handler function for dialog. Must be called before serving request
-func (dg *Diago) HandleFunc(f ServeDialogFunc) {
-	dg.serveHandler = f
 }
 
 // InviteOptions is the legacy per-call option struct for Invite.
@@ -891,14 +965,31 @@ func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *SignalParams) (d
 
 // mediaConfigForTransport builds the per-dialog media config: the global
 // media config with the transport values overlaid, so it carries all fields
-// (codecs, RTPNAT, SRTP alg, port range, codec order).
+// (codecs, RTPNAT, SRTP alg, port range, codec order). A configured DTLS
+// profile implies DTLS-SRTP unless an explicit SRTP mode was chosen.
 func (dg *Diago) mediaConfigForTransport(tran *Transport) MediaConfig {
 	conf := dg.mediaConf
 	conf.SecureRTP = tran.MediaSRTP
 	conf.BindIP = tran.mediaBindIP
 	conf.ExternalIP = tran.MediaExternalIP
 	conf.DTLSConf = tran.MediaDTLSConf
+
+	if conf.SecureRTP == SecureRTPNone && !dtlsConfIsZero(conf.DTLSConf) {
+		conf.SecureRTP = SecureRTPDTLS
+	}
 	return conf
+}
+
+// dtlsConfIsZero reports whether conf carries no DTLS configuration. It is a
+// field-by-field check because media.DTLSConfig contains a func field and is
+// therefore not comparable with ==.
+func dtlsConfIsZero(conf media.DTLSConfig) bool {
+	return len(conf.Certificates) == 0 &&
+		conf.ServerName == "" &&
+		conf.ServerClientAuth == 0 &&
+		len(conf.SRTPProfiles) == 0 &&
+		conf.SDPSetupRole == nil &&
+		len(conf.EllipticCurves) == 0
 }
 
 func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, contact *sip.ContactHeader) (d *DialogClientSession, err error) {
@@ -1079,7 +1170,9 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...Signal
 			return err
 		}
 
-		t.expiry = retryAfter
+		// Retry pacing: explicit RetryInterval > Retry-After value > the
+		// default computed from the negotiated expiry (see calcRetry).
+		t.retryAfter = retryAfter
 	}
 }
 
@@ -1114,7 +1207,11 @@ func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opt
 	// 	return nil, err
 	// }
 	client := dg.getClient(tran)
-	return newRegisterTransaction(client, recipient, contactHDR, dg.log, params), nil
+	after := dg.registerAfter
+	if after == nil {
+		after = time.After
+	}
+	return newRegisterTransaction(client, recipient, contactHDR, dg.log, params, after), nil
 }
 
 func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {

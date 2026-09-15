@@ -70,6 +70,13 @@ func (d *DialogClientSession) Hangup(ctx context.Context, opts ...SignalOption) 
 	return d.byeSignal(ctx, params)
 }
 
+// HangupAndClose terminates the dialog with Hangup (sending BYE when
+// possible) and then releases local resources with Close. The local close
+// always runs, so resources are not leaked even when Hangup fails.
+func (d *DialogClientSession) HangupAndClose(ctx context.Context, opts ...SignalOption) error {
+	return errors.Join(d.Hangup(ctx, opts...), d.Close())
+}
+
 // byeSignal builds BYE request applying signaling options and writes it.
 // Mandatory dialog headers (From/To/Call-ID/CSeq) are filled by sipgo.
 func (d *DialogClientSession) byeSignal(ctx context.Context, params *SignalParams) error {
@@ -477,7 +484,7 @@ func (d *DialogClientSession) waitAnswer(ctx context.Context, med *DialogMedia, 
 
 	remoteSDP := d.InviteResponse.Body()
 	if remoteSDP == nil {
-		return fmt.Errorf("no SDP in response")
+		return fmt.Errorf("no SDP in response: %w", ErrSDPMissing)
 	}
 
 	if err := d.applyRemoteSDP(med, remoteSDP); err != nil {
@@ -494,7 +501,7 @@ func (d *DialogClientSession) applyRemoteSDP(med *DialogMedia, remoteSDP []byte)
 	sess := med.mediaSession
 
 	// Apply SDP on existing (Early) media if it exists
-	if err := med.checkEarlyMedia(remoteSDP); err != errNoRTPSession {
+	if err := med.checkEarlyMedia(remoteSDP); !errors.Is(err, ErrMediaSessionMissing) {
 		return err
 	}
 

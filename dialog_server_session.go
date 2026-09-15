@@ -190,24 +190,31 @@ func (d *DialogServerSession) respondSignal(statusCode int, reason string, body 
 	// really did acknowledge — the failure is purely a sipgo internal
 	// race, not a real transport problem.
 	if isAckWaitRaceError(err) {
-		select {
-		case <-ackCh:
-			// Diago saw the ACK; sipgo raced. Treat as success.
+		if waitAckOrGrace(ackCh, ackGraceWindow) {
 			return nil
-		default:
-		}
-		// Belt-and-suspenders: the OnAck handler can trail sipgo's loop
-		// exit by a few microseconds. Give it a small grace window before
-		// declaring the failure real. UDP RTT to the loopback client is
-		// already on the order of tens of microseconds, so 100ms is
-		// plenty of slack without inflating any honest timeout.
-		select {
-		case <-ackCh:
-			return nil
-		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	return err
+}
+
+// ackGraceWindow bounds how long respondSignal waits for diago's per-dialog
+// ACK channel after sipgo's WaitForAck loop reported "No ACK received".
+// sipgo's select can take the 64*T1 timeout branch even though the ACK was
+// already delivered to diago's OnAck path (which closes the channel right
+// before calling ReadAck). The ACK is ground truth, so this small window
+// turns that race into success. It is a variable so tests can control it
+// without wall-clock waits.
+var ackGraceWindow = 100 * time.Millisecond
+
+// waitAckOrGrace reports whether the ACK was observed before the grace window
+// elapsed. An already-closed channel wins immediately.
+func waitAckOrGrace(ackCh <-chan struct{}, grace time.Duration) bool {
+	select {
+	case <-ackCh:
+		return true
+	case <-time.After(grace):
+		return false
+	}
 }
 
 // isAckWaitRaceError reports whether err matches the known sipgo v1.4.3
@@ -219,6 +226,14 @@ func isAckWaitRaceError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "No ACK received")
+}
+
+// HangupAndClose terminates the dialog with Hangup (BYE when confirmed,
+// otherwise a decline) and then releases local resources with Close. The
+// local close always runs, so resources are not leaked even when Hangup
+// fails.
+func (d *DialogServerSession) HangupAndClose(ctx context.Context, opts ...SignalOption) error {
+	return errors.Join(d.Hangup(ctx, opts...), d.Close())
 }
 
 // byeSignal sends BYE applying signaling options (extra headers, request mutator).
@@ -464,7 +479,7 @@ func (d *DialogServerSession) answerSession(rtpSess *media.RTPSession, params *S
 	sess := rtpSess.Sess
 	sdp := d.InviteRequest.Body()
 	if sdp == nil {
-		return fmt.Errorf("no sdp present in INVITE")
+		return fmt.Errorf("no sdp present in INVITE: %w", ErrSDPMissing)
 	}
 
 	if err := sess.RemoteSDP(sdp); err != nil {
@@ -513,7 +528,7 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 	sess := rtpSess.Sess
 	sdp := d.InviteRequest.Body()
 	if sdp == nil {
-		return fmt.Errorf("no sdp present in INVITE")
+		return fmt.Errorf("no sdp present in INVITE: %w", ErrSDPMissing)
 	}
 
 	if err := sess.RemoteSDP(sdp); err != nil {

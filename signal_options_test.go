@@ -135,14 +135,14 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		}),
 	)
 
-	err := dgSrv.ServeBackground(ctx, func(d *DialogServerSession) {
+	err := dgSrv.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		if err := d.Trying(); err != nil {
 			t.Error(err)
-			return
+			return nil
 		}
 		if err := d.Ringing(WithHeader("Alert-Info", "<ring>")); err != nil {
 			t.Error(err)
-			return
+			return nil
 		}
 		customContact := &sip.ContactHeader{
 			// Reachable address so that the client can send BYE to it, but
@@ -157,9 +157,10 @@ func TestIntegrationSignalOptions(t *testing.T) {
 			}),
 		); err != nil {
 			t.Error(err)
-			return
+			return nil
 		}
 		<-d.Context().Done()
+		return nil
 	})
 	require.NoError(t, err)
 
@@ -167,7 +168,9 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	defer uaCli.Close()
 
 	dgCli := newDialer(uaCli)
-	err = dgCli.ServeBackground(ctx, func(d *DialogServerSession) {})
+	err = dgCli.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+		return nil
+	})
 	require.NoError(t, err)
 
 	dialog, err := dgCli.NewDialog(sip.Uri{User: "server", Host: "127.0.0.1", Port: 15091})

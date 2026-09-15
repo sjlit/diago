@@ -59,7 +59,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 	defer ua.Close()
 	srv := NewDiago(ua, WithTransport(tran))
 
-	err := srv.ServeBackground(ctx, func(d *DialogServerSession) {
+	err := srv.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
 		wg.Add(1)
 		defer wg.Done()
 
@@ -68,24 +68,25 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 		err := d.Answer()
 		if err != nil {
 			t.Log(err.Error())
-			return
+			return nil
 		}
 
 		pb, err := d.CreatePlayback()
 		if err != nil {
 			t.Log(err.Error())
-			return
+			return nil
 		}
 		_, err = pb.PlayFile("./testdata/files/demo-echodone.wav")
 		if err != nil {
 			t.Log(err.Error())
-			return
+			return nil
 		}
 
 		err = d.Hangup(ctx)
 		if err != nil {
 			t.Log(err.Error())
 		}
+		return nil
 	})
 	require.NoError(t, err)
 

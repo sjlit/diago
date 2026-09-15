@@ -51,8 +51,9 @@ func start(ctx context.Context, recipientUri string) error {
 		return err
 	}
 
-	return d.Serve(ctx, func(inDialog *diago.DialogServerSession) {
+	return d.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
 		BridgeCall(d, inDialog, recipient)
+		return nil
 	})
 }
 

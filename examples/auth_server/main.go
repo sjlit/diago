@@ -45,24 +45,26 @@ func start(ctx context.Context) error {
 		Realm:    "example.pbx",
 	}
 
-	return dg.Serve(ctx, func(inDialog *diago.DialogServerSession) {
+	return dg.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
 		// Challenge/validate the INVITE. On first INVITE this answers 401 and
 		// returns an error - the caller must re-INVITE with Authorization.
+		// The error wraps ErrResponseSent, so the framework only cleans up.
 		if err := inDialog.Authorize(authServer, auth); err != nil {
 			slog.Info("Call not authorized", "id", inDialog.ID(), "error", err)
-			return
+			return err
 		}
 
 		inDialog.Trying()
 		if err := inDialog.Answer(); err != nil {
 			slog.Error("Answer failed", "error", err)
-			return
+			return err
 		}
 		slog.Info("Call authorized and answered", "id", inDialog.ID())
 
 		<-inDialog.Context().Done()
+		return nil
 	})
 }

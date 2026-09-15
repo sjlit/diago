@@ -22,6 +22,10 @@ type DialogSession interface {
 	// Hangup terminates the dialog. Options allow customizing headers of the
 	// outgoing BYE / decline response (ex. Reason header)
 	Hangup(ctx context.Context, opts ...SignalOption) error
+	// HangupAndClose terminates the dialog (as Hangup) and releases local
+	// resources (as Close). It is the safe one-call teardown for owners of a
+	// dialog.
+	HangupAndClose(ctx context.Context, opts ...SignalOption) error
 	Media() *DialogMedia
 	DialogSIP() *sipgo.Dialog
 	Do(ctx context.Context, req *sip.Request) (*sip.Response, error)
@@ -353,7 +357,7 @@ func reInviteExchange(ctx context.Context, t reInviteExchangeTransport, req *sip
 			ackContact = t.RemoteContact()
 		}
 		if ackContact == nil {
-			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ACK")
+			return nil, fmt.Errorf("reinvite: 2xx has no Contact and dialog has no remote target to ACK: %w", ErrRemoteContactMissing)
 		}
 		if err := t.writeReInviteACK(ctx, ackContact.Address); err != nil {
 			return res, err

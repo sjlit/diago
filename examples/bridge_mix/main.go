@@ -46,10 +46,11 @@ func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
 	d := diago.NewDiago(ua)
-	return d.Serve(ctx, func(inDialog *diago.DialogServerSession) {
+	return d.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
 		BridgeCall(d, inDialog)
 
 		fmt.Println("Bridge state", bridge.String())
+		return nil
 	})
 }
 
