@@ -83,14 +83,14 @@ func TestDiagoMatchDialog_ServerAndClient(t *testing.T) {
 	idSrv, err := sip.DialogIDFromRequestUAS(reqSrv)
 	require.NoError(t, err)
 	sd := &DialogServerSession{}
-	require.NoError(t, dg.cache.server.DialogStore(ctx, idSrv, sd))
+	require.NoError(t, dg.cache.server.store(ctx, idSrv, sd))
 
 	// Seed client dialog under its UAC id
 	reqCli := newDialogRequest("call-cli", "from-cli", "to-cli")
 	idCli, err := sip.DialogIDFromRequestUAC(reqCli)
 	require.NoError(t, err)
 	cd := &DialogClientSession{}
-	require.NoError(t, dg.cache.client.DialogStore(ctx, idCli, cd))
+	require.NoError(t, dg.cache.client.store(ctx, idCli, cd))
 
 	// UAS request must match server
 	got, ok := dg.MatchDialog(reqSrv)
@@ -123,8 +123,8 @@ func TestDiagoMatchDialog_ServerPriority(t *testing.T) {
 
 	sd := &DialogServerSession{}
 	cd := &DialogClientSession{}
-	require.NoError(t, dg.cache.server.DialogStore(ctx, idUAS, sd))
-	require.NoError(t, dg.cache.client.DialogStore(ctx, idUAC, cd))
+	require.NoError(t, dg.cache.server.store(ctx, idUAS, sd))
+	require.NoError(t, dg.cache.client.store(ctx, idUAC, cd))
 
 	got, ok := dg.MatchDialog(req)
 	require.True(t, ok)

@@ -23,7 +23,7 @@ func shutdownTestSDP() []byte {
 
 func cacheCountClientDialogs(dg *Diago) int {
 	n := 0
-	dg.cache.client.DialogRange(context.Background(), func(id string, d *DialogClientSession) bool {
+	dg.cache.client.rangeDialogs(context.Background(), func(id string, d *DialogClientSession) bool {
 		n++
 		return true
 	})
@@ -141,7 +141,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	// handshake.
 	require.Eventually(t, func() bool {
 		confirmed := false
-		dgS.cache.server.DialogRange(ctx, func(id string, dd *DialogServerSession) bool {
+		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
 			confirmed = dd.LoadState() == sip.DialogStateConfirmed
 			return false
 		})
@@ -149,7 +149,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 
 	serverDialogs := 0
-	dgS.cache.server.DialogRange(ctx, func(id string, dd *DialogServerSession) bool {
+	dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
 		serverDialogs++
 		return true
 	})
@@ -171,7 +171,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	}
 
 	serverDialogs = 0
-	dgS.cache.server.DialogRange(ctx, func(id string, dd *DialogServerSession) bool {
+	dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
 		serverDialogs++
 		return true
 	})

@@ -36,7 +36,7 @@ func newTestDTMFPlayback(t *testing.T, w io.Writer, opts ...PlaybackDTMFOption) 
 	}
 
 	p := &AudioPlaybackDTMF{
-		AudioPlaybackControl: control,
+		AudioPlaybackControl: &control,
 		dtmfCh:               make(chan rune, dtmfChSize),
 		dtmfReader:           dtmfReader,
 		stopCh:               make(chan struct{}),
@@ -58,7 +58,7 @@ func TestPlaybackDTMFInterruptAnyKey(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &p.AudioPlaybackControl)
+	waitPlaying(t, p.AudioPlaybackControl)
 	require.Eventually(t, func() bool {
 		_, bytesW := cw.stats()
 		return bytesW > 320
@@ -95,7 +95,7 @@ func TestPlaybackDTMFInterruptKeysOnly(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &p.AudioPlaybackControl)
+	waitPlaying(t, p.AudioPlaybackControl)
 	require.Eventually(t, func() bool {
 		_, bytesW := cw.stats()
 		return bytesW > 320
@@ -131,7 +131,7 @@ func TestPlaybackDTMFNoInterrupt(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &p.AudioPlaybackControl)
+	waitPlaying(t, p.AudioPlaybackControl)
 	p.handleDTMF('1')
 
 	select {
@@ -157,7 +157,7 @@ func TestPlaybackDTMFReplay(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &p.AudioPlaybackControl)
+	waitPlaying(t, p.AudioPlaybackControl)
 	require.Eventually(t, func() bool {
 		_, bytesW := cw.stats()
 		return bytesW > 320
@@ -207,7 +207,7 @@ func TestPlaybackDTMFOnDTMFCallback(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &p.AudioPlaybackControl)
+	waitPlaying(t, p.AudioPlaybackControl)
 	p.handleDTMF('3')
 	p.handleDTMF('4')
 	<-done
@@ -302,11 +302,11 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 	go io.Copy(io.Discard, injector)
 
 	dialog := &DialogServerSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession:    sess,
 			audioWriter:     media.NewRTPPacketWriter(sess, media.CodecAudioUlaw),
-			RTPPacketReader: media.NewRTPPacketReader(sess, media.CodecAudioUlaw),
-			RTPPacketWriter: media.NewRTPPacketWriter(sess, media.CodecAudioUlaw),
+			rtpPacketReader: media.NewRTPPacketReader(sess, media.CodecAudioUlaw),
+			rtpPacketWriter: media.NewRTPPacketWriter(sess, media.CodecAudioUlaw),
 		},
 	}
 
@@ -322,7 +322,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &pb.AudioPlaybackControl)
+	waitPlaying(t, pb.AudioPlaybackControl)
 
 	// Replay with star key
 	sendDTMFInjection(t, injector, &sess.Laddr, new(uint16), '*')

@@ -82,7 +82,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		require.NoError(t, err)
 		defer dialog.Close()
 
-		rtpReader := dialog.RTPPacketReader
+		rtpReader := dialog.rtpPacketReader
 
 		go func() {
 			defer dialog.Close()

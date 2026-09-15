@@ -20,13 +20,16 @@ import (
 	"github.com/sjlit/diago/media"
 )
 
-// Bridger is the interface satisfied by Bridge and BridgeMix.
-//
-// Deprecated: The library never accepts this interface; pass *Bridge or
-// *BridgeMix concretely. It will be removed.
+// Bridger is the bridge contract accepted by Diago.DialBridge. Both *Bridge
+// (2-party proxy) and *BridgeMix (N-party mixer) satisfy it.
 type Bridger interface {
 	AddDialogSession(d DialogSession) error
 }
+
+var (
+	_ Bridger = (*Bridge)(nil)
+	_ Bridger = (*BridgeMix)(nil)
+)
 
 type Bridge struct {
 	// Originator is dialog session that created bridge
@@ -100,16 +103,6 @@ func (b *Bridge) Init(log *slog.Logger) {
 	}
 }
 
-// GetDialogs returns the list of dialogs added to the bridge.
-//
-// Deprecated: Not synchronized with bridge state and not used by the library;
-// keep track of the sessions you added yourself.
-func (b *Bridge) GetDialogs() []DialogSession {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.dialogs)
-}
-
 func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Check can this dialog be added to bridge. NO TRANSCODING
 	b.mu.Lock()
@@ -126,13 +119,13 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 
 	if b.Originator != nil {
 		// This may look ugly but it is safe way of reading
-		origM := b.Originator.Media()
+		origM := b.Originator.DialogMedia()
 		origProps := MediaProps{}
 		if _, err := origM.audioWriterProps(&origProps); err != nil {
 			return fmt.Errorf("bridge originator dialog has no media: %w", err)
 		}
 
-		m := d.Media()
+		m := d.DialogMedia()
 		mprops := MediaProps{}
 		if _, err := m.audioWriterProps(&mprops); err != nil {
 			return fmt.Errorf("bridge dialog %q has no media: %w", d.ID(), err)
@@ -174,7 +167,7 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Check are both answered. On failure roll back the append so the
 	// bridge does not keep a stale half-ready dialog.
 	for _, dd := range b.dialogs {
-		if err := dd.Media().checkMediaUsable(); err != nil {
+		if err := dd.DialogMedia().checkMediaUsable(); err != nil {
 			rollbackLast()
 			return fmt.Errorf("dialog session not answered %q: %w", dd.ID(), err)
 		}
@@ -253,7 +246,7 @@ func (b *Bridge) RemoveDialogSession(d DialogSession) error {
 	snapshot := slices.Clone(b.dialogs)
 	b.mu.Unlock()
 
-	var releases []func()
+	var releases []StopFunc
 	if running {
 		releases = interruptBridgeProxy(snapshot)
 		select {
@@ -318,10 +311,10 @@ func (b *Bridge) Close() error {
 // interruptBridgeProxy pauses writers to surface media.ErrWritePaused in the
 // proxy copy loop. Callers must call the returned releases after the proxy
 // exits (or times out) to restore writers.
-func interruptBridgeProxy(dialogs []DialogSession) []func() {
-	var releases []func()
+func interruptBridgeProxy(dialogs []DialogSession) []StopFunc {
+	var releases []StopFunc
 	for _, d := range dialogs {
-		release, err := d.Media().PauseAudioWrite()
+		release, err := d.DialogMedia().PauseAudioWrite()
 		if err != nil {
 			continue
 		}
@@ -371,7 +364,7 @@ func (b *Bridge) ProxyMedia() error {
 // restores the writers afterwards.
 //
 // Experimental
-func (b *Bridge) ProxyMediaControl() (func() error, error) {
+func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
 	// Same precondition as ProxyMedia, proxyMedia indexes dialogs [0] and [1]
 	b.mu.Lock()
 	if len(b.dialogs) < 2 {
@@ -401,10 +394,10 @@ func (b *Bridge) ProxyMediaControl() (func() error, error) {
 		dialogs := slices.Clone(b.dialogs)
 		b.mu.Unlock()
 
-		rels := make([]func(), 0, len(dialogs))
+		rels := make([]StopFunc, 0, len(dialogs))
 		var pauseErrs error
 		for _, d := range dialogs {
-			release, err := d.Media().PauseAudioWrite()
+			release, err := d.DialogMedia().PauseAudioWrite()
 			if err != nil {
 				pauseErrs = errors.Join(pauseErrs, err)
 				continue
@@ -446,8 +439,8 @@ func (b *Bridge) proxyMedia() error {
 		b.discardQueuedRTP(dialogs)
 	}
 
-	m1 := dialogs[0].Media()
-	m2 := dialogs[1].Media()
+	m1 := dialogs[0].DialogMedia()
+	m2 := dialogs[1].DialogMedia()
 
 	// Lets for now simplify proxy and later optimize
 
@@ -505,7 +498,7 @@ func (b *Bridge) proxyMedia() error {
 // whatever remains queued, which is the pre-existing behavior.
 func (b *Bridge) discardQueuedRTP(dialogs []DialogSession) {
 	for _, d := range dialogs {
-		n, err := d.Media().DiscardQueuedRTP()
+		n, err := d.DialogMedia().DiscardQueuedRTP()
 		if err != nil {
 			b.log.Warn("discarding queued RTP before proxy failed",
 				"dialog", d.ID(), "packets", n, "error", err)
@@ -586,7 +579,7 @@ type BridgeMix struct {
 	mixState int
 	// pauseReleases holds reader gate releases taken by mixStop, applied by
 	// mixStopWait after the mix goroutines rejoin. Guarded by mu.
-	pauseReleases []func()
+	pauseReleases []StopFunc
 
 	// WaitDialogsNum is just helper flag when to start proxy
 	WaitDialogsNum int
@@ -775,7 +768,7 @@ func (b *BridgeMix) mixStop() (bool, error) {
 		for _, d := range b.dialogs {
 			// Pause reading: interrupts the mix loop reads through the reader
 			// gate; releases are held until mixStopWait rejoins the mix.
-			release, err := d.Media().PauseAudioRead()
+			release, err := d.DialogMedia().PauseAudioRead()
 			if err != nil {
 				allErros = errors.Join(allErros, err)
 				continue
@@ -946,7 +939,7 @@ type bridgePCMStream struct {
 }
 
 func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream *bridgePCMStream, wg *sync.WaitGroup, firstDialogCodec *media.Codec, poll bool) error {
-	m := d.Media()
+	m := d.DialogMedia()
 
 	p := MediaProps{}
 	r, p, err := m.ReaderWithProps()
@@ -971,7 +964,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 			return rtr
 		}
 
-		rtr := media.NewRTPRealTimeReader(r, m.RTPPacketReader, p.Codec)
+		rtr := media.NewRTPRealTimeReader(r, m.rtpPacketReader, p.Codec)
 		m.SetAudioReader(rtr)
 		return rtr
 	}()
@@ -997,7 +990,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 		r:         &pcmReader,
 		w:         &pcmWriter,
 		dm:        m,
-		id:        m.RTPPacketWriter.SSRC,
+		id:        m.rtpPacketWriter.SSRC,
 		buf:       make([]byte, media.RTPBufSize),
 		pipeRead:  make(chan int),
 		pipeWrite: make(chan []byte),

@@ -462,26 +462,26 @@ func TestIntegrationDialogServerPlayback(t *testing.T) {
 	skipShort(t)
 	rtpBuf := newRTPWriterBuffer()
 	dialog := &DialogServerSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession:    &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
-			RTPPacketWriter: media.NewRTPPacketWriter(rtpBuf, media.CodecAudioUlaw),
+			rtpPacketWriter: media.NewRTPPacketWriter(rtpBuf, media.CodecAudioUlaw),
 		},
 	}
 
 	playback, err := dialog.CreatePlayback()
 	require.NoError(t, err)
 
-	initTS := dialog.RTPPacketWriter.InitTimestamp()
+	initTS := dialog.rtpPacketWriter.InitTimestamp()
 	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
-	diffTS := dialog.RTPPacketWriter.PacketHeader.Timestamp - initTS
+	diffTS := dialog.rtpPacketWriter.PacketHeader.Timestamp - initTS
 	assert.Greater(t, diffTS, uint32(1000))
 
 	time.Sleep(100 * time.Millisecond) // 4 frames
-	initTS = dialog.RTPPacketWriter.InitTimestamp()
+	initTS = dialog.rtpPacketWriter.InitTimestamp()
 	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
-	diffTS2 := dialog.RTPPacketWriter.PacketHeader.Timestamp - initTS
+	diffTS2 := dialog.rtpPacketWriter.PacketHeader.Timestamp - initTS
 	t.Log(initTS, diffTS2)
 
 	// Timestamp should be offset more than previous diff by Sleep

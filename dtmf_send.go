@@ -231,10 +231,10 @@ func (m *DialogMedia) dtmfWriterForDigit() (*media.RTPDtmfWriter, error) {
 	if !ok {
 		return nil, ErrDTMFUnsupported
 	}
-	if m.RTPPacketWriter == nil {
+	if m.rtpPacketWriter == nil {
 		return nil, ErrDialogNotAnswered
 	}
-	return media.NewRTPDTMFWriter(codec, m.RTPPacketWriter, nil), nil
+	return media.NewRTPDTMFWriter(codec, m.rtpPacketWriter, nil), nil
 }
 
 func waitDTMFContext(ctx context.Context, d time.Duration) error {

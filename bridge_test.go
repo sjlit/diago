@@ -35,25 +35,25 @@ func TestBridgeProxy(t *testing.T) {
 	b.WaitDialogsNum = 99 // Do not start proxy
 
 	incoming := &DialogServerSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
 			audioReader:     bytes.NewBuffer(make([]byte, 9999)),
 			audioWriter:     bytes.NewBuffer(make([]byte, 0)),
-			RTPPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
-			RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
+			rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
+			rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 		},
 	}
 	outgoing := &DialogClientSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
 			audioReader:     bytes.NewBuffer(make([]byte, 9999)),
 			audioWriter:     bytes.NewBuffer(make([]byte, 0)),
-			RTPPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
-			RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
+			rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
+			rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 		},
 	}
 
@@ -75,21 +75,21 @@ func TestBridgeNoTranscodingAllowed(t *testing.T) {
 	// b.waitDialogsNum = 99 // Do not start proxy
 
 	incoming := &DialogServerSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
-			// RTPPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
-			// RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
+			// rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
+			// rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 		},
 	}
 	outgoing := &DialogClientSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioUlaw},
 			},
-			// RTPPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioUlaw),
-			// RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
+			// rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioUlaw),
+			// rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
 		},
 	}
 

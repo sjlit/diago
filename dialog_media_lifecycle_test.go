@@ -18,7 +18,7 @@ import (
 func TestDialogMediaCloseClearsDTMFReaders(t *testing.T) {
 	dm := &DialogMedia{
 		mediaSession:    &media.MediaSession{},
-		RTPPacketReader: &media.RTPPacketReader{},
+		rtpPacketReader: &media.RTPPacketReader{},
 	}
 
 	r, err := dm.CreateDTMFReader()
@@ -43,7 +43,7 @@ func TestDialogMediaCloseClearsDTMFReaders(t *testing.T) {
 func TestDeliverDTMFAfterCloseNoCallback(t *testing.T) {
 	dm := &DialogMedia{
 		mediaSession:    &media.MediaSession{},
-		RTPPacketReader: &media.RTPPacketReader{},
+		rtpPacketReader: &media.RTPPacketReader{},
 	}
 
 	r, err := dm.CreateDTMFReader()
@@ -73,7 +73,7 @@ func TestRingtonePlayBackgroundStopsOnDialogClose(t *testing.T) {
 
 	dm := &DialogMedia{
 		mediaSession:    &media.MediaSession{},
-		RTPPacketWriter: &media.RTPPacketWriter{},
+		rtpPacketWriter: &media.RTPPacketWriter{},
 	}
 	ar := &AudioRingtone{
 		writer:     enc,

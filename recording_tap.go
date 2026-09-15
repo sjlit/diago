@@ -94,10 +94,10 @@ func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOp
 	innerW := d.getAudioWriter()
 	// Mirror AudioReader/AudioWriter's typed-nil guard for the setup window
 	// (mediaSession set, stable handles not yet created).
-	if innerR == nil && d.RTPPacketReader == nil {
+	if innerR == nil && d.rtpPacketReader == nil {
 		return nil, ErrDialogNotAnswered
 	}
-	if innerW == nil && d.RTPPacketWriter == nil {
+	if innerW == nil && d.rtpPacketWriter == nil {
 		return nil, ErrDialogNotAnswered
 	}
 

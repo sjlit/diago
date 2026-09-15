@@ -32,11 +32,18 @@ type DialogSession interface {
 	// resources (as Close). It is the safe one-call teardown for owners of a
 	// dialog.
 	HangupAndClose(ctx context.Context, opts ...SignalOption) error
-	Media() *DialogMedia
+	// DialogMedia returns the media half of the dialog. It is never nil and
+	// stays valid for the dialog's lifetime.
+	DialogMedia() *DialogMedia
 	DialogSIP() *sipgo.Dialog
 	Do(ctx context.Context, req *sip.Request) (*sip.Response, error)
 	Close() error
 }
+
+var (
+	_ DialogSession = (*DialogClientSession)(nil)
+	_ DialogSession = (*DialogServerSession)(nil)
+)
 
 //
 // Here are many common functions built for dialog
@@ -113,7 +120,7 @@ func dialogHandleReferNotify(d DialogSession, req *sip.Request, tx sip.ServerTra
 
 	// TODO: We need find better way to store this on refer.
 	// best case this would be dialogSIP
-	med := d.Media()
+	med := d.DialogMedia()
 	med.mu.Lock()
 	onNot := med.onReferNotify
 	med.mu.Unlock()

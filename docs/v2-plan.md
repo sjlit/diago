@@ -285,6 +285,24 @@ rejected because sipgo has no TLS-over-IPv6 listener (it maps `tcp6` to
 | 5.7 | diagotest | `NewConnRecorder` returns exported `ConnRecorder` | test code | S |
 | 5.8 | No-op option | Delete `WithAuth`; incoming auth stays on `Authorize`, outgoing on `WithAuthCredentials` | references | S |
 
+Status: implemented on the `v2` branch. The dialog cache is internal
+(`dialogCache`/`dialogCachePool`) and the only public lookup is
+`Diago.MatchDialog(req)`. `DialogSession` exposes `DialogMedia()`; the session
+types embed an unexported alias of `DialogMedia` so the accessor name does not
+collide with the embedded field, and the old self-accessor
+`DialogMedia.Media()` is gone. The stable RTP handles are reached through
+`RTPPacketReader()`/`RTPPacketWriter()` accessors. Every background operation
+returns a unified `StopFunc func() error` (`ListenBackground`,
+`Bridge.ProxyMediaControl`, `AudioRingtone.PlayBackground`, and the
+`PauseAudioRead`/`PauseAudioWrite` release functions). `CreatePlayback`,
+`CreatePlaybackControl` and `CreateRingtonePlayback` return pointers, so
+`AudioPlaybackDTMF` embeds `*AudioPlaybackControl`. `DialBridge` accepts the
+`Bridger` interface (satisfied by `*Bridge` and `*BridgeMix`) and
+`Bridge.GetDialogs` is deleted. `WithAuth` is deleted and
+`NewConnRecorder` returns the exported `ConnRecorder` in `diagotest` (the
+root-package test helper moved to `diago_test_utils_test.go`, so it leaves the
+public surface).
+
 ## P6 - Docs, migration, release
 
 | # | Item | Deliverable |

@@ -41,10 +41,10 @@ func init() {
 // Ownership contract (docs/contracts.md §1): DialogMedia is the sole owner of
 // the active *media.MediaSession and *media.RTPSession. It owns exactly one of
 // each at a time; re-INVITEs and media updates replace them under mu, while
-// RTPPacketReader and RTPPacketWriter are stable handles whose internals are
-// hot-swapped on every update. Code that needs media-session services
-// (deadlines, codecs) must resolve them through DialogMedia at use time and
-// never capture a *media.MediaSession pointer.
+// the RTPPacketReader and RTPPacketWriter accessors expose stable handles
+// whose internals are hot-swapped on every update. Code that needs
+// media-session services (deadlines, codecs) must resolve them through
+// DialogMedia at use time and never capture a *media.MediaSession pointer.
 //
 // Concurrency contract (docs/contracts.md §5): all mutable media state is
 // guarded by mu; accessor methods (MediaSession, RTPSession, AudioReader,
@@ -62,20 +62,20 @@ type DialogMedia struct {
 	// Only safe to use after dialog Answered (Completed state)
 	mediaSession *media.MediaSession
 
-	// rtp session is created for usage with RTPPacketReader and RTPPacketWriter
+	// rtp session is created for usage with the reader/writer handles
 	// it adds RTCP layer and RTP monitoring before passing packets to MediaSession
 	rtpSession *media.RTPSession
 	// Packet reader is default reader for RTP audio stream
 	// Use always AudioReader to get current Audio reader
-	// Use this only as read only
+	// Use RTPPacketReader to get the stable handle
 	// It MUST be always created on Media Session Init
 	// Only safe to use after dialog Answered (Completed state)
-	RTPPacketReader *media.RTPPacketReader
+	rtpPacketReader *media.RTPPacketReader
 
 	// Packet writer is default writer for RTP audio stream
 	// Use always AudioWriter to get current Audio reader
-	// Use this only as read only
-	RTPPacketWriter *media.RTPPacketWriter
+	// Use RTPPacketWriter to get the stable handle
+	rtpPacketWriter *media.RTPPacketWriter
 
 	// In case we are chaining audio readers
 	audioReader io.Reader
@@ -114,6 +114,27 @@ type DialogMedia struct {
 	remoteHeld bool
 
 	closed bool
+}
+
+// dialogMedia aliases DialogMedia for embedding in the dialog session types.
+// The unexported alias gives the embedded field a name that does not collide
+// with the DialogMedia() accessor required by the DialogSession interface.
+type dialogMedia = DialogMedia
+
+// RTPPacketReader returns the dialog's stable RTP read handle. It is created
+// on the first media init and never replaced; its internals are hot-swapped on
+// media updates, so code that needs the handle should resolve it per use
+// (docs/contracts.md §4). Safe from any goroutine.
+func (d *DialogMedia) RTPPacketReader() *media.RTPPacketReader {
+	return d.rtpPacketReader
+}
+
+// RTPPacketWriter returns the dialog's stable RTP write handle. It is created
+// on the first media init and never replaced; its internals are hot-swapped on
+// media updates, so code that needs the handle should resolve it per use
+// (docs/contracts.md §4). Safe from any goroutine.
+func (d *DialogMedia) RTPPacketWriter() *media.RTPPacketWriter {
+	return d.rtpPacketWriter
 }
 
 // currentMediaSession returns the currently active media session or nil.
@@ -163,7 +184,7 @@ func (d *DialogMedia) Close() error {
 	d.dtmfReaders = nil
 	m := d.mediaSession
 	rtpSess := d.rtpSession
-	w := d.RTPPacketWriter
+	w := d.rtpPacketWriter
 
 	// Cancel the hold-music loop, never wait for it: the loop takes d.mu per
 	// frame, so waiting under the lock would deadlock (moh.go lock order).
@@ -236,15 +257,15 @@ func (d *DialogMedia) InitMediaSession(m *media.MediaSession, r *media.RTPPacket
 
 func (d *DialogMedia) initMediaSessionUnsafe(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
 	d.mediaSession = m
-	d.RTPPacketReader = r
-	d.RTPPacketWriter = w
+	d.rtpPacketReader = r
+	d.rtpPacketWriter = w
 }
 
 func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media.RTPSession) {
 	d.mediaSession = m
 	d.rtpSession = rtpSess
-	d.RTPPacketReader = media.NewRTPPacketReaderSession(rtpSess)
-	d.RTPPacketWriter = media.NewRTPPacketWriterSession(rtpSess)
+	d.rtpPacketReader = media.NewRTPPacketReaderSession(rtpSess)
+	d.rtpPacketWriter = media.NewRTPPacketWriterSession(rtpSess)
 	d.updateRemoteHeldUnsafe()
 }
 
@@ -452,8 +473,8 @@ func (d *DialogMedia) replaceRTPSessionUnsafe(msess *media.MediaSession) error {
 	}
 
 	// Make sure any current reader is not consuming old media session.
-	d.RTPPacketReader.UpdateRTPSession(rtpSess)
-	d.RTPPacketWriter.UpdateRTPSession(rtpSess)
+	d.rtpPacketReader.UpdateRTPSession(rtpSess)
+	d.rtpPacketWriter.UpdateRTPSession(rtpSess)
 
 	d.mediaSession = msess
 	d.rtpSession = rtpSess
@@ -472,7 +493,7 @@ type MediaProps struct {
 // Packet duration is derived from the negotiated audio codec.
 func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderOption {
 	return func(d *DialogMedia) error {
-		if d.mediaSession == nil || d.RTPPacketReader == nil {
+		if d.mediaSession == nil || d.rtpPacketReader == nil {
 			return fmt.Errorf("no media setup")
 		}
 
@@ -481,19 +502,19 @@ func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderO
 			return fmt.Errorf("invalid audio codec packet duration: %s", codec.SampleDur)
 		}
 
-		reader := d.RTPPacketReader.Reader()
+		reader := d.rtpPacketReader.Reader()
 		if reader == nil {
 			return fmt.Errorf("no RTP reader setup")
 		}
 
 		jitter := media.NewRTPJitterBuffer(reader, codec.SampleDur, opts)
-		d.RTPPacketReader.UpdateReader(jitter)
+		d.rtpPacketReader.UpdateReader(jitter)
 
 		// UpdateReader interrupts a potentially blocked RTPSession read. The new
 		// jitter reader uses that same session, so restore normal network reading.
 		if session, ok := reader.(*media.RTPSession); ok {
 			if err := session.Sess.StartRTP(1); err != nil {
-				d.RTPPacketReader.UpdateReader(reader)
+				d.rtpPacketReader.UpdateReader(reader)
 				_ = jitter.Close()
 				return fmt.Errorf("failed to start jitter buffer RTP reader: %w", err)
 			}
@@ -521,8 +542,8 @@ func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
 func WithAudioReaderDTMF(r *DTMFReader) AudioReaderOption {
 	return func(d *DialogMedia) error {
 		r.dm = d
-		r.packetReader = d.RTPPacketReader
-		r.dtmfReader = media.NewRTPDTMFReader(d.dtmfCodec(), d.RTPPacketReader, d.getAudioReader())
+		r.packetReader = d.rtpPacketReader
+		r.dtmfReader = media.NewRTPDTMFReader(d.dtmfCodec(), d.rtpPacketReader, d.getAudioReader())
 		d.audioReader = r
 		return nil
 	}
@@ -541,7 +562,7 @@ func WithAudioReaderPCMMonitor(mon *audio.MonitorPCMReader, w io.Writer) AudioRe
 }
 
 // AudioReader returns io.Reader on which you can read your ENCODED audio.
-// By default it is RTPPacketReader unless overwritten with SetAudioReader().
+// By default it is the RTPPacketReader handle unless overwritten with SetAudioReader().
 // Use ReaderWithProps when the negotiated codec or addresses are needed.
 //
 // NOTE: AudioReader must be called after negotiation is finished, like Answer()
@@ -560,7 +581,7 @@ func (d *DialogMedia) audioReaderUnsafe(opts []AudioReaderOption) (io.Reader, er
 	if err := d.mediaGuard(); err != nil {
 		return nil, err
 	}
-	if d.audioReader == nil && d.RTPPacketReader == nil {
+	if d.audioReader == nil && d.rtpPacketReader == nil {
 		// Typed-nil guard for the setup window (mediaSession set, handles not
 		// yet created). A manually installed audioReader (fake IO) is a valid
 		// reader source on its own.
@@ -606,7 +627,7 @@ func (d *DialogMedia) getAudioReader() io.Reader {
 	if d.audioReader != nil {
 		return d.audioReader
 	}
-	return d.RTPPacketReader
+	return d.rtpPacketReader
 }
 
 // audioReaderProps returns the current audio reader plus its media props.
@@ -646,7 +667,7 @@ func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
 // WithAudioWriterDTMF adds DTMF into audio pipeline
 func WithAudioWriterDTMF(r *DTMFWriter) AudioWriterOption {
 	return func(d *DialogMedia) error {
-		r.dtmfWriter = media.NewRTPDTMFWriter(d.dtmfCodec(), d.RTPPacketWriter, d.getAudioWriter())
+		r.dtmfWriter = media.NewRTPDTMFWriter(d.dtmfCodec(), d.rtpPacketWriter, d.getAudioWriter())
 		d.audioWriter = r
 		return nil
 	}
@@ -666,7 +687,7 @@ func WithAudioWriterMonitor(mon *audio.MonitorPCMWriter, w io.Writer) AudioWrite
 }
 
 // AudioWriter returns io.Writer on which you can write your ENCODED audio.
-// By default it is RTPPacketWriter unless overwritten with SetAudioWriter().
+// By default it is the RTPPacketWriter handle unless overwritten with SetAudioWriter().
 // Use WriterWithProps when the negotiated codec or addresses are needed.
 // NOTE: RTPPacketWriter has running sample clock, but it expects samples sent, match sample duration of codec.
 func (d *DialogMedia) AudioWriter(opts ...AudioWriterOption) (io.Writer, error) {
@@ -682,7 +703,7 @@ func (d *DialogMedia) audioWriterUnsafe(opts []AudioWriterOption) (io.Writer, er
 	if err := d.mediaGuard(); err != nil {
 		return nil, err
 	}
-	if d.audioWriter == nil && d.RTPPacketWriter == nil {
+	if d.audioWriter == nil && d.rtpPacketWriter == nil {
 		// Typed-nil guard for the setup window (mediaSession set, handles not
 		// yet created). A manually installed audioWriter (fake IO) is a valid
 		// writer sink on its own.
@@ -716,7 +737,7 @@ func (d *DialogMedia) getAudioWriter() io.Writer {
 	if d.audioWriter != nil {
 		return d.audioWriter
 	}
-	return d.RTPPacketWriter
+	return d.rtpPacketWriter
 }
 
 func (d *DialogMedia) audioWriterProps(p *MediaProps) (io.Writer, error) {
@@ -737,10 +758,6 @@ func (d *DialogMedia) SetAudioWriter(r io.Writer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.audioWriter = r
-}
-
-func (d *DialogMedia) Media() *DialogMedia {
-	return d
 }
 
 // Echo does audio echo for you
@@ -785,25 +802,24 @@ func (d *DialogMedia) EchoContext(ctx context.Context) error {
 }
 
 // CreatePlayback creates playback for audio
-func (d *DialogMedia) CreatePlayback() (AudioPlayback, error) {
+func (d *DialogMedia) CreatePlayback() (*AudioPlayback, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
-		return AudioPlayback{}, err
+		return nil, err
 	}
 	p := NewAudioPlayback(w, mprops.Codec)
 	// On each play it needs reset RTP timestamp
-	p.onPlay = d.RTPPacketWriter.ResetTimestamp
-	return p, nil
+	p.onPlay = d.rtpPacketWriter.ResetTimestamp
+	return &p, nil
 }
 
 // CreatePlaybackControl creates playback with controls like mute, stop, pause, resume and replay
-func (d *DialogMedia) CreatePlaybackControl() (AudioPlaybackControl, error) {
-	// NOTE we should avoid returning pointers for any IN dialplan to avoid heap
+func (d *DialogMedia) CreatePlaybackControl() (*AudioPlaybackControl, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
-		return AudioPlaybackControl{}, err
+		return nil, err
 	}
 
 	// Audio is controled via audio reader/writer
@@ -813,27 +829,27 @@ func (d *DialogMedia) CreatePlaybackControl() (AudioPlaybackControl, error) {
 		AudioPlayback: NewAudioPlayback(control, mprops.Codec),
 		control:       control,
 	}
-	return p, nil
+	return &p, nil
 }
 
 // CreateRingtonePlayback creates playback for ringtone
 //
 // Experimental
-func (d *DialogMedia) CreateRingtonePlayback() (AudioRingtone, error) {
+func (d *DialogMedia) CreateRingtonePlayback() (*AudioRingtone, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
-		return AudioRingtone{}, err
+		return nil, err
 	}
 
 	ringtone, err := audio.RingtoneLoadPCM(mprops.Codec)
 	if err != nil {
-		return AudioRingtone{}, err
+		return nil, err
 	}
 
 	encoder := audio.PCMEncoderWriter{}
 	if err := encoder.Init(mprops.Codec, w); err != nil {
-		return AudioRingtone{}, err
+		return nil, err
 	}
 
 	ar := AudioRingtone{
@@ -842,7 +858,7 @@ func (d *DialogMedia) CreateRingtonePlayback() (AudioRingtone, error) {
 		sampleSize: mprops.Codec.Samples16(),
 		dm:         d,
 	}
-	return ar, nil
+	return &ar, nil
 }
 
 // AudioStereoRecordingCreate creates Stereo Recording audio Pipeline and stores as Wav file format
@@ -889,33 +905,43 @@ func (d *DialogMedia) IsRemoteHeld() bool {
 // PauseAudioRead pauses the dialog audio reader: reads through the audio
 // pipeline return media.ErrReadPaused until the returned release is called.
 // Pause is refcounted, so concurrent pausers can not resume each other; the
-// returned release must be called exactly once.
-func (d *DialogMedia) PauseAudioRead() (func(), error) {
+// returned release must be called exactly once. The StopFunc always reports a
+// nil error.
+func (d *DialogMedia) PauseAudioRead() (StopFunc, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
 		return nil, ErrDialogClosed
 	}
-	if d.RTPPacketReader == nil {
+	if d.rtpPacketReader == nil {
 		return nil, ErrDialogNotAnswered
 	}
-	return d.RTPPacketReader.PauseRead(), nil
+	release := d.rtpPacketReader.PauseRead()
+	return func() error {
+		release()
+		return nil
+	}, nil
 }
 
 // PauseAudioWrite pauses the dialog audio writer: writes through the audio
 // pipeline return media.ErrWritePaused until the returned release is called.
 // Refcounted like PauseAudioRead. An in-flight write completes first, so
-// pause latency is bounded by one packet interval.
-func (d *DialogMedia) PauseAudioWrite() (func(), error) {
+// pause latency is bounded by one packet interval. The StopFunc always reports
+// a nil error.
+func (d *DialogMedia) PauseAudioWrite() (StopFunc, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
 		return nil, ErrDialogClosed
 	}
-	if d.RTPPacketWriter == nil {
+	if d.rtpPacketWriter == nil {
 		return nil, ErrDialogNotAnswered
 	}
-	return d.RTPPacketWriter.PauseWrite(), nil
+	release := d.rtpPacketWriter.PauseWrite()
+	return func() error {
+		release()
+		return nil
+	}, nil
 }
 
 // DiscardQueuedRTP drops any RTP datagrams already queued on the dialog's
@@ -952,10 +978,10 @@ func (d *DialogMedia) armReadInterrupt(ctx context.Context) (func(), error) {
 	if d.closed {
 		return nil, ErrDialogClosed
 	}
-	if d.RTPPacketReader == nil {
+	if d.rtpPacketReader == nil {
 		return nil, ErrDialogNotAnswered
 	}
-	return d.RTPPacketReader.ArmReadInterrupt(ctx), nil
+	return d.rtpPacketReader.ArmReadInterrupt(ctx), nil
 }
 
 // currentReadHandle returns the stable audio read handle for ctx-driven
@@ -963,7 +989,7 @@ func (d *DialogMedia) armReadInterrupt(ctx context.Context) (func(), error) {
 func (d *DialogMedia) currentReadHandle() *media.RTPPacketReader {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.RTPPacketReader
+	return d.rtpPacketReader
 }
 
 // Listen keeps reading stream until it gets closed or deadlined
@@ -984,7 +1010,7 @@ func (d *DialogMedia) Listen() (err error) {
 }
 
 // ListenBackground listens on stream in background and allows correct stoping of stream on network layer
-func (d *DialogMedia) ListenBackground() (stop func() error, err error) {
+func (d *DialogMedia) ListenBackground() (stop StopFunc, err error) {
 	buf := make([]byte, media.RTPBufSize)
 	audioReader, err := d.AudioReader()
 	if err != nil {
@@ -1168,13 +1194,13 @@ func (m *DialogMedia) CreateDTMFReader() (*DTMFReader, error) {
 	if err := m.mediaGuard(); err != nil {
 		return nil, err
 	}
-	if m.audioReader == nil && m.RTPPacketReader == nil {
+	if m.audioReader == nil && m.rtpPacketReader == nil {
 		return nil, ErrDialogNotAnswered
 	}
 	r := &DTMFReader{
 		dm:           m,
-		packetReader: m.RTPPacketReader,
-		dtmfReader:   media.NewRTPDTMFReader(m.dtmfCodec(), m.RTPPacketReader, m.getAudioReader()),
+		packetReader: m.rtpPacketReader,
+		dtmfReader:   media.NewRTPDTMFReader(m.dtmfCodec(), m.rtpPacketReader, m.getAudioReader()),
 	}
 	// Out-of-band (SIP INFO) DTMF is delivered through the same onDTMF callback
 	m.registerDTMFReader(r)
@@ -1321,11 +1347,11 @@ func (m *DialogMedia) CreateDTMFWriter() (*DTMFWriter, error) {
 	if err := m.mediaGuard(); err != nil {
 		return nil, err
 	}
-	if m.audioWriter == nil && m.RTPPacketWriter == nil {
+	if m.audioWriter == nil && m.rtpPacketWriter == nil {
 		return nil, ErrDialogNotAnswered
 	}
 	return &DTMFWriter{
-		dtmfWriter: media.NewRTPDTMFWriter(m.dtmfCodec(), m.RTPPacketWriter, m.getAudioWriter()),
+		dtmfWriter: media.NewRTPDTMFWriter(m.dtmfCodec(), m.rtpPacketWriter, m.getAudioWriter()),
 	}, nil
 }
 

@@ -71,12 +71,14 @@ user-visible rename, removal, and behavior change.
 | `DialogCache`, `DialogCachePool`, `DialogData` exported | Unexported/removed |
 | `DialogServerSession.ReadAck` | Unexported (framework internal) |
 | `DialogMedia.Media()` | `DialogMedia()` (method renamed on `DialogSession` too) |
-| `DialogMedia.RTPPacketReader/RTPPacketWriter` fields | Unexported; use accessors |
+| `DialogClientSession.DialogMedia` / `DialogServerSession.DialogMedia` embedded field | Unexported; the exported `DialogMedia()` method is the only accessor |
+| `DialogMedia.RTPPacketReader/RTPPacketWriter` fields | Unexported; use the `RTPPacketReader()`/`RTPPacketWriter()` accessors |
 | `AudioStereoRecordingCreate` | `StartStereoRecording` |
-| `CreatePlayback/CreatePlaybackControl/CreateRingtonePlayback` return values | Return pointers |
+| `CreatePlayback/CreatePlaybackControl/CreateRingtonePlayback` return values | Return pointers (and `AudioPlaybackDTMF` embeds `*AudioPlaybackControl`) |
 | `ListenBackground` stop `func() error`, `PauseAudioRead/Write` `func()`, `ProxyMediaControl` `func() error` | Unified `StopFunc func() error` |
 | `Bridger` defined but never accepted | `DialBridge` accepts `Bridger` |
 | `diagotest.NewConnRecorder() *connRecorder` | `NewConnRecorder() *ConnRecorder` |
+| Root `diago.NewConnRecorder()`/`connRecorder` (test helper) | Test-only (`diago_test_utils_test.go`); use `diagotest.NewConnRecorder()` |
 | `diagotest.NewDiagoClientTest(ua, onRequest) *diago.Diago` | `NewDiagoClientTest(ua, onRequest) (*diago.Diago, error)` |
 
 ## 7. Errors

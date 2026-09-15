@@ -75,11 +75,11 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 	}()
 
 	dialog := &DialogServerSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession: &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
 			// audioReader:  bytes.NewBuffer(make([]byte, 9999)),
 			audioWriter:     w,
-			RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
+			rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
 		},
 	}
 

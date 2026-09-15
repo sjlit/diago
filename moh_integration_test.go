@@ -74,7 +74,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	go func() {
 		buf := make([]byte, media.RTPBufSize)
 		for {
-			if _, err := dialog.RTPPacketReader.Read(buf); err != nil {
+			if _, err := dialog.rtpPacketReader.Read(buf); err != nil {
 				return
 			}
 			packets.Add(1)

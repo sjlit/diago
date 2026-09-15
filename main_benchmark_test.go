@@ -149,7 +149,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 
 						buf := make([]byte, media.RTPBufSize)
 						var prevSeq uint16
-						reader := dialog.RTPPacketReader
+						reader := dialog.rtpPacketReader
 						for {
 							_, err := audioReader.Read(buf)
 							// _, err := reader.ReadRTP(buf, &p)

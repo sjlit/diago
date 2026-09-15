@@ -111,7 +111,7 @@ func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 	require.NoError(t, err)
 	defer d.Close()
 
-	ms := d.DialogMedia.mediaSession
+	ms := d.dialogMedia.mediaSession
 	require.NotNil(t, ms)
 	assert.Equal(t, media.RTPNATSymetric, ms.RTPNAT)
 	port := ms.Laddr.Port
@@ -136,7 +136,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 		require.NoError(t, err)
 		defer d.Close()
 
-		ms := d.DialogMedia.mediaSession
+		ms := d.dialogMedia.mediaSession
 		require.NotNil(t, ms)
 		assert.Equal(t, "AcmePBX", ms.SDPSessionName)
 		assert.Contains(t, string(ms.LocalSDP()), "s=AcmePBX")
@@ -154,7 +154,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 		require.NoError(t, err)
 		defer d.Close()
 
-		ms := d.DialogMedia.mediaSession
+		ms := d.dialogMedia.mediaSession
 		require.NotNil(t, ms)
 		assert.Empty(t, ms.SDPSessionName, "empty config means library default")
 		assert.Contains(t, string(ms.LocalSDP()), "s=Sip Go Media")

@@ -105,11 +105,11 @@ Rules:
 
 ## 4. Stable handles vs forbidden snapshots
 
-`DialogMedia.RTPPacketReader` and `DialogMedia.RTPPacketWriter` are **stable
-handles**: their pointers are created once when media is set up and never
-replaced. On every media update (re-INVITE, hold, early-media upgrade) their
-inner reader/writer are hot-swapped via `UpdateRTPSession`. Code built on top of
-them keeps working across media updates.
+`DialogMedia.RTPPacketReader()` and `DialogMedia.RTPPacketWriter()` expose the
+**stable handles**: their pointers are created once when media is set up and
+never replaced. On every media update (re-INVITE, hold, early-media upgrade)
+their inner reader/writer are hot-swapped via `UpdateRTPSession`. Code built on
+top of them keeps working across media updates.
 
 **Contract: components must not capture a `*media.MediaSession` pointer for
 later use.** Sessions get replaced; captured pointers go stale and then target a
@@ -132,7 +132,7 @@ codecs), take a `*DialogMedia` (or call an accessor at use time), never a
 ## 5. Concurrency contract
 
 `DialogMedia.mu` guards all mutable media state: `mediaSession`, `rtpSession`,
-the `RTPPacketReader`/`RTPPacketWriter` fields, `audioReader`/`audioWriter`,
+the stable RTP handles (`rtpPacketReader`/`rtpPacketWriter`), `audioReader`/`audioWriter`,
 `remoteContactTarget`, the `onClose`/`onMediaUpdate`/`onReferNotify` hooks, and
 `closed`.
 

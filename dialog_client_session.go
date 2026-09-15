@@ -25,12 +25,17 @@ var (
 type DialogClientSession struct {
 	*sipgo.DialogClientSession
 
-	DialogMedia
+	dialogMedia
 
 	onReferDialog OnReferDialogFunc
 	mediaConfig   MediaConfig
 
 	closed atomic.Uint32
+}
+
+// DialogMedia returns the media half of the session. It is never nil.
+func (d *DialogClientSession) DialogMedia() *DialogMedia {
+	return &d.dialogMedia
 }
 
 // Close frees local resources (media stack and dialog cleanup hooks).
@@ -41,7 +46,7 @@ func (d *DialogClientSession) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
-	e1 := d.DialogMedia.Close()
+	e1 := d.dialogMedia.Close()
 	e2 := d.DialogClientSession.Close()
 	return errors.Join(e1, e2)
 }
@@ -198,7 +203,7 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *sign
 		}
 		d.mu.Unlock()
 	}
-	return d.invite(ctx, &d.DialogMedia, params)
+	return d.invite(ctx, &d.dialogMedia, params)
 }
 
 func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, params *signalParams) error {
@@ -370,7 +375,7 @@ func (d *DialogClientSession) WaitAnswer(ctx context.Context, opts ...SignalOpti
 	if err != nil {
 		return err
 	}
-	return d.waitAnswer(ctx, &d.DialogMedia, answerOptionsFromParams(params))
+	return d.waitAnswer(ctx, &d.dialogMedia, answerOptionsFromParams(params))
 }
 
 func (d *DialogClientSession) waitAnswerEarly(ctx context.Context, med *DialogMedia, opts sipgo.AnswerOptions) error {
@@ -719,7 +724,7 @@ func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerT
 		}
 
 		if onMediaUpdate != nil {
-			onMediaUpdate(d.Media())
+			onMediaUpdate(d.DialogMedia())
 		}
 	}
 
@@ -732,7 +737,7 @@ func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerT
 }
 
 func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTransaction) error {
-	return readSIPInfoDTMF(&d.DialogMedia, req, tx)
+	return readSIPInfoDTMF(&d.dialogMedia, req, tx)
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.

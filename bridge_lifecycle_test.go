@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -30,9 +31,9 @@ func (f *fakeBridgeDialog) Hangup(ctx context.Context, opts ...SignalOption) err
 func (f *fakeBridgeDialog) HangupAndClose(ctx context.Context, opts ...SignalOption) error {
 	return f.Close()
 }
-func (f *fakeBridgeDialog) Media() *DialogMedia      { return f.dm }
-func (f *fakeBridgeDialog) DialogSIP() *sipgo.Dialog { return nil }
-func (f *fakeBridgeDialog) Close() error             { return nil }
+func (f *fakeBridgeDialog) DialogMedia() *DialogMedia { return f.dm }
+func (f *fakeBridgeDialog) DialogSIP() *sipgo.Dialog  { return nil }
+func (f *fakeBridgeDialog) Close() error              { return nil }
 func (f *fakeBridgeDialog) Do(ctx context.Context, req *sip.Request) (*sip.Response, error) {
 	return nil, nil
 }
@@ -44,10 +45,18 @@ func newBridgeTestDialog(id string) DialogSession {
 		},
 		audioReader:     bytes.NewBuffer(make([]byte, 0)),
 		audioWriter:     bytes.NewBuffer(make([]byte, 0)),
-		RTPPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
-		RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
+		rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
+		rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 	}
 	return &fakeBridgeDialog{id: id, dm: dm}
+}
+
+// bridgeDialogs snapshots the bridge dialog list for assertions. GetDialogs
+// was removed from the public API in v2 P5; tests stay white-box.
+func bridgeDialogs(b *Bridge) []DialogSession {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.dialogs)
 }
 
 func TestBridgeLifecycle_RemoveClose(t *testing.T) {
@@ -57,16 +66,16 @@ func TestBridgeLifecycle_RemoveClose(t *testing.T) {
 	d2 := newBridgeTestDialog("b")
 	require.NoError(t, b.AddDialogSession(d1))
 	require.NoError(t, b.AddDialogSession(d2))
-	require.Len(t, b.GetDialogs(), 2)
+	require.Len(t, bridgeDialogs(b), 2)
 
 	// Third add rejected atomically (no stale append).
 	d3 := newBridgeTestDialog("c")
 	require.Error(t, b.AddDialogSession(d3))
-	require.Len(t, b.GetDialogs(), 2)
+	require.Len(t, bridgeDialogs(b), 2)
 
 	// Remove one; originator falls back to remaining.
 	require.NoError(t, b.RemoveDialogSession(d1))
-	require.Len(t, b.GetDialogs(), 1)
+	require.Len(t, bridgeDialogs(b), 1)
 	require.Equal(t, "b", b.Originator.ID())
 	// Missing ID is no-op.
 	require.NoError(t, b.RemoveDialogSession(d1))
@@ -74,7 +83,7 @@ func TestBridgeLifecycle_RemoveClose(t *testing.T) {
 	// Close idempotent; Add after Close rejected.
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Close())
-	require.Empty(t, b.GetDialogs())
+	require.Empty(t, bridgeDialogs(b))
 	require.ErrorIs(t, b.AddDialogSession(newBridgeTestDialog("d")), ErrBridgeClosed)
 }
 
@@ -90,7 +99,7 @@ func (endlessReader) Read(p []byte) (int, error) {
 }
 
 // newBridgePausableDialog builds a dialog whose proxy writer is the real
-// pause-aware RTPPacketWriter (no fake audioWriter), so bridge Close/Remove can
+// pause-aware RTP writer handle (no fake audioWriter), so bridge Close/Remove can
 // interrupt the copy loop through the write gate.
 func newBridgePausableDialog(t *testing.T, id string) DialogSession {
 	t.Helper()
@@ -106,8 +115,8 @@ func newBridgePausableDialog(t *testing.T, id string) DialogSession {
 	dm := &DialogMedia{
 		mediaSession:    msess,
 		audioReader:     endlessReader{},
-		RTPPacketWriter: writer,
-		RTPPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioUlaw),
+		rtpPacketWriter: writer,
+		rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioUlaw),
 	}
 	return &fakeBridgeDialog{id: id, dm: dm}
 }

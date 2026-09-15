@@ -49,12 +49,12 @@ func TestIntegrationRecordingStereoWav(t *testing.T) {
 	encodedAudio := bytes.Repeat(alawFrame, 4)
 
 	dialog := &DialogServerSession{
-		DialogMedia: DialogMedia{
+		dialogMedia: DialogMedia{
 			mediaSession: &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
 			// audioReader:  bytes.NewBuffer(make([]byte, 9999)),
 			audioReader:     bytes.NewBuffer(encodedAudio),
 			audioWriter:     bytes.NewBuffer([]byte{}),
-			RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
+			rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
 		},
 	}
 

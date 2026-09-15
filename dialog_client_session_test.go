@@ -43,12 +43,12 @@ func newDiagoClientTest(t *testing.T, ua *sipgo.UserAgent, onRequest func(req *s
 }
 
 func dialogEcho(sess DialogSession) error {
-	audioR, err := sess.Media().AudioReader()
+	audioR, err := sess.DialogMedia().AudioReader()
 	if err != nil {
 		return err
 	}
 
-	audioW, err := sess.Media().AudioWriter()
+	audioW, err := sess.DialogMedia().AudioWriter()
 	if err != nil {
 		return err
 	}
@@ -539,7 +539,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 				// fmt.Println("Server media update", d)
 			}))
 
-			ar := d.RTPPacketReader
+			ar := d.rtpPacketReader
 			ctx, cancel := context.WithCancel(context.Background())
 			go func() {
 				defer cancel()

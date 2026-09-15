@@ -24,7 +24,7 @@ type AudioRingtone struct {
 	dm *DialogMedia
 }
 
-func (a *AudioRingtone) PlayBackground() (func() error, error) {
+func (a *AudioRingtone) PlayBackground() (StopFunc, error) {
 	if err := a.dm.checkMediaUsable(); err != nil {
 		return nil, err
 	}

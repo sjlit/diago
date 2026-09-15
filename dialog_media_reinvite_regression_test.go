@@ -27,8 +27,8 @@ func TestDialogMediaSessionReplacementDTMF(t *testing.T) {
 
 	oldSess := d.currentMediaSession()
 	require.NotNil(t, oldSess)
-	oldReader := d.RTPPacketReader
-	oldWriter := d.RTPPacketWriter
+	oldReader := d.RTPPacketReader()
+	oldWriter := d.RTPPacketWriter()
 
 	// Baseline: deadline control works through the resolver
 	buf := make([]byte, 1600)
@@ -53,8 +53,8 @@ func TestDialogMediaSessionReplacementDTMF(t *testing.T) {
 	assert.NotSame(t, oldSess, d.currentMediaSession())
 
 	// Stable handles kept their identity (hot-swapped, not replaced)
-	assert.Same(t, oldReader, d.RTPPacketReader, "RTPPacketReader must be a stable handle")
-	assert.Same(t, oldWriter, d.RTPPacketWriter, "RTPPacketWriter must be a stable handle")
+	assert.Same(t, oldReader, d.RTPPacketReader(), "RTPPacketReader must be a stable handle")
+	assert.Same(t, oldWriter, d.RTPPacketWriter(), "RTPPacketWriter must be a stable handle")
 
 	// The pre-existing DTMF reader still exercises deadline control through
 	// the new session: the deadline lands on the conn the stable reader reads.

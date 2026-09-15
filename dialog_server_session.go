@@ -27,7 +27,7 @@ type DialogServerSession struct {
 	*sipgo.DialogServerSession
 
 	// MediaSession *media.MediaSession
-	DialogMedia
+	dialogMedia
 
 	onReferDialog OnReferDialogFunc
 
@@ -46,6 +46,11 @@ type DialogServerSession struct {
 	// with "close of closed channel".
 	ackMu sync.Mutex
 	ackCh chan struct{}
+}
+
+// DialogMedia returns the media half of the session. It is never nil.
+func (d *DialogServerSession) DialogMedia() *DialogMedia {
+	return &d.dialogMedia
 }
 
 // ackChannel lazily allocates and returns the per-dialog ACK channel.
@@ -103,7 +108,7 @@ func (d *DialogServerSession) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
-	e1 := d.DialogMedia.Close()
+	e1 := d.dialogMedia.Close()
 	e2 := d.DialogServerSession.Close()
 	return errors.Join(e1, e2)
 }
@@ -799,7 +804,7 @@ func (d *DialogServerSession) handleReInvite(req *sip.Request, tx sip.ServerTran
 }
 
 func (d *DialogServerSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTransaction) error {
-	return readSIPInfoDTMF(&d.DialogMedia, req, tx)
+	return readSIPInfoDTMF(&d.dialogMedia, req, tx)
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.

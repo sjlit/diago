@@ -60,8 +60,8 @@ func newQueuedRTPDialog(t *testing.T) (*DialogServerSession, func(n int)) {
 	d.mediaSession = msess
 	d.audioReader = bytes.NewBuffer(nil)
 	d.audioWriter = bytes.NewBuffer(nil)
-	d.RTPPacketReader = media.NewRTPPacketReader(nil, media.CodecAudioUlaw)
-	d.RTPPacketWriter = media.NewRTPPacketWriter(nil, media.CodecAudioUlaw)
+	d.rtpPacketReader = media.NewRTPPacketReader(nil, media.CodecAudioUlaw)
+	d.rtpPacketWriter = media.NewRTPPacketWriter(nil, media.CodecAudioUlaw)
 	return d, send
 }
 
@@ -92,7 +92,7 @@ func TestBridgeDiscardQueuedRTPOnStart(t *testing.T) {
 
 			// Whatever remains queued on the socket was not consumed by the
 			// proxy (it reads the in-memory heads).
-			n, err := incoming.Media().DiscardQueuedRTP()
+			n, err := incoming.DialogMedia().DiscardQueuedRTP()
 			require.NoError(t, err)
 			if discard {
 				assert.Zero(t, n, "bridge must start from live media")

@@ -63,7 +63,7 @@ func WithOnDTMF(fn func(dtmf rune)) PlaybackDTMFOption {
 //
 // PlaybackControl (Stop, Pause, Resume, Replay, Mute) can be used in parallel.
 type AudioPlaybackDTMF struct {
-	AudioPlaybackControl
+	*AudioPlaybackControl
 
 	// nil interruptKeys means any key interrupts
 	interruptKeys map[rune]struct{}

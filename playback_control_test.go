@@ -275,10 +275,10 @@ func TestPlaybackControlReplayNotReplayable(t *testing.T) {
 func TestPlaybackControlReplayFile(t *testing.T) {
 	dialog := func() *DialogServerSession {
 		return &DialogServerSession{
-			DialogMedia: DialogMedia{
+			dialogMedia: DialogMedia{
 				mediaSession:    &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
 				audioWriter:     &countWriter{delay: time.Millisecond},
-				RTPPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
+				rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
 			},
 		}
 	}
@@ -302,7 +302,7 @@ func TestPlaybackControlReplayFile(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, &playback)
+	waitPlaying(t, playback)
 	require.Eventually(t, func() bool {
 		_, bytesW := playback.control.Writer.(*countWriter).stats()
 		return bytesW > 0

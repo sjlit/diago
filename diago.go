@@ -30,12 +30,11 @@ type Diago struct {
 
 	serveHandler DialogHandler
 
-	auth      sipgo.DigestAuth
 	mediaConf MediaConfig
 
 	log *slog.Logger
 
-	cache            DialogCachePool
+	cache            dialogCachePool
 	serverMiddleware func(next sipgo.RequestHandler) sipgo.RequestHandler
 
 	// registerAfter is the timer factory used between REGISTER attempts of
@@ -58,17 +57,6 @@ type Diago struct {
 // We can extend this WithClientOptions, WithServerOptions
 
 type DiagoOption func(dg *Diago)
-
-// WithAuth is deprecated and currently unused: it holds client-side digest
-// credentials (sipgo.DigestAuth), but diago does not perform automatic
-// client-side authentication at the UA level. Use WithAuthCredentials per
-// dialog/register instead. For authenticating INCOMING calls use
-// DigestAuthServer and DialogServerSession.Authorize in your serve handler.
-func WithAuth(auth sipgo.DigestAuth) DiagoOption {
-	return func(dg *Diago) {
-		dg.auth = auth
-	}
-}
 
 type Transport struct {
 	ID string
@@ -385,7 +373,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 		},
 
-		cache: DialogCachePool{
+		cache: dialogCachePool{
 			client: &dialogCacheMap[*DialogClientSession]{sync.Map{}},
 			server: &dialogCacheMap[*DialogServerSession]{sync.Map{}},
 		},
@@ -469,19 +457,19 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		// handler to challenge/validate the INVITE (RFC 2617).
 		dWrap := &DialogServerSession{
 			DialogServerSession: dialog,
-			DialogMedia:         DialogMedia{},
+			dialogMedia:         DialogMedia{},
 			// TODO we may actually just build media session with this conf here
 			mediaConf: dg.mediaConfigForTransport(tran),
 		}
 
 		defer closeAndLog(dWrap, "closing dialog server returned error")
 
-		if err := dg.cache.server.DialogStore(dWrap.Context(), dWrap.DialogServerSession.ID, dWrap); err != nil {
+		if err := dg.cache.server.store(dWrap.Context(), dWrap.DialogServerSession.ID, dWrap); err != nil {
 			return fmt.Errorf("failed to store server dialog: %w", err)
 		}
 		defer func() {
 			// TODO: have better context
-			if err := dg.cache.server.DialogDelete(context.Background(), dWrap.DialogServerSession.ID); err != nil {
+			if err := dg.cache.server.remove(context.Background(), dWrap.DialogServerSession.ID); err != nil {
 				dg.log.Error("Failed to delete server dialog", "error", err)
 			}
 		}()
@@ -521,14 +509,14 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	}))
 
 	server.OnAck(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
-		// d, err := dg.cache.MatchDialogServer(req)
+		// d, err := dg.cache.matchDialogServer(req)
 		// if err != nil {
 		// 	// Normally ACK will be received if some out of dialog request is received or we responded negatively
 		// 	// tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, err.Error(), nil))
 		// 	return err
 		// }
 
-		sd, cd, err := dg.cache.MatchDialog(req)
+		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			// We should not do responses for ACK
 			return err
@@ -551,7 +539,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	}))
 
 	server.OnBye(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
-		sd, cd, err := dg.cache.MatchDialog(req)
+		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			return handleNoDialog(req, tx, err)
 		}
@@ -560,12 +548,12 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		// Terminate our media processing
 		// As user may stuck in playing or reading media, this unblocks that goroutine
 		if cd != nil {
-			defer closeAndLog(&cd.DialogMedia, "failed to close client media")
+			defer closeAndLog(&cd.dialogMedia, "failed to close client media")
 
 			return cd.ReadBye(req, tx)
 		}
 
-		defer closeAndLog(&sd.DialogMedia, "failed to close server media")
+		defer closeAndLog(&sd.dialogMedia, "failed to close server media")
 		return sd.ReadBye(req, tx)
 	}))
 
@@ -576,7 +564,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 			return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable", nil))
 		}
 
-		sd, cd, err := dg.cache.MatchDialog(req)
+		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			return handleNoDialog(req, tx, err)
 		}
@@ -616,7 +604,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	}))
 
 	dg.server.OnRefer(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
-		sd, cd, err := dg.cache.MatchDialog(req)
+		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			return handleNoDialog(req, tx, err)
 		}
@@ -632,7 +620,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 
 	dg.server.OnNotify(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
 		// THIS should match now subscribtion instead dialog
-		sd, cd, err := dg.cache.MatchDialog(req)
+		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			return handleNoDialog(req, tx, err)
 		}
@@ -645,7 +633,7 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		return nil
 	}))
 	// server.OnRefer(func(req *sip.Request, tx sip.ServerTransaction) {
-	// 	d, err := MatchDialogServer(req)
+	// 	d, err := matchDialogServer(req)
 	// 	if err != nil {
 	// 		// Security? When to answer this?
 	// 		tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, err.Error(), nil))
@@ -661,7 +649,7 @@ func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id s
 	// satisfies the interface.
 	ctx := context.Background()
 	// No Error means we have ID
-	s, err := dg.cache.server.DialogLoad(ctx, id)
+	s, err := dg.cache.server.load(ctx, id)
 	if err != nil {
 		id, err := sip.DialogIDFromRequestUAC(req)
 		if err != nil {
@@ -670,7 +658,7 @@ func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id s
 
 		}
 		// No Error means we have ID
-		c, err := dg.cache.client.DialogLoad(ctx, id)
+		c, err := dg.cache.client.load(ctx, id)
 		if err != nil {
 			return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call/Transaction Does Not Exist", nil))
 		}
@@ -896,11 +884,11 @@ func (dg *Diago) Shutdown(ctx context.Context) error {
 
 func (dg *Diago) shutdownDialogs(ctx context.Context) []error {
 	var errs []error
-	dg.cache.server.DialogRange(ctx, func(id string, d *DialogServerSession) bool {
+	dg.cache.server.rangeDialogs(ctx, func(id string, d *DialogServerSession) bool {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
 	})
-	dg.cache.client.DialogRange(ctx, func(id string, d *DialogClientSession) bool {
+	dg.cache.client.rangeDialogs(ctx, func(id string, d *DialogClientSession) bool {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
 	})
@@ -957,11 +945,16 @@ func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOpti
 
 // DialBridge makes outgoing call leg and does bridging.
 // Outgoing session will be added into bridge on answer
-// If bridge has Originator (first participant) it will be used for creating outgoing call leg as in B2BUA
-// When bridge is provided then this call will be bridged with any participant already present in bridge
-// Scope: same as Dial; Originator defaults to the bridge originator when not
-// set. Options execute exactly once.
-func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge *Bridge, opts ...SignalOption) (d *DialogClientSession, err error) {
+// If bridge is a *Bridge with Originator (first participant) it will be used
+// for creating outgoing call leg as in B2BUA.
+// When bridge is provided then this call will be bridged with any participant
+// already present in bridge.
+// Scope: same as Dial; for a *Bridge, Originator defaults to the bridge
+// originator when not set. Options execute exactly once.
+func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridger, opts ...SignalOption) (d *DialogClientSession, err error) {
+	if bridge == nil {
+		return nil, fmt.Errorf("DialBridge: bridge is nil")
+	}
 	params, err := newSignalParams(opts, "DialBridge", scopeDial)
 	if err != nil {
 		return nil, err
@@ -974,8 +967,10 @@ func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge *Brid
 	// Keep things compatible: bridge originator is default when not provided.
 	// Params are computed once above, so user-supplied SignalOption funcs
 	// run a single time across dialog creation and Invite.
-	if (params == nil || params.Dialog.Originator == nil) && bridge.Originator != nil {
-		params.Dialog.Originator = bridge.Originator
+	if params == nil || params.Dialog.Originator == nil {
+		if b, ok := bridge.(*Bridge); ok && b.Originator != nil {
+			params.Dialog.Originator = b.Originator
+		}
 	}
 
 	if err := d.inviteWithParams(ctx, params); err != nil {
@@ -1135,13 +1130,13 @@ func (dg *Diago) newSipDialog(recipient sip.Uri, tran *Transport, contact *sip.C
 		}
 
 		// Now dialog is established and can be add into store
-		if err := dg.cache.client.DialogStore(context.Background(), d.DialogClientSession.ID, d); err != nil {
+		if err := dg.cache.client.store(context.Background(), d.DialogClientSession.ID, d); err != nil {
 			dg.log.Error("Failed to store in dialog cache", "error", err)
 		}
 	})
 
 	d.OnClose(func() error {
-		return dg.cache.client.DialogDelete(context.Background(), d.DialogClientSession.ID)
+		return dg.cache.client.remove(context.Background(), d.DialogClientSession.ID)
 	})
 	return d, nil
 }
@@ -1375,7 +1370,7 @@ func (dg *Diago) MatchDialog(req *sip.Request) (DialogSession, bool) {
 	if dg == nil || req == nil {
 		return nil, false
 	}
-	sd, cd, err := dg.cache.MatchDialog(req)
+	sd, cd, err := dg.cache.matchDialog(req)
 	if err != nil {
 		return nil, false
 	}
@@ -1386,22 +1381,4 @@ func (dg *Diago) MatchDialog(req *sip.Request) (DialogSession, bool) {
 		return cd, true
 	}
 	return nil, false
-}
-
-// DialogCacheServer gives access to the internal dialog cache of server dialogs.
-//
-// Deprecated: Internal cache accessor; not part of the public API surface and
-// will be unexported. Use MatchDialog for request-to-dialog membership checks
-// (the conntrack/allowlist use case); cache access will be removed.
-func (dg *Diago) DialogCacheServer() DialogCache[*DialogServerSession] {
-	return dg.cache.server
-}
-
-// DialogCacheClient gives access to the internal dialog cache of client dialogs.
-//
-// Deprecated: Internal cache accessor; not part of the public API surface and
-// will be unexported. Use MatchDialog for request-to-dialog membership checks;
-// cache access will be removed.
-func (dg *Diago) DialogCacheClient() DialogCache[*DialogClientSession] {
-	return dg.cache.client
 }
