@@ -135,7 +135,7 @@ func TestDiagoMatchDialog_RealClientDialog(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	d, err := dg.Invite(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
 

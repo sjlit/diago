@@ -115,10 +115,10 @@ func TestIntegrationBridging(t *testing.T) {
 		},
 	))
 
-	err := tu.ServeBackground(ctx, func(_ context.Context, in *DialogServerSession) error {
-		in.Trying()
-		in.Ringing()
-		in.Answer()
+	err := tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+		in.Trying(ctx)
+		in.Ringing(ctx)
+		in.Answer(ctx)
 
 		inCtx := in.Context()
 		ctx, cancel := context.WithTimeout(inCtx, 15*time.Second)
@@ -132,7 +132,7 @@ func TestIntegrationBridging(t *testing.T) {
 			return nil
 		}
 
-		out, err := tu.InviteBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: 5091}, bridge)
+		out, err := tu.DialBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: 5091}, bridge)
 		if err != nil {
 			t.Log("Dialing failed", err)
 			return nil
@@ -168,9 +168,9 @@ func TestIntegrationBridging(t *testing.T) {
 			},
 		))
 
-		err := dg.ServeBackground(context.Background(), func(_ context.Context, d *DialogServerSession) error {
-			ctx := d.Context()
-			err = d.Answer()
+		err := dg.ServeBackground(context.Background(), func(ctx context.Context, d *DialogServerSession) error {
+			ctx = d.Context()
+			err = d.Answer(ctx)
 			require.NoError(t, err)
 
 			// ms := d.mediaSession
@@ -194,7 +194,7 @@ func TestIntegrationBridging(t *testing.T) {
 		defer ua.Close()
 
 		dg := newDialer(ua)
-		dialog, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog.Close()
 
@@ -236,12 +236,12 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	var bridgePtr atomic.Pointer[BridgeMix]
 	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
-	err := tu.ServeBackground(ctx, func(_ context.Context, in *DialogServerSession) error {
+	err := tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
 		defer func() { dialogExit <- in.ID() }()
 
-		in.Trying()
-		in.Ringing()
-		in.Answer()
+		in.Trying(ctx)
+		in.Ringing(ctx)
+		in.Answer(ctx)
 
 		// Add us in bridge
 		t.Log("Adding into bridge", in.ID())
@@ -268,7 +268,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		dialogs := make([]*DialogClientSession, 3)
 		for i := range 3 {
 			t.Log("Inviting", "i", i)
-			dialog, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+			dialog, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 			require.NoError(t, err)
 			dialogs[i] = dialog
 		}
@@ -316,11 +316,11 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 		bridgePtr.Store(bridge)
 
-		dialog1, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog1, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog1.Hangup(dialog1.Context())
 
-		dialog2, err := dg.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog2, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog2.Hangup(dialog2.Context())
 

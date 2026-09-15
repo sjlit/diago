@@ -114,10 +114,10 @@ func (d *DialogServerSession) respondHandlerError(ctx context.Context, herr erro
 		return d.Hangup(ctx, opts...)
 	}
 
-	params := &SignalParams{
-		Msg: SignalMsgParams{Headers: headers},
+	params := &signalParams{
+		Msg: signalMsgParams{Headers: headers},
 	}
-	return d.respondSignal(code, reason, nil, params)
+	return d.respondSignal(ctx, code, reason, nil, params)
 }
 
 // dialogReasonHeader builds an RFC 3326 Reason value for a BYE caused by a

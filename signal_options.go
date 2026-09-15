@@ -6,6 +6,7 @@ package diago
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
@@ -13,24 +14,129 @@ import (
 	"github.com/sjlit/diago/media"
 )
 
-// SignalParams carries per-call signaling customizations applied by SignalOption.
-// It is constructed by the library (newSignalParams); user code customizes it
-// through the With* constructors or custom option closures. A nil *SignalParams
-// means "use defaults". Not all groups apply to every API; fields irrelevant to
-// the called method are ignored, and each method's godoc states what it honors.
-type SignalParams struct {
-	// Msg shapes the outgoing SIP message (request or response).
-	Msg SignalMsgParams
-	// Media overrides the per-call media configuration.
-	Media SignalMediaParams
-	// Dialog controls dialog establishment and lifecycle callbacks.
-	Dialog SignalDialogParams
-	// Register configures REGISTER transactions. Register only.
-	Register SignalRegisterParams
+// optionScope identifies one configurable capability. Every With* constructor
+// marks the bit it touches; each public API declares the bits it consumes and
+// newSignalParams rejects the rest with UnsupportedOptionError.
+type optionScope uint32
+
+const (
+	scopeHeaders optionScope = 1 << iota
+	scopeContact
+	scopeBody
+	scopeMutateRequest
+	scopeMutateResponse
+	scopeCodecs
+	scopeRTPNAT
+	scopeMediaBindIP
+	scopeMediaExternalIP
+	scopeMediaDTLS
+	scopeMediaSession
+	scopeSDPSessionName
+	scopeMusicOnHold
+	scopeTransport
+	scopeTransportID
+	scopeOriginator
+	scopeCredentials
+	scopeEarlyMediaDetect
+	scopeOnResponse
+	scopeOnMediaUpdate
+	scopeOnRefer
+	scopeOnReferNotify
+	scopeRegisterExpiry
+	scopeRegisterRetryInterval
+	scopeRegisterAllowHeaders
+	scopeRegisterProxyHost
+	scopeOnRegistered
+)
+
+// Common unions of scope bits.
+const (
+	// scopeMsgRequest shapes outgoing requests.
+	scopeMsgRequest = scopeHeaders | scopeContact | scopeBody | scopeMutateRequest
+	// scopeMsgRequestNoBody shapes requests that never carry an SDP body
+	// (Ack/Hangup/Refer/REGISTER attempts).
+	scopeMsgRequestNoBody = scopeHeaders | scopeContact | scopeMutateRequest
+	// scopeMsgResponse shapes outgoing responses.
+	scopeMsgResponse = scopeHeaders | scopeContact | scopeMutateResponse
+	// scopeMediaAll are the options consumed through signalMediaConfig.
+	scopeMediaAll = scopeCodecs | scopeRTPNAT | scopeMediaBindIP | scopeMediaExternalIP |
+		scopeMediaDTLS | scopeMediaSession | scopeSDPSessionName | scopeMusicOnHold
+	// scopeRegisterAll is the construction-time REGISTER configuration.
+	scopeRegisterAll = scopeRegisterExpiry | scopeRegisterRetryInterval |
+		scopeRegisterAllowHeaders | scopeRegisterProxyHost | scopeOnRegistered
+
+	// Per-API allowed sets. Keep in sync with the "Scope:" lines in godoc.
+	scopeTrying        = scopeMsgResponse
+	scopeProgress      = scopeMsgResponse
+	scopeProgressMedia = scopeMsgResponse | scopeBody | scopeMediaAll
+	scopeRinging       = scopeMsgResponse
+	scopeRespondSDP    = scopeMsgResponse
+	scopeAnswer        = scopeProgressMedia | scopeOnMediaUpdate | scopeOnRefer
+	scopeAnswerLate    = scopeProgressMedia
+	scopeServerHangup  = scopeMsgResponse | scopeMutateRequest
+	scopeReInvite      = scopeMsgRequest
+	scopeHold          = scopeMsgRequest | scopeMusicOnHold
+	scopeUnhold        = scopeMsgRequest
+	scopeClientInvite  = scopeMsgRequest | scopeMediaAll | scopeOriginator | scopeCredentials |
+		scopeEarlyMediaDetect | scopeOnResponse | scopeOnMediaUpdate | scopeOnRefer
+	scopeDial            = scopeClientInvite | scopeTransport | scopeTransportID
+	scopeNewDialog       = scopeTransport | scopeTransportID | scopeContact
+	scopeClientHangup    = scopeMsgRequestNoBody
+	scopeClientAck       = scopeMsgRequestNoBody
+	scopeRefer           = scopeMsgRequestNoBody | scopeOnReferNotify
+	scopeWaitAnswer      = scopeCredentials | scopeOnResponse
+	scopeRegisterAttempt = scopeMsgRequestNoBody | scopeCredentials
+	scopeRegisterTx      = scopeRegisterAttempt | scopeRegisterAll
+)
+
+// touchedOption records one applied option for scope validation.
+type touchedOption struct {
+	name  string
+	scope optionScope
 }
 
-// SignalMsgParams shapes the outgoing SIP message.
-type SignalMsgParams struct {
+// UnsupportedOptionError reports SignalOptions that the called API does not
+// consume. v1 silently ignored them; v2 makes the misuse explicit.
+type UnsupportedOptionError struct {
+	// Method is the public API the options were passed to (ex. "Trying").
+	Method string
+	// Options are the constructor names that are not supported (ex. "WithBody").
+	Options []string
+}
+
+func (e *UnsupportedOptionError) Error() string {
+	if len(e.Options) == 1 {
+		return fmt.Sprintf("%s: unsupported option %s", e.Method, e.Options[0])
+	}
+	return fmt.Sprintf("%s: unsupported options %s", e.Method, strings.Join(e.Options, ", "))
+}
+
+// signalParams carries per-call signaling customizations applied by
+// SignalOption. It is constructed by the library (newSignalParams); user code
+// customizes it through the With* constructors. A nil *signalParams means
+// "use defaults".
+type signalParams struct {
+	// Msg shapes the outgoing SIP message (request or response).
+	Msg signalMsgParams
+	// Media overrides the per-call media configuration.
+	Media signalMediaParams
+	// Dialog controls dialog establishment and lifecycle callbacks.
+	Dialog signalDialogParams
+	// Register configures REGISTER transactions. Register only.
+	Register signalRegisterParams
+
+	// touched records every applied option for scope validation.
+	touched []touchedOption
+}
+
+// mark records that an option touched scope. It is called by every With*
+// constructor.
+func (p *signalParams) mark(name string, scope optionScope) {
+	p.touched = append(p.touched, touchedOption{name: name, scope: scope})
+}
+
+// signalMsgParams shapes the outgoing SIP message.
+type signalMsgParams struct {
 	// Headers are appended to the outgoing SIP message (request or response).
 	// Nil headers are skipped.
 	Headers []sip.Header
@@ -45,7 +151,7 @@ type SignalMsgParams struct {
 	// When the outgoing message carries a body and no Content-Type header is
 	// provided, "application/sdp" is added automatically.
 	// Body is only emitted by methods that send a body (ProgressMedia, Answer,
-	// AnswerLate, RespondSDP); Trying/Ringing always ignore it.
+	// AnswerLate, RespondSDP); Trying/Ringing reject it.
 	Body []byte
 
 	// MutateRequest is the last-chance hook invoked just before a request is sent.
@@ -54,18 +160,18 @@ type SignalMsgParams struct {
 	MutateResponse func(res *sip.Response) error
 }
 
-// SignalMediaParams overrides the per-call media configuration on top of the
+// signalMediaParams overrides the per-call media configuration on top of the
 // dialog media config. Precedence: MediaSession > granular options > dialog
-// defaults. Granular fields are silently ignored when MediaSession is set,
-// since the caller takes full ownership of the session.
-type SignalMediaParams struct {
+// defaults. Granular fields are ignored when MediaSession is set, since the
+// caller takes full ownership of the session.
+type signalMediaParams struct {
 	Codecs          []media.Codec
 	RTPNAT          *int
 	MediaBindIP     net.IP
 	MediaExternalIP net.IP
 	MediaDTLSConf   *media.DTLSConfig
 	// SDPSessionName overrides the SDP "s=" line for this call only. Empty
-	// means "no per-call change"; check is the caller's responsibility.
+	// means "no per-call change".
 	SDPSessionName string
 
 	// MusicOnHold overrides the hold music consumed by Hold/Unhold. Non-nil
@@ -81,8 +187,8 @@ type SignalMediaParams struct {
 	MediaSession *media.MediaSession
 }
 
-// SignalDialogParams controls dialog establishment and lifecycle callbacks.
-type SignalDialogParams struct {
+// signalDialogParams controls dialog establishment and lifecycle callbacks.
+type signalDialogParams struct {
 	// Transport selects the transport by name ("udp", "tcp", ...). NewDialog only.
 	Transport string
 	// TransportID selects the transport by its configured ID. NewDialog only.
@@ -108,11 +214,11 @@ type SignalDialogParams struct {
 	OnReferNotify func(statusCode int)
 }
 
-// SignalRegisterParams configures a REGISTER transaction. All fields are
+// signalRegisterParams configures a REGISTER transaction. All fields are
 // construction-time: they are read when the transaction is created with
 // Diago.Register/RegisterTransaction and have no effect when passed to the
 // per-request methods (Register/Unregister/Qualify). Register only.
-type SignalRegisterParams struct {
+type signalRegisterParams struct {
 	// Expiry is for Expire header
 	Expiry time.Duration
 	// RetryInterval is interval before next Register is sent
@@ -127,13 +233,17 @@ type SignalRegisterParams struct {
 }
 
 // SignalOption configures per-call signaling behavior of diago APIs.
-// It is accepted by all signaling methods (server, client, NewDialog and REGISTER).
-type SignalOption func(*SignalParams) error
+// It is accepted by all signaling methods (server, client, NewDialog and
+// REGISTER). Construct options with the With* functions; an option that the
+// called method does not consume is rejected with *UnsupportedOptionError
+// instead of being silently ignored.
+type SignalOption func(*signalParams) error
 
-// newSignalParams applies all options. It always returns a non-nil params
-// struct so callers can safely dereference fields.
-func newSignalParams(opts []SignalOption) (*SignalParams, error) {
-	p := &SignalParams{}
+// newSignalParams applies all options and verifies that every applied option
+// is consumed by method (allowed scope). It always returns a non-nil params
+// struct on success so callers can safely dereference fields.
+func newSignalParams(opts []SignalOption, method string, allowed optionScope) (*signalParams, error) {
+	p := &signalParams{}
 	for _, o := range opts {
 		if o == nil {
 			continue
@@ -142,11 +252,31 @@ func newSignalParams(opts []SignalOption) (*SignalParams, error) {
 			return nil, err
 		}
 	}
+
+	var unsupported []string
+	for _, t := range p.touched {
+		if t.scope&^allowed == 0 {
+			continue
+		}
+		duplicate := false
+		for _, name := range unsupported {
+			if name == t.name {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			unsupported = append(unsupported, t.name)
+		}
+	}
+	if len(unsupported) > 0 {
+		return nil, &UnsupportedOptionError{Method: method, Options: unsupported}
+	}
 	return p, nil
 }
 
 // signalMediaConfig overlays per-call media options on top of the base config.
-func signalMediaConfig(base MediaConfig, p *SignalParams) MediaConfig {
+func signalMediaConfig(base MediaConfig, p *signalParams) MediaConfig {
 	conf := base
 	if p == nil {
 		return conf
@@ -206,7 +336,7 @@ func setSignalContact(msg signalMessage, contact *sip.ContactHeader) {
 // applyRequestSignal applies generic request options (headers + mutator).
 // It must be called just before the request is written so the mutator sees
 // the final message. sipgo fills mandatory dialog headers afterwards.
-func applyRequestSignal(req *sip.Request, params *SignalParams) error {
+func applyRequestSignal(req *sip.Request, params *signalParams) error {
 	if params == nil {
 		return nil
 	}
@@ -221,10 +351,10 @@ func applyRequestSignal(req *sip.Request, params *SignalParams) error {
 }
 
 // buildReInviteRequest fills a re-INVITE request from base SDP body and
-// SignalParams: it applies default Contact (if non-nil), lets params.Msg.Contact
+// signalParams: it applies default Contact (if non-nil), lets params.Msg.Contact
 // override, swaps the body when WithBody is set, sets Content-Type, and runs
 // the request mutator. Caller is responsible for sending the request.
-func buildReInviteRequest(req *sip.Request, baseSDP []byte, defaultContact *sip.ContactHeader, params *SignalParams) error {
+func buildReInviteRequest(req *sip.Request, baseSDP []byte, defaultContact *sip.ContactHeader, params *signalParams) error {
 	body := baseSDP
 	if params != nil && params.Msg.Body != nil {
 		body = params.Msg.Body
@@ -242,7 +372,8 @@ func buildReInviteRequest(req *sip.Request, baseSDP []byte, defaultContact *sip.
 
 // WithHeaders appends custom headers to the outgoing SIP message.
 func WithHeaders(headers ...sip.Header) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithHeaders", scopeHeaders)
 		for _, h := range headers {
 			if h == nil {
 				return fmt.Errorf("WithHeaders: nil header provided")
@@ -255,13 +386,21 @@ func WithHeaders(headers ...sip.Header) SignalOption {
 
 // WithHeader is a convenience wrapper appending a single header by name and value.
 func WithHeader(name string, value string) SignalOption {
-	return WithHeaders(sip.NewHeader(name, value))
+	return func(p *signalParams) error {
+		p.mark("WithHeader", scopeHeaders)
+		if name == "" {
+			return fmt.Errorf("WithHeader: name is empty")
+		}
+		p.Msg.Headers = append(p.Msg.Headers, sip.NewHeader(name, value))
+		return nil
+	}
 }
 
 // WithContact replaces the default Contact header of the outgoing message.
 // On server side it applies to responses, on client side to requests.
 func WithContact(contact *sip.ContactHeader) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithContact", scopeContact)
 		if contact == nil {
 			return fmt.Errorf("WithContact: contact header is nil")
 		}
@@ -273,7 +412,11 @@ func WithContact(contact *sip.ContactHeader) SignalOption {
 // WithBody overrides the outgoing body. Content-Type defaults to
 // "application/sdp" unless provided within Headers.
 func WithBody(body []byte) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithBody", scopeBody)
+		if body == nil {
+			return fmt.Errorf("WithBody: body is nil")
+		}
 		p.Msg.Body = body
 		return nil
 	}
@@ -281,7 +424,11 @@ func WithBody(body []byte) SignalOption {
 
 // WithCodecs overrides the codecs offered in the SDP for this call.
 func WithCodecs(codecs ...media.Codec) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithCodecs", scopeCodecs)
+		if len(codecs) == 0 {
+			return fmt.Errorf("WithCodecs: no codecs provided")
+		}
 		p.Media.Codecs = codecs
 		return nil
 	}
@@ -290,7 +437,11 @@ func WithCodecs(codecs ...media.Codec) SignalOption {
 // WithRTPNAT sets media.MediaSession.RTPNAT for this call.
 // Check media.RTPNAT options.
 func WithRTPNAT(n int) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithRTPNAT", scopeRTPNAT)
+		if n != media.RTPNATDisabled && n != media.RTPNATSymetric {
+			return fmt.Errorf("WithRTPNAT: invalid mode %d", n)
+		}
 		v := n
 		p.Media.RTPNAT = &v
 		return nil
@@ -299,7 +450,8 @@ func WithRTPNAT(n int) SignalOption {
 
 // WithMediaBindIP overrides the local RTP/RTCP bind IP for this call.
 func WithMediaBindIP(ip net.IP) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithMediaBindIP", scopeMediaBindIP)
 		if ip == nil {
 			return fmt.Errorf("WithMediaBindIP: ip is nil")
 		}
@@ -310,7 +462,8 @@ func WithMediaBindIP(ip net.IP) SignalOption {
 
 // WithMediaExternalIP overrides the IP advertised in the SDP (c= line) for this call.
 func WithMediaExternalIP(ip net.IP) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithMediaExternalIP", scopeMediaExternalIP)
 		if ip == nil {
 			return fmt.Errorf("WithMediaExternalIP: ip is nil")
 		}
@@ -321,24 +474,29 @@ func WithMediaExternalIP(ip net.IP) SignalOption {
 
 // WithMediaDTLS overrides the DTLS configuration for this call.
 func WithMediaDTLS(conf media.DTLSConfig) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithMediaDTLS", scopeMediaDTLS)
+		if dtlsConfIsZero(conf) {
+			return fmt.Errorf("WithMediaDTLS: configuration is empty")
+		}
 		c := conf
 		p.Media.MediaDTLSConf = &c
 		return nil
 	}
 }
 
-// WithMediaSDPSessionName overrides the SDP "s=" session-name line for this
-// call only. Overlays MediaConfig.SDPSessionName; the empty string is rejected
-// (it carries no information and is indistinguishable from "not set"), as are
+// WithSDPSessionName overrides the SDP "s=" session-name line for this call
+// only. Overlays MediaConfig.SDPSessionName; the empty string is rejected (it
+// carries no information and is indistinguishable from "not set"), as are
 // line breaks — an "s=" value must stay on one SDP line.
-func WithMediaSDPSessionName(name string) SignalOption {
-	return func(p *SignalParams) error {
+func WithSDPSessionName(name string) SignalOption {
+	return func(p *signalParams) error {
+		p.mark("WithSDPSessionName", scopeSDPSessionName)
 		if name == "" {
-			return fmt.Errorf("WithMediaSDPSessionName: name is empty")
+			return fmt.Errorf("WithSDPSessionName: name is empty")
 		}
 		if err := media.ValidateSDPSessionName(name); err != nil {
-			return fmt.Errorf("WithMediaSDPSessionName: %w", err)
+			return fmt.Errorf("WithSDPSessionName: %w", err)
 		}
 		p.Media.SDPSessionName = name
 		return nil
@@ -348,7 +506,8 @@ func WithMediaSDPSessionName(name string) SignalOption {
 // WithMediaSession passes a fully custom/pre-created media session.
 // The library will use it as is instead of creating its own session.
 func WithMediaSession(m *media.MediaSession) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithMediaSession", scopeMediaSession)
 		if m == nil {
 			return fmt.Errorf("WithMediaSession: media session is nil")
 		}
@@ -362,7 +521,8 @@ func WithMediaSession(m *media.MediaSession) SignalOption {
 // explicitly disables hold music for the call. On Invite/Answer it becomes
 // the dialog-level default; on Hold it applies to that hold only.
 func WithMusicOnHold(tone audio.Tone) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithMusicOnHold", scopeMusicOnHold)
 		t := tone
 		p.Media.MusicOnHold = &t
 		return nil
@@ -371,7 +531,11 @@ func WithMusicOnHold(tone audio.Tone) SignalOption {
 
 // WithOnResponse sets a response callback used during dialog establishment (client side).
 func WithOnResponse(fn func(res *sip.Response) error) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithOnResponse", scopeOnResponse)
+		if fn == nil {
+			return fmt.Errorf("WithOnResponse: fn is nil")
+		}
 		p.Dialog.OnResponse = fn
 		return nil
 	}
@@ -379,7 +543,11 @@ func WithOnResponse(fn func(res *sip.Response) error) SignalOption {
 
 // WithOnMediaUpdate sets the media update callback (re-INVITE handling).
 func WithOnMediaUpdate(fn func(d *DialogMedia)) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithOnMediaUpdate", scopeOnMediaUpdate)
+		if fn == nil {
+			return fmt.Errorf("WithOnMediaUpdate: fn is nil")
+		}
 		p.Dialog.OnMediaUpdate = fn
 		return nil
 	}
@@ -387,7 +555,11 @@ func WithOnMediaUpdate(fn func(d *DialogMedia)) SignalOption {
 
 // WithOnRefer sets the REFER handler callback.
 func WithOnRefer(fn OnReferDialogFunc) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithOnRefer", scopeOnRefer)
+		if fn == nil {
+			return fmt.Errorf("WithOnRefer: fn is nil")
+		}
 		p.Dialog.OnRefer = fn
 		return nil
 	}
@@ -397,7 +569,8 @@ func WithOnRefer(fn OnReferDialogFunc) SignalOption {
 // (NOTIFY sipfrag code) of an outgoing REFER sent with Refer.
 // Refer only.
 func WithOnReferNotify(fn func(statusCode int)) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithOnReferNotify", scopeOnReferNotify)
 		if fn == nil {
 			return fmt.Errorf("WithOnReferNotify: fn is nil")
 		}
@@ -410,7 +583,8 @@ func WithOnReferNotify(fn func(statusCode int)) SignalOption {
 // request just before it is sent. Use it for anything not covered by
 // dedicated options.
 func WithRequestMutator(fn func(req *sip.Request) error) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithRequestMutator", scopeMutateRequest)
 		if fn == nil {
 			return fmt.Errorf("WithRequestMutator: fn is nil")
 		}
@@ -423,7 +597,8 @@ func WithRequestMutator(fn func(req *sip.Request) error) SignalOption {
 // response just before it is sent. Use it for anything not covered by
 // dedicated options.
 func WithResponseMutator(fn func(res *sip.Response) error) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithResponseMutator", scopeMutateResponse)
 		if fn == nil {
 			return fmt.Errorf("WithResponseMutator: fn is nil")
 		}
@@ -435,7 +610,11 @@ func WithResponseMutator(fn func(res *sip.Response) error) SignalOption {
 // WithDialogTransport selects the transport used for a new dialog by name (udp, tcp, ...).
 // NewDialog only.
 func WithDialogTransport(name string) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithDialogTransport", scopeTransport)
+		if name == "" {
+			return fmt.Errorf("WithDialogTransport: name is empty")
+		}
 		p.Dialog.Transport = name
 		return nil
 	}
@@ -444,7 +623,11 @@ func WithDialogTransport(name string) SignalOption {
 // WithDialogTransportID selects the transport used for a new dialog by its configured ID.
 // NewDialog only.
 func WithDialogTransportID(id string) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithDialogTransportID", scopeTransportID)
+		if id == "" {
+			return fmt.Errorf("WithDialogTransportID: id is empty")
+		}
 		p.Dialog.TransportID = id
 		return nil
 	}
@@ -453,7 +636,8 @@ func WithDialogTransportID(id string) SignalOption {
 // WithOriginator sets the originator dialog whose SDP/codecs are reused for the
 // outgoing INVITE, avoiding media transcoding. Invite only.
 func WithOriginator(o DialogSession) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithOriginator", scopeOriginator)
 		if o == nil {
 			return fmt.Errorf("WithOriginator: originator is nil")
 		}
@@ -463,9 +647,13 @@ func WithOriginator(o DialogSession) SignalOption {
 }
 
 // WithAuthCredentials sets username/password used for digest authentication.
-// Invite/Register only.
+// Invite/Register only. Both values empty is rejected.
 func WithAuthCredentials(username string, password string) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithAuthCredentials", scopeCredentials)
+		if username == "" && password == "" {
+			return fmt.Errorf("WithAuthCredentials: username and password are empty")
+		}
 		p.Dialog.Username = username
 		p.Dialog.Password = password
 		return nil
@@ -476,7 +664,8 @@ func WithAuthCredentials(username string, password string) SignalOption {
 // Invite returns ErrClientEarlyMedia when 183 Session Progress with SDP is received.
 // Invite only.
 func WithEarlyMediaDetect() SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithEarlyMediaDetect", scopeEarlyMediaDetect)
 		p.Dialog.EarlyMediaDetect = true
 		return nil
 	}
@@ -486,7 +675,11 @@ func WithEarlyMediaDetect() SignalOption {
 // of this transaction. Zero (default) sends no Expires header unless the
 // server provides one. Register only.
 func WithRegisterExpiry(d time.Duration) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithRegisterExpiry", scopeRegisterExpiry)
+		if d < 0 {
+			return fmt.Errorf("WithRegisterExpiry: negative duration %s", d)
+		}
 		p.Register.Expiry = d
 		return nil
 	}
@@ -496,7 +689,11 @@ func WithRegisterExpiry(d time.Duration) SignalOption {
 // is sent. Zero (default) derives it from the negotiated expiry.
 // Register only.
 func WithRegisterRetryInterval(d time.Duration) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithRegisterRetryInterval", scopeRegisterRetryInterval)
+		if d < 0 {
+			return fmt.Errorf("WithRegisterRetryInterval: negative duration %s", d)
+		}
 		p.Register.RetryInterval = d
 		return nil
 	}
@@ -505,7 +702,16 @@ func WithRegisterRetryInterval(d time.Duration) SignalOption {
 // WithRegisterAllowHeaders sets the Allow header values sent with REGISTER.
 // Register only.
 func WithRegisterAllowHeaders(headers ...string) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithRegisterAllowHeaders", scopeRegisterAllowHeaders)
+		if len(headers) == 0 {
+			return fmt.Errorf("WithRegisterAllowHeaders: no headers provided")
+		}
+		for _, h := range headers {
+			if h == "" {
+				return fmt.Errorf("WithRegisterAllowHeaders: empty header value")
+			}
+		}
 		p.Register.AllowHeaders = headers
 		return nil
 	}
@@ -514,7 +720,8 @@ func WithRegisterAllowHeaders(headers ...string) SignalOption {
 // WithRegisterProxyHost overrides the REGISTER request destination.
 // Register only.
 func WithRegisterProxyHost(host string) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithRegisterProxyHost", scopeRegisterProxyHost)
 		if host == "" {
 			return fmt.Errorf("WithRegisterProxyHost: host is empty")
 		}
@@ -526,7 +733,8 @@ func WithRegisterProxyHost(host string) SignalOption {
 // WithOnRegistered sets the callback invoked after a successful initial
 // REGISTER. Register only.
 func WithOnRegistered(fn func()) SignalOption {
-	return func(p *SignalParams) error {
+	return func(p *signalParams) error {
+		p.mark("WithOnRegistered", scopeOnRegistered)
 		if fn == nil {
 			return fmt.Errorf("WithOnRegistered: fn is nil")
 		}

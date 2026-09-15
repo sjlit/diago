@@ -32,7 +32,7 @@ func (e RegisterResponseError) Error() string {
 }
 
 type RegisterTransaction struct {
-	register SignalRegisterParams
+	register signalRegisterParams
 	username string
 	password string
 	// mutateRequest is the transaction-level WithRequestMutator hook. It runs
@@ -56,9 +56,9 @@ type RegisterTransaction struct {
 	after func(time.Duration) <-chan time.Time
 }
 
-func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, params *SignalParams, after func(time.Duration) <-chan time.Time) *RegisterTransaction {
+func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, params *signalParams, after func(time.Duration) <-chan time.Time) *RegisterTransaction {
 	if params == nil {
-		params = &SignalParams{}
+		params = &signalParams{}
 	}
 	if after == nil {
 		after = time.After
@@ -127,10 +127,10 @@ func (t *RegisterTransaction) cloneOrigin() (*sip.Request, error) {
 
 // Register sends the initial REGISTER. Options allow customizing Contact,
 // extra headers and the final request of this registration attempt.
-// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password);
+// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials;
 // credentials fall back to the transaction ones when not provided via options.
 func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Register", scopeRegisterAttempt)
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption
 // signalCredentials overlays credentials passed via WithAuthCredentials on top
 // of the transaction ones. Empty SignalOption fields fall back to the
 // transaction values.
-func (t *RegisterTransaction) signalCredentials(params *SignalParams) (string, string) {
+func (t *RegisterTransaction) signalCredentials(params *signalParams) (string, string) {
 	username, password := t.username, t.password
 	if params != nil {
 		if params.Dialog.Username != "" {
@@ -160,7 +160,7 @@ func (t *RegisterTransaction) signalCredentials(params *SignalParams) (string, s
 	return username, password
 }
 
-func (t *RegisterTransaction) doRegister(ctx context.Context, params *SignalParams) error {
+func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalParams) error {
 	username, password := t.signalCredentials(params)
 	client := t.client
 	req, err := t.cloneOrigin()
@@ -333,9 +333,9 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 }
 
 // Unregister unregisters the contact. Options allow customizing the request.
-// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password).
+// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
 func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Unregister", scopeRegisterAttempt)
 	if err != nil {
 		return err
 	}
@@ -356,9 +356,9 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOpti
 }
 
 // Qualify refreshes the registration. Options allow customizing the request.
-// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password).
+// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
 func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Qualify", scopeRegisterAttempt)
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption)
 	return t.doRequest(ctx, req, params)
 }
 
-func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, params *SignalParams) error {
+func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, params *signalParams) error {
 	// log := p.getLoggerCtx(ctx, "Register")
 	client := t.client
 	username, password := t.signalCredentials(params)

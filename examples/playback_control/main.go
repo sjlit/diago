@@ -36,27 +36,27 @@ func start(ctx context.Context) error {
 	ua, _ := sipgo.NewUA()
 	tu := diago.NewDiago(ua)
 
-	return tu.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
+	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
-		if err := Playback(inDialog); err != nil {
+		if err := Playback(ctx, inDialog); err != nil {
 			slog.Error("Playback finished with error", "error", err)
 		}
 		return nil
 	})
 }
 
-func Playback(inDialog *diago.DialogServerSession) error {
-	inDialog.Trying()  // Progress -> 100 Trying
-	inDialog.Ringing() // Ringing -> 180 Response
+func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	inDialog.Trying(ctx)  // 100 Trying
+	inDialog.Ringing(ctx) // 180 Ringing
 
 	playfile, _ := testdata.OpenFile("demo-echotest.wav")
 	defer playfile.Close()
 
 	slog.Info("Playing a file", "file", "demo-echotest.wav")
 
-	if err := inDialog.Answer(); err != nil {
+	if err := inDialog.Answer(ctx); err != nil {
 		return err
 	}
 

@@ -61,9 +61,9 @@ func (d *DialogClientSession) ID() string {
 //   - confirmed: BYE, waits for 200
 //   - already ended: returns nil silently
 //
-// Honors: msg (Headers, Contact, MutateRequest).
+// Scope: WithHeaders, WithContact, WithRequestMutator.
 func (d *DialogClientSession) Hangup(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Hangup", scopeClientHangup)
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func (d *DialogClientSession) HangupAndClose(ctx context.Context, opts ...Signal
 
 // byeSignal builds BYE request applying signaling options and writes it.
 // Mandatory dialog headers (From/To/Call-ID/CSeq) are filled by sipgo.
-func (d *DialogClientSession) byeSignal(ctx context.Context, params *SignalParams) error {
+func (d *DialogClientSession) byeSignal(ctx context.Context, params *signalParams) error {
 	if d.InviteResponse == nil {
 		return byeNotPossible()
 	}
@@ -117,6 +117,11 @@ func (d *DialogClientSession) ToUser() string {
 	return d.InviteRequest.To().Address.User
 }
 
+// Transport returns the transport of the dialog's INVITE request (ex. "UDP").
+func (d *DialogClientSession) Transport() string {
+	return d.InviteRequest.Transport()
+}
+
 func (d *DialogClientSession) DialogSIP() *sipgo.Dialog {
 	return &d.Dialog
 }
@@ -135,81 +140,6 @@ func (d *DialogClientSession) remoteContactUnsafe() *sip.ContactHeader {
 	return d.InviteResponse.Contact()
 }
 
-// InviteClientOptions is passed on dialog client Invite with extra control over dialog
-//
-// Deprecated: Use Invite with SignalOptions. Convert existing struct with Options()
-type InviteClientOptions struct {
-	Originator DialogSession
-	OnResponse func(res *sip.Response) error
-	// OnMediaUpdate called when media is changed.
-	// NOTE: you should not block this call as it blocks response processing.
-	OnMediaUpdate func(d *DialogMedia)
-	// OnRefer is called on successfull REFER handling
-	//
-	// It creates new dialog (NewDialog) on which you need to call Invite() and Ack()
-	// Any error from invite, ack or other processing should be returned for correct Notify handling
-	//
-	// NOTE: IT is SCOPED to handler and exiting handler will Close/Terminate this dialog!
-	OnRefer OnReferDialogFunc
-	// For digest authentication
-	Username string
-	Password string
-
-	// Custom headers to pass. DO NOT SET THIS to nil
-	Headers []sip.Header
-	// Stop on early media. ErrClientEarlyMedia will be returned
-	EarlyMediaDetect bool
-}
-
-// Options converts legacy options into SignalOptions
-func (o *InviteClientOptions) Options() ([]SignalOption, error) {
-	var opts []SignalOption
-	if o.Originator != nil {
-		opts = append(opts, WithOriginator(o.Originator))
-	}
-	if o.OnResponse != nil {
-		opts = append(opts, WithOnResponse(o.OnResponse))
-	}
-	if o.OnMediaUpdate != nil {
-		opts = append(opts, WithOnMediaUpdate(o.OnMediaUpdate))
-	}
-	if o.OnRefer != nil {
-		opts = append(opts, WithOnRefer(o.OnRefer))
-	}
-	if o.Username != "" || o.Password != "" {
-		opts = append(opts, WithAuthCredentials(o.Username, o.Password))
-	}
-	if len(o.Headers) > 0 {
-		opts = append(opts, WithHeaders(o.Headers...))
-	}
-	if o.EarlyMediaDetect {
-		opts = append(opts, WithEarlyMediaDetect())
-	}
-	return opts, nil
-}
-
-// WithAnonymousCaller sets from user Anonymous per RFC
-//
-// Deprecated: Use Invite with WithHeaders and sip.FromHeader
-func (o *InviteClientOptions) WithAnonymousCaller() {
-	o.Headers = append(o.Headers, &sip.FromHeader{
-		DisplayName: "Anonymous",
-		Address:     sip.Uri{User: "anonymous", Host: "anonymous.invalid"},
-		Params:      sip.NewParams(),
-	})
-}
-
-// WithCaller allows simpler way modifying caller
-//
-// Deprecated: Use Invite with WithHeaders and sip.FromHeader
-func (o *InviteClientOptions) WithCaller(displayName string, callerID string, host string) {
-	o.Headers = append(o.Headers, &sip.FromHeader{
-		DisplayName: displayName,
-		Address:     sip.Uri{User: callerID, Host: host},
-		Params:      sip.NewParams(),
-	})
-}
-
 // Invite sends Invite request and establishes [early] media. Normally you need to call Ack after.
 //
 // Normal Answer with 200 OK (SDP)
@@ -224,7 +154,11 @@ func (o *InviteClientOptions) WithCaller(displayName string, callerID string, ho
 // Options allow customizing Contact, From, custom headers, SDP body, media
 // (IP, codecs, fully custom media session) and a final request mutator.
 //
-// Honors: msg (Headers, Contact, Body, MutateRequest), media (all), dialog (all).
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator, WithOriginator,
+// WithAuthCredentials, WithEarlyMediaDetect, WithOnResponse, WithOnMediaUpdate,
+// WithOnRefer, plus the media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP,
+// WithMediaExternalIP, WithMediaDTLS, WithSDPSessionName, WithMediaSession,
+// WithMusicOnHold).
 //
 // Errors:
 // - sipgo.ErrDialogResponse
@@ -233,17 +167,17 @@ func (o *InviteClientOptions) WithCaller(displayName string, callerID string, ho
 // NOTE: It updates internal invite request so NOT THREAD SAFE.
 // If you pass originator it will use originator to set correct from header and avoid media transcoding
 func (d *DialogClientSession) Invite(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Invite", scopeClientInvite)
 	if err != nil {
 		return err
 	}
 	return d.inviteWithParams(ctx, params)
 }
 
-// inviteWithParams performs the Invite flow using a pre-computed *SignalParams.
-// It exists so callers (e.g. Diago.Invite, InviteBridge) can compute params once
+// inviteWithParams performs the Invite flow using a pre-computed *signalParams.
+// It exists so callers (e.g. Diago.Dial, DialBridge) can compute params once
 // and avoid running user-supplied SignalOption funcs twice.
-func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *SignalParams) error {
+func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *signalParams) error {
 	if params == nil || params.Media.MediaSession == nil {
 		conf := signalMediaConfig(d.mediaConfig, params)
 		if err := d.initMediaSessionFromConf(conf); err != nil {
@@ -267,7 +201,7 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *Sign
 	return d.invite(ctx, &d.DialogMedia, params)
 }
 
-func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, params *SignalParams) error {
+func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, params *signalParams) error {
 	sess := med.mediaSession
 	inviteReq := d.InviteRequest
 	originator := params.Dialog.Originator
@@ -402,11 +336,7 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 		// sess.Close()
 		return err
 	}
-	ansOpts := sipgo.AnswerOptions{
-		Username:   params.Dialog.Username,
-		Password:   params.Dialog.Password,
-		OnResponse: params.Dialog.OnResponse,
-	}
+	ansOpts := answerOptionsFromParams(params)
 
 	if params.Dialog.EarlyMediaDetect {
 		return d.waitAnswerEarly(ctx, med, ansOpts)
@@ -415,10 +345,32 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 	return d.waitAnswer(ctx, med, ansOpts)
 }
 
-// WaitAnswer waits dialog on answer. It should only be used if you have error Invite but still want to continue
-// ex. ErrClientEarlyMedia was returned but you want to proceed with answering
-func (d *DialogClientSession) WaitAnswer(ctx context.Context, opts sipgo.AnswerOptions) error {
-	return d.waitAnswer(ctx, &d.DialogMedia, opts)
+// answerOptionsFromParams extracts the sipgo-level answer options from parsed
+// signalParams. It is the bridge between diago's SignalOption surface and the
+// sipgo DialogClientSession API.
+func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
+	if params == nil {
+		return sipgo.AnswerOptions{}
+	}
+	return sipgo.AnswerOptions{
+		Username:   params.Dialog.Username,
+		Password:   params.Dialog.Password,
+		OnResponse: params.Dialog.OnResponse,
+	}
+}
+
+// WaitAnswer waits for the final answer of a dialog whose Invite returned
+// ErrClientEarlyMedia (or otherwise did not complete). Media options are
+// ignored here: the media session was already negotiated by Invite.
+// Options allow receiving responses (WithOnResponse) and digest credentials
+// (WithAuthCredentials).
+// Scope: WithOnResponse, WithAuthCredentials.
+func (d *DialogClientSession) WaitAnswer(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "WaitAnswer", scopeWaitAnswer)
+	if err != nil {
+		return err
+	}
+	return d.waitAnswer(ctx, &d.DialogMedia, answerOptionsFromParams(params))
 }
 
 func (d *DialogClientSession) waitAnswerEarly(ctx context.Context, med *DialogMedia, opts sipgo.AnswerOptions) error {
@@ -525,9 +477,9 @@ func (d *DialogClientSession) applyRemoteSDP(med *DialogMedia, remoteSDP []byte)
 // Ack acknowledgeds media
 // Before Ack normally you want to setup more stuff like bridging
 // Options allow customizing headers of the ACK request.
-// Honors: msg (Headers, Contact, MutateRequest).
+// Scope: WithHeaders, WithContact, WithRequestMutator.
 func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Ack", scopeClientAck)
 	if err != nil {
 		return err
 	}
@@ -553,7 +505,7 @@ func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) err
 	return nil
 }
 
-func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, body []byte, params *SignalParams) error {
+func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, body []byte, params *signalParams) error {
 	ackRequest := sip.NewRequest(
 		sip.ACK,
 		remoteTarget,
@@ -577,9 +529,9 @@ func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, bod
 
 // ReInvite sends new invite based on current media session
 // Options allow customizing Contact, headers, SDP body and to mutate the final request.
-// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator.
 func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "ReInvite", scopeReInvite)
 	if err != nil {
 		return err
 	}
@@ -613,7 +565,7 @@ func (d *DialogClientSession) writeReInviteACK(ctx context.Context, target sip.U
 
 // reInviteMediaSession updates with full new media session
 // media MUST BE Forked
-func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *SignalParams) error {
+func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *signalParams) error {
 	sdpBody := ms.LocalSDP()
 	if params != nil && params.Msg.Body != nil {
 		sdpBody = params.Msg.Body
@@ -685,12 +637,11 @@ func (d *DialogClientSession) reInviteKeepAlive(ctx context.Context) error {
 // Refer tries todo refer (blind transfer) on call.
 // Options allow customizing headers of the REFER request and receiving the
 // transfer status via WithOnReferNotify.
-// Honors: msg (Headers, Contact, MutateRequest); dialog (OnReferNotify via
-// WithOnReferNotify).
+// Scope: WithHeaders, WithContact, WithRequestMutator, WithOnReferNotify.
 //
 // NOTE: It is expected that after calling this you are hanguping call to send BYE
 func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Refer", scopeRefer)
 	if err != nil {
 		return err
 	}
@@ -717,7 +668,7 @@ func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, opts .
 // previous target only when one was seen); dereferencing it used to panic.
 // Referred-By falls back to the Contact of our own INVITE when the answer
 // carried none.
-func (d *DialogClientSession) referWithContacts(ctx context.Context, cont, localContact *sip.ContactHeader, referTo sip.Uri, params *SignalParams) error {
+func (d *DialogClientSession) referWithContacts(ctx context.Context, cont, localContact *sip.ContactHeader, referTo sip.Uri, params *signalParams) error {
 	if cont == nil {
 		return fmt.Errorf("can not refer: remote contact is missing")
 	}
@@ -785,16 +736,17 @@ func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
-// Honors: msg (Headers, Contact, Body, MutateRequest); media: WithMusicOnHold
-// selects the hold music started automatically after the re-INVITE succeeds
-// (falling back to MediaConfig.MusicOnHold); other media overrides are not consumed.
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator, WithMusicOnHold.
+// WithMusicOnHold selects the hold music started automatically after the
+// re-INVITE succeeds (falling back to MediaConfig.MusicOnHold); other media
+// overrides are rejected.
 //
 // The automatic music runs detached from the Hold call's context (which
 // typically carries the re-INVITE timeout) until Unhold, Stop/StopMusicOnHold,
 // or dialog Close; when the dialog-level default is unset (no MusicOnHold
 // configured anywhere) Hold behaves as before and plays nothing.
 func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Hold", scopeHold)
 	if err != nil {
 		return err
 	}
@@ -812,10 +764,10 @@ func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) er
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
-// Honors: msg (Headers, Contact, Body, MutateRequest); the music started
-// automatically by Hold is stopped on success; other media overrides are not consumed.
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator. The music
+// started automatically by Hold is stopped on success; media options are rejected.
 func (d *DialogClientSession) Unhold(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Unhold", scopeUnhold)
 	if err != nil {
 		return err
 	}

@@ -51,30 +51,30 @@ func start(ctx context.Context, recipientUri string) error {
 		return err
 	}
 
-	return d.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
-		BridgeCall(d, inDialog, recipient)
+	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+		BridgeCall(ctx, d, inDialog, recipient)
 		return nil
 	})
 }
 
-func BridgeCall(d *diago.Diago, inDialog *diago.DialogServerSession, recipient sip.Uri) error {
-	inDialog.Trying()  // Progress -> 100 Trying
-	inDialog.Ringing() // Ringing -> 180 Response
+func BridgeCall(ctx context.Context, d *diago.Diago, inDialog *diago.DialogServerSession, recipient sip.Uri) error {
+	inDialog.Trying(ctx)  // 100 Trying
+	inDialog.Ringing(ctx) // 180 Ringing
 
 	inCtx := inDialog.Context()
-	ctx, cancel := context.WithTimeout(inCtx, 5*time.Second)
+	answerCtx, cancel := context.WithTimeout(inCtx, 5*time.Second)
 	defer cancel()
 
 	bridge := diago.NewBridge()
 	// Now answer our in dialog
-	if err := inDialog.Answer(); err != nil {
+	if err := inDialog.Answer(answerCtx); err != nil {
 		return err
 	}
 	if err := bridge.AddDialogSession(inDialog); err != nil {
 		return err
 	}
 
-	outDialog, err := d.InviteBridge(ctx, recipient, bridge)
+	outDialog, err := d.DialBridge(answerCtx, recipient, bridge)
 	if err != nil {
 		return err
 	}

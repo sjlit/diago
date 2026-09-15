@@ -226,7 +226,7 @@ This is intentional and documented behavior:
 | Dialog kind | Signaling teardown | Local cleanup |
 |---|---|---|
 | **Server** (`DialogServerSession`) | Framework: auto-hangup when handler returns (or earlier if the user calls `Hangup`). | Framework: closes dialog + media when the handler returns. |
-| **Client** (`DialogClientSession`) | **User.** The library never sends BYE for you (the `Diago.Invite`/`InviteBridge` helpers do it only on their own error paths). | **User.** Call `Close()` when done; it is idempotent. |
+| **Client** (`DialogClientSession`) | **User.** The library never sends BYE for you (the `Diago.Dial`/`DialBridge` helpers do it only on their own error paths). | **User.** Call `Close()` when done; it is idempotent. |
 
 Warning specific to client dialogs: `Close()` does **not** send BYE. Closing
 without hanging up leaves the remote leg up until it times out. Always `Hangup`
@@ -316,16 +316,12 @@ remain functional for compatibility but must not be mixed with the gates.
 It is accepted by every signaling method (server progress/answer, client
 invite/ack/bye/re-INVITE/refer, hold/unhold, `NewDialog`, and the REGISTER
 family: `Diago.Register`/`RegisterTransaction` plus the per-request
-`Register`/`Unregister`/`Qualify`). Legacy option structs survive only as
-migration input: `InviteOptions` and `InviteClientOptions` carry an
-`Options()` converter and are deprecated; `NewDialogOptions.Options()` takes
-no error while `InviteOptions.Options()` returns one (legacy inconsistency,
-kept as is); `ProgressMediaOptions` and `AnswerOptions` are consumed only
-through their deprecated wrapper methods, which convert inline. The old
-struct-based `ReferClientOptions`/`ReferServerOptions`/`ReferOptions` and
-`RegisterOptions` were removed: `Refer` takes `...SignalOption` (transfer
-status via `WithOnReferNotify`), and REGISTER is configured with the scoped
-`WithRegister*` options. The media-side option families
+`Register`/`Unregister`/`Qualify`). The old struct-based options
+(`InviteOptions`, `InviteClientOptions`, `NewDialogOptions`, `AnswerOptions`,
+`ProgressMediaOptions`, `ReferClientOptions`, `ReferServerOptions`,
+`ReferOptions`, `RegisterOptions`) were removed: `Refer` takes
+`...SignalOption` (transfer status via `WithOnReferNotify`), and REGISTER is
+configured with the scoped `WithRegister*` options. The media-side option families
 (`AudioReaderOption`, `AudioWriterOption`, `DTMFSendOption`, `MoHOption`,
 `ToneOption`, `RecordingOption`, `PlaybackDTMFOption`) all share the
 `func(*T) error` shape.
@@ -333,25 +329,38 @@ status via `WithOnReferNotify`), and REGISTER is configured with the scoped
 ### Single-execution guarantee
 
 Every public API executes each user-supplied `SignalOption` func **exactly
-once**. Multi-stage helpers (`Diago.Invite`, `Diago.InviteBridge`) compute the
-`SignalParams` once and pass them through internal params-aware paths
+once**. Multi-stage helpers (`Diago.Dial`, `Diago.DialBridge`) compute the
+`signalParams` once and pass them through internal params-aware paths
 (`newDialogWithParams`, `inviteWithParams`). Options with side effects are safe
 to pass. Tests in `diago_test.go` lock this guarantee.
 
-### Option scopes and per-method honors
+### Option scopes and per-method validation
 
-`SignalParams` is grouped by concern: **msg** (Headers, Contact, Body,
-MutateRequest, MutateResponse — outgoing message shaping), **media** (Codecs,
-RTPNAT, MediaBindIP, MediaExternalIP, MediaDTLSConf, MediaSession — consumed
-only via `signalMediaConfig` and the media-install sites), **dialog**
-(Transport, TransportID, Originator, Username, Password, EarlyMediaDetect,
-OnResponse, OnMediaUpdate, OnRefer, OnReferNotify), **register** (Expiry,
-RetryInterval, AllowHeaders, ProxyHost, OnRegistered — construction-time,
-read by `Register`/`RegisterTransaction` only). Fields irrelevant to the
-called method are ignored; each method's godoc states which groups it honors.
-Credentials passed via `WithAuthCredentials` are honored by `Invite` and by
-REGISTER (`Register`/`Unregister`/`Qualify`), falling back to the transaction
-values.
+The legacy option structs (`InviteOptions`, `InviteClientOptions`,
+`NewDialogOptions`, `AnswerOptions`, `ProgressMediaOptions`) and their
+`Options()` converters were removed in v2: `SignalOption` is the only
+per-call option style. `signalParams` is unexported, so custom option closures
+are no longer possible; `WithRequestMutator`/`WithResponseMutator` are the
+supported escape hatches.
+
+Every `With*` constructor marks the capability it touches, and every public
+API declares the exact set it consumes via `newSignalParams(opts, method,
+allowed)`. Passing an option the method does not consume fails with
+`*UnsupportedOptionError{Method, Options}` instead of being silently ignored
+(ex. `WithBody` on `Trying`, `WithRegisterExpiry` on `Qualify`). The allowed
+sets live in `signal_options.go`; the godoc `Scope:` lines mirror that table.
+
+Capability groups: **msg** (Headers, Contact, Body, MutateRequest,
+MutateResponse — outgoing message shaping), **media** (Codecs, RTPNAT,
+MediaBindIP, MediaExternalIP, MediaDTLS, SDPSessionName, MediaSession,
+MusicOnHold — consumed via `signalMediaConfig` and the media-install sites),
+**dialog** (Transport, TransportID, Originator, Username, Password,
+EarlyMediaDetect, OnResponse, OnMediaUpdate, OnRefer, OnReferNotify),
+**register** (Expiry, RetryInterval, AllowHeaders, ProxyHost, OnRegistered —
+construction-time, read by `Register`/`RegisterTransaction` only).
+Credentials passed via `WithAuthCredentials` are consumed by `Invite`, by
+`Dial`, and by REGISTER (`Register`/`Unregister`/`Qualify`), falling back to
+the transaction values.
 
 ### Getter-options
 
@@ -396,12 +405,14 @@ these is a separate work item.
 
 ### Deprecated surface
 
-Deprecated symbols (round-2 cancellation migration table in §9 plus the dead/near-dead
-APIs annotated with `// Deprecated:`) are kept functional until the next
-breaking release. Removed in this round: the unreachable `ReferTransaction`
-cluster (`ReferTransaction`, `OnReferTransactionFunc`,
+Deprecated symbols (round-2 cancellation migration table in §9 plus the
+dead/near-dead APIs annotated with `// Deprecated:`) are kept functional until
+the next breaking release. Removed in this round: the unreachable
+`ReferTransaction` cluster (`ReferTransaction`, `OnReferTransactionFunc`,
 `dialogHandleReferTransaction`) — the live REFER path is
-`OnReferDialogFunc`/`dialogHandleRefer`.
+`OnReferDialogFunc`/`dialogHandleRefer` — and the legacy option structs of
+§10 (`InviteOptions`, `InviteClientOptions`, `NewDialogOptions`,
+`AnswerOptions`, `ProgressMediaOptions`, `WithMediaSDPSessionName`).
 
 ## 11. Shutdown and resource ownership
 
@@ -481,7 +492,7 @@ where and when it can be attached.
 resolves each leg's reader/writer exactly once, at `AddDialogSession`, and
 mixes bridged traffic through those captured handles. A tap installed after
 the join sits behind the captured handle and never sees bridged audio, so the
-recording is silent. The supported window is between `Answer()` and adding the
+recording is silent. The supported window is between `Answer(ctx)` and adding the
 leg to a bridge — an application event hook that fires in that window is the
 intended attachment point.
 

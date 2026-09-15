@@ -45,7 +45,7 @@ func start(ctx context.Context) error {
 		Realm:    "example.pbx",
 	}
 
-	return dg.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
+	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
@@ -57,8 +57,8 @@ func start(ctx context.Context) error {
 			return err
 		}
 
-		inDialog.Trying()
-		if err := inDialog.Answer(); err != nil {
+		inDialog.Trying(ctx)
+		if err := inDialog.Answer(ctx); err != nil {
 			slog.Error("Answer failed", "error", err)
 			return err
 		}

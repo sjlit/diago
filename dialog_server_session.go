@@ -38,7 +38,7 @@ type DialogServerSession struct {
 	// arrives. respondSignal selects on it as a defense against the
 	// sipgo v1.4.3 WriteResponse "No ACK received" race: even when
 	// sipgo's wait loop races past the state notification, the ACK has
-	// been delivered to diago's OnAck path (which then calls ReadAck)
+	// been delivered to diago's OnAck path (which then calls readAck)
 	// and we can rely on this channel as ground truth.
 	//
 	// ackMu guards the lazy creation and the one-shot close: ACK retransmits
@@ -153,11 +153,14 @@ func (d *DialogServerSession) Transport() string {
 //
 // For final 2xx, this defends against a known sipgo v1.4.3 race: sipgo's
 // WaitForAck loop can exit with "No ACK received" even though the ACK was
-// delivered and processed by diago's OnAck/ReadAck path. We rely on a
+// delivered and processed by diago's OnAck/readAck path. We rely on a
 // diago-managed ackCh closed by the OnAck handler as ground truth: if
 // sipgo's loop races past the state notification, we treat the call as
 // successful because the peer has acknowledged.
-func (d *DialogServerSession) respondSignal(statusCode int, reason string, body []byte, params *SignalParams) error {
+func (d *DialogServerSession) respondSignal(ctx context.Context, statusCode int, reason string, body []byte, params *signalParams) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	res := sip.NewResponseFromRequest(d.InviteRequest, statusCode, reason, body)
 	if params != nil {
 		if params.Msg.Contact != nil {
@@ -190,7 +193,7 @@ func (d *DialogServerSession) respondSignal(statusCode int, reason string, body 
 	// really did acknowledge — the failure is purely a sipgo internal
 	// race, not a real transport problem.
 	if isAckWaitRaceError(err) {
-		if waitAckOrGrace(ackCh, ackGraceWindow) {
+		if waitAckOrGrace(ctx, ackCh, ackGraceWindow) {
 			return nil
 		}
 	}
@@ -201,19 +204,36 @@ func (d *DialogServerSession) respondSignal(statusCode int, reason string, body 
 // ACK channel after sipgo's WaitForAck loop reported "No ACK received".
 // sipgo's select can take the 64*T1 timeout branch even though the ACK was
 // already delivered to diago's OnAck path (which closes the channel right
-// before calling ReadAck). The ACK is ground truth, so this small window
+// before calling readAck). The ACK is ground truth, so this small window
 // turns that race into success. It is a variable so tests can control it
 // without wall-clock waits.
 var ackGraceWindow = 100 * time.Millisecond
 
 // waitAckOrGrace reports whether the ACK was observed before the grace window
-// elapsed. An already-closed channel wins immediately.
-func waitAckOrGrace(ackCh <-chan struct{}, grace time.Duration) bool {
+// elapsed or ctx was canceled. An already-closed channel wins immediately: a
+// ctx cancellation that races with the ACK must not turn a delivered ACK into
+// a failure.
+func waitAckOrGrace(ctx context.Context, ackCh <-chan struct{}, grace time.Duration) bool {
 	select {
 	case <-ackCh:
 		return true
-	case <-time.After(grace):
+	default:
+	}
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-ackCh:
+		return true
+	case <-timer.C:
 		return false
+	case <-ctx.Done():
+		select {
+		case <-ackCh:
+			return true
+		default:
+			return false
+		}
 	}
 }
 
@@ -237,7 +257,7 @@ func (d *DialogServerSession) HangupAndClose(ctx context.Context, opts ...Signal
 }
 
 // byeSignal sends BYE applying signaling options (extra headers, request mutator).
-func (d *DialogServerSession) byeSignal(ctx context.Context, params *SignalParams) error {
+func (d *DialogServerSession) byeSignal(ctx context.Context, params *signalParams) error {
 	cont := d.InviteRequest.Contact()
 	bye := sip.NewRequest(sip.BYE, cont.Address)
 	bye.SetTransport(d.InviteRequest.Transport())
@@ -249,29 +269,34 @@ func (d *DialogServerSession) byeSignal(ctx context.Context, params *SignalParam
 }
 
 // Trying sends 100 Trying.
-// Honors: msg (Headers, Contact, MutateResponse); Body is ignored.
-func (d *DialogServerSession) Trying(opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+// Scope: WithHeaders, WithContact, WithResponseMutator.
+func (d *DialogServerSession) Trying(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "Trying", scopeTrying)
 	if err != nil {
 		return err
 	}
-	return d.respondSignal(sip.StatusTrying, "Trying", nil, params)
+	return d.respondSignal(ctx, sip.StatusTrying, "Trying", nil, params)
 }
 
-// Progress sends 100 trying.
-//
-// Deprecated: Use Trying. It will change behavior to 183 Session Progress in future releases
-func (d *DialogServerSession) Progress() error {
-	return d.Trying()
+// Progress sends 183 Session Progress without SDP. It does not negotiate
+// early media; use ProgressMedia when the caller must receive an SDP answer
+// and early media in the 183.
+// Scope: WithHeaders, WithContact, WithResponseMutator.
+func (d *DialogServerSession) Progress(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "Progress", scopeProgress)
+	if err != nil {
+		return err
+	}
+	return d.respondSignal(ctx, sip.StatusSessionInProgress, "Session Progress", nil, params)
 }
 
-// ProgressMedia sends 183 Session Progress and creates early media
+// ProgressMedia sends 183 Session Progress and creates early media.
 //
-// Honors: msg (Headers, Contact, Body, MutateResponse), media (all).
-//
-// Experimental: Naming of API might change
-func (d *DialogServerSession) ProgressMedia(opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+// Scope: WithHeaders, WithContact, WithBody, WithResponseMutator, plus the
+// media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP, WithMediaExternalIP,
+// WithMediaDTLS, WithSDPSessionName, WithMediaSession, WithMusicOnHold).
+func (d *DialogServerSession) ProgressMedia(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "ProgressMedia", scopeProgressMedia)
 	if err != nil {
 		return err
 	}
@@ -285,39 +310,14 @@ func (d *DialogServerSession) ProgressMedia(opts ...SignalOption) error {
 	if params != nil && params.Msg.Body != nil {
 		body = params.Msg.Body
 	}
-	if err := d.respondSignal(sip.StatusSessionInProgress, "Session Progress", body, params); err != nil {
+	if err := d.respondSignal(ctx, sip.StatusSessionInProgress, "Session Progress", body, params); err != nil {
 		return err
 	}
 	return rtpSess.MonitorBackground()
 }
 
-// ProgressMediaOptions sends 183 Session Progress with options.
-//
-// Deprecated: Use ProgressMedia with SignalOptions
-func (d *DialogServerSession) ProgressMediaOptions(opt ProgressMediaOptions) error {
-	var opts []SignalOption
-	if opt.Codecs != nil {
-		opts = append(opts, WithCodecs(opt.Codecs...))
-	}
-	if opt.RTPNAT != 0 {
-		opts = append(opts, WithRTPNAT(opt.RTPNAT))
-	}
-	return d.ProgressMedia(opts...)
-}
-
-// ProgressMediaOptions is the legacy option struct for ProgressMedia.
-//
-// Deprecated: Use ProgressMedia with SignalOptions.
-type ProgressMediaOptions struct {
-	// Codecs that will be used
-	Codecs []media.Codec
-
-	// RTPNAT exposes MediaSession property
-	RTPNAT int
-}
-
 // setupProgressMedia initializes (early) media session for 183 response.
-func (d *DialogServerSession) setupProgressMedia(params *SignalParams) (*media.RTPSession, error) {
+func (d *DialogServerSession) setupProgressMedia(params *signalParams) (*media.RTPSession, error) {
 	sess := params.Media.MediaSession
 	if sess == nil {
 		conf := signalMediaConfig(d.mediaConf, params)
@@ -334,13 +334,13 @@ func (d *DialogServerSession) setupProgressMedia(params *SignalParams) (*media.R
 }
 
 // Ringing sends 180 Ringing.
-// Honors: msg (Headers, Contact, MutateResponse); Body is ignored.
-func (d *DialogServerSession) Ringing(opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+// Scope: WithHeaders, WithContact, WithResponseMutator.
+func (d *DialogServerSession) Ringing(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "Ringing", scopeRinging)
 	if err != nil {
 		return err
 	}
-	return d.respondSignal(sip.StatusRinging, "Ringing", nil, params)
+	return d.respondSignal(ctx, sip.StatusRinging, "Ringing", nil, params)
 }
 
 func (d *DialogServerSession) DialogSIP() *sipgo.Dialog {
@@ -359,24 +359,23 @@ func (d *DialogServerSession) RemoteContact() *sip.ContactHeader {
 
 // RespondSDP responds with 200 OK and provided SDP body.
 // Options can customize status headers and Contact of the response.
-// Honors: msg (Headers, Contact, MutateResponse); Body is ignored (use the body argument).
-func (d *DialogServerSession) RespondSDP(body []byte, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+// Scope: WithHeaders, WithContact, WithResponseMutator (use the body argument).
+func (d *DialogServerSession) RespondSDP(ctx context.Context, body []byte, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "RespondSDP", scopeRespondSDP)
 	if err != nil {
 		return err
 	}
-	return d.respondSignal(sip.StatusOK, "OK", body, params)
+	return d.respondSignal(ctx, sip.StatusOK, "OK", body, params)
 }
 
 // Answer creates media session and answers
 // After this new AudioReader and AudioWriter are created for audio manipulation
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
-// Honors: msg (Headers, Contact, Body, MutateResponse), dialog (OnMediaUpdate,
-// OnRefer); media overrides only apply when Answer creates the media session
-// itself (no early media from ProgressMedia).
-// NOTE: Not final API
-func (d *DialogServerSession) Answer(opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+// Scope: ProgressMedia options plus WithOnMediaUpdate and WithOnRefer; media
+// overrides only apply when Answer creates the media session itself (no early
+// media from ProgressMedia).
+func (d *DialogServerSession) Answer(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "Answer", scopeAnswer)
 	if err != nil {
 		return err
 	}
@@ -399,7 +398,7 @@ func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 		if params != nil && params.Msg.Body != nil {
 			body = params.Msg.Body
 		}
-		if err := d.respondSignal(sip.StatusOK, "OK", body, params); err != nil {
+		if err := d.respondSignal(ctx, sip.StatusOK, "OK", body, params); err != nil {
 			return err
 		}
 
@@ -413,12 +412,12 @@ func (d *DialogServerSession) Answer(opts ...SignalOption) error {
 	if err != nil {
 		return err
 	}
-	return d.answerSession(rtpSess, params)
+	return d.answerSession(ctx, rtpSess, params)
 }
 
 // newAnswerRTPSession creates RTP session for answering. It honors custom
 // media session passed with options, otherwise builds one from media config.
-func (d *DialogServerSession) newAnswerRTPSession(params *SignalParams) (*media.RTPSession, error) {
+func (d *DialogServerSession) newAnswerRTPSession(params *signalParams) (*media.RTPSession, error) {
 	sess := params.Media.MediaSession
 	if sess == nil {
 		conf := signalMediaConfig(d.mediaConf, params)
@@ -430,51 +429,9 @@ func (d *DialogServerSession) newAnswerRTPSession(params *SignalParams) (*media.
 	return media.NewRTPSession(sess), nil
 }
 
-// AnswerOptions is the legacy option struct for Answer.
-//
-// Deprecated: Use Answer with SignalOptions.
-type AnswerOptions struct {
-	// OnMediaUpdate triggers when media update happens. It is blocking func, so make sure you exit
-	OnMediaUpdate func(d *DialogMedia)
-
-	// OnRefer is called on successfull REFER handling
-	//
-	// It creates new dialog (NewDialog) on which you need to call Invite() and Ack()
-	// Any error from invite, ack or other processing should be returned for correct Notify handling
-	//
-	// NOTE: IT is SCOPED to handler and exiting handler will Close/Terminate this dialog!
-	OnRefer func(referDialog *DialogClientSession) error
-	// Codecs that will be used
-	Codecs []media.Codec
-
-	// RTPNAT is media.MediaSession.RTPNAT
-	// Check media.RTPNAT... options
-	RTPNAT int
-}
-
-// AnswerOptions allows to answer dialog with options
-//
-// Deprecated: Use Answer with SignalOptions
-func (d *DialogServerSession) AnswerOptions(opt AnswerOptions) error {
-	var opts []SignalOption
-	if opt.OnMediaUpdate != nil {
-		opts = append(opts, WithOnMediaUpdate(opt.OnMediaUpdate))
-	}
-	if opt.OnRefer != nil {
-		opts = append(opts, WithOnRefer(opt.OnRefer))
-	}
-	if opt.Codecs != nil {
-		opts = append(opts, WithCodecs(opt.Codecs...))
-	}
-	if opt.RTPNAT != 0 {
-		opts = append(opts, WithRTPNAT(opt.RTPNAT))
-	}
-	return d.Answer(opts...)
-}
-
 // answerSession. It allows answering with custom RTP Session.
 // NOTE: Not final API
-func (d *DialogServerSession) answerSession(rtpSess *media.RTPSession, params *SignalParams) error {
+func (d *DialogServerSession) answerSession(ctx context.Context, rtpSess *media.RTPSession, params *signalParams) error {
 	// TODO: Use setupRTPSession
 	sess := rtpSess.Sess
 	sdp := d.InviteRequest.Body()
@@ -501,7 +458,7 @@ func (d *DialogServerSession) answerSession(rtpSess *media.RTPSession, params *S
 
 	// This will now block until ACK received with 64*T1 as max.
 	// How to let caller to cancel this?
-	if err := d.respondSignal(sip.StatusOK, "OK", body, params); err != nil {
+	if err := d.respondSignal(ctx, sip.StatusOK, "OK", body, params); err != nil {
 		return err
 	}
 
@@ -547,9 +504,11 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 
 // AnswerLate does answer with Late offer.
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
-// Honors: msg (Headers, Contact, Body, MutateResponse), media (all).
-func (d *DialogServerSession) AnswerLate(opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+// Scope: WithHeaders, WithContact, WithBody, WithResponseMutator, plus the
+// media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP, WithMediaExternalIP,
+// WithMediaDTLS, WithSDPSessionName, WithMediaSession, WithMusicOnHold).
+func (d *DialogServerSession) AnswerLate(ctx context.Context, opts ...SignalOption) error {
+	params, err := newSignalParams(opts, "AnswerLate", scopeAnswerLate)
 	if err != nil {
 		return err
 	}
@@ -575,14 +534,16 @@ func (d *DialogServerSession) AnswerLate(opts ...SignalOption) error {
 	}
 	// This will now block until ACK received with 64*T1 as max.
 	// How to let caller to cancel this?
-	if err := d.respondSignal(sip.StatusOK, "OK", body, params); err != nil {
+	if err := d.respondSignal(ctx, sip.StatusOK, "OK", body, params); err != nil {
 		return err
 	}
 	// Must be called after media and reader writer is setup
 	return rtpSess.MonitorBackground()
 }
 
-func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction) error {
+// readAck processes the ACK that confirms the dialog. It is unexported: ACKs
+// are dispatched by diago's OnAck handler, callers must not drive it.
+func (d *DialogServerSession) readAck(req *sip.Request, tx sip.ServerTransaction) error {
 	// Apply the late-offer SDP under the lock, resolving the media session
 	// for Finalize which must run outside it: Finalize performs the DTLS
 	// handshake, a network operation that would block Answer/Hangup and SIP
@@ -623,10 +584,10 @@ func (d *DialogServerSession) ReadAck(req *sip.Request, tx sip.ServerTransaction
 // otherwise the INVITE is declined with 480 (and nil is returned — declining
 // succeeded). Options allow customizing headers (ex. Reason), Contact and body
 // of the outgoing message. See docs/contracts.md §7 for the full matrix.
-// Honors: msg (Headers, Contact, MutateRequest on BYE, MutateResponse on 480 decline);
-// Body is ignored.
+// Scope: WithHeaders, WithContact, WithRequestMutator (BYE),
+// WithResponseMutator (480 decline).
 func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Hangup", scopeServerHangup)
 	if err != nil {
 		return err
 	}
@@ -635,15 +596,16 @@ func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) 
 	if state >= sip.DialogStateConfirmed {
 		return d.byeSignal(ctx, params)
 	}
-	return d.respondSignal(sip.StatusTemporarilyUnavailable, "Temporarily Unavailable", nil, params)
+	return d.respondSignal(ctx, sip.StatusTemporarilyUnavailable, "Temporarily Unavailable", nil, params)
 }
 
 // ReInvite sends a re-INVITE with the current media session.
-// Honors: msg (Headers, Contact, Body, MutateRequest); media overrides are not consumed.
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator; media options
+// are rejected.
 // The exchange (491 retry, 2xx ACK) is driven by reInviteExchange, shared
 // with the client dialog.
 func (d *DialogServerSession) ReInvite(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "ReInvite", scopeReInvite)
 	if err != nil {
 		return err
 	}
@@ -672,7 +634,7 @@ func (d *DialogServerSession) ReInvite(ctx context.Context, opts ...SignalOption
 
 // reInviteMediaSession updates with full new media session
 // media MUST BE Forked
-func (d *DialogServerSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *SignalParams) error {
+func (d *DialogServerSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *signalParams) error {
 	sdpBody := ms.LocalSDP()
 	if params != nil && params.Msg.Body != nil {
 		sdpBody = params.Msg.Body
@@ -768,12 +730,11 @@ func (d *DialogServerSession) remoteContactUnsafe() *sip.ContactHeader {
 // Refer tries todo refer (blind transfer) on call.
 // Options allow customizing headers of the REFER request and receiving the
 // transfer status via WithOnReferNotify.
-// Honors: msg (Headers, Contact, MutateRequest); dialog (OnReferNotify via
-// WithOnReferNotify).
+// Scope: WithHeaders, WithContact, WithRequestMutator, WithOnReferNotify.
 //
 // NOTE: It is expected that after calling this you are hanguping call to send BYE
 func (d *DialogServerSession) Refer(ctx context.Context, referTo sip.Uri, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Refer", scopeRefer)
 	if err != nil {
 		return err
 	}
@@ -842,16 +803,17 @@ func (d *DialogServerSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
-// Honors: msg (Headers, Contact, Body, MutateRequest); media: WithMusicOnHold
-// selects the hold music started automatically after the re-INVITE succeeds
-// (falling back to MediaConfig.MusicOnHold); other media overrides are not consumed.
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator, WithMusicOnHold.
+// WithMusicOnHold selects the hold music started automatically after the
+// re-INVITE succeeds (falling back to MediaConfig.MusicOnHold); other media
+// overrides are rejected.
 //
 // The automatic music runs detached from the Hold call's context (which
 // typically carries the re-INVITE timeout) until Unhold, Stop/StopMusicOnHold,
 // or dialog Close; when the dialog-level default is unset (no MusicOnHold
 // configured anywhere) Hold behaves as before and plays nothing.
 func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Hold", scopeHold)
 	if err != nil {
 		return err
 	}
@@ -869,10 +831,10 @@ func (d *DialogServerSession) Hold(ctx context.Context, opts ...SignalOption) er
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
-// Honors: msg (Headers, Contact, Body, MutateRequest); the music started
-// automatically by Hold is stopped on success; other media overrides are not consumed.
+// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator. The music
+// started automatically by Hold is stopped on success; media options are rejected.
 func (d *DialogServerSession) Unhold(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "Unhold", scopeUnhold)
 	if err != nil {
 		return err
 	}

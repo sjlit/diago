@@ -84,29 +84,29 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 	}{
 		{
 			name:     "Decline",
-			handler:  func(_ context.Context, d *DialogServerSession) error { return ErrDecline },
+			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrDecline },
 			wantCode: sip.StatusTemporarilyUnavailable,
 		},
 		{
 			name:     "Busy",
-			handler:  func(_ context.Context, d *DialogServerSession) error { return ErrBusy },
+			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrBusy },
 			wantCode: sip.StatusBusyHere,
 		},
 		{
 			name:     "NotFound",
-			handler:  func(_ context.Context, d *DialogServerSession) error { return ErrNotFound },
+			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrNotFound },
 			wantCode: sip.StatusNotFound,
 		},
 		{
 			name: "CustomResponse",
-			handler: func(_ context.Context, d *DialogServerSession) error {
+			handler: func(ctx context.Context, d *DialogServerSession) error {
 				return &ResponseError{Code: 402, Reason: "Payment Required"}
 			},
 			wantCode: 402,
 		},
 		{
 			name: "GenericError",
-			handler: func(_ context.Context, d *DialogServerSession) error {
+			handler: func(ctx context.Context, d *DialogServerSession) error {
 				return errors.New("internal boom")
 			},
 			wantCode: sip.StatusInternalServerError,
@@ -115,7 +115,7 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			// A handler context error while the dialog is alive must not
 			// leave the INVITE unanswered.
 			name:     "HandlerContextError",
-			handler:  func(_ context.Context, d *DialogServerSession) error { return context.DeadlineExceeded },
+			handler:  func(ctx context.Context, d *DialogServerSession) error { return context.DeadlineExceeded },
 			wantCode: sip.StatusInternalServerError,
 		},
 		{
@@ -148,7 +148,7 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 				Transport: "udp", BindHost: "127.0.0.1", BindPort: cliPort,
 			}))
 
-			_, err = dgCli.Invite(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
+			_, err = dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 			require.Error(t, err)
 
 			res := requireDialogResponseError(t, err)
@@ -172,7 +172,7 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15230,
 	}))
 	require.NoError(t, dgSrv.ServeBackground(ctx, func(hctx context.Context, d *DialogServerSession) error {
-		if err := d.Answer(); err != nil {
+		if err := d.Answer(ctx); err != nil {
 			return err
 		}
 		<-hctx.Done()
@@ -187,7 +187,7 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15231,
 	}))
 
-	dlg, err := dgCli.Invite(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15230})
+	dlg, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15230})
 	require.NoError(t, err)
 	defer dlg.Close()
 
@@ -214,8 +214,8 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	dgSrv := NewDiago(uaSrv, WithTransport(Transport{
 		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15240,
 	}))
-	require.NoError(t, dgSrv.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
-		if err := d.Answer(); err != nil {
+	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		if err := d.Answer(ctx); err != nil {
 			return err
 		}
 		// The call was answered: the error must turn into BYE + Reason header.
@@ -242,7 +242,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	)
 	require.NoError(t, dgCli.ServeBackground(ctx, nil))
 
-	dlg, err := dgCli.Invite(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15240})
+	dlg, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15240})
 	require.NoError(t, err)
 	defer dlg.Close()
 
@@ -285,7 +285,7 @@ func TestHangupAndCloseClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.Equal(t, 1, cacheCountClientDialogs(dg))
 

@@ -56,7 +56,7 @@ func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 		RTPPortEnd:   18020,
 	}))
 
-	d, err := dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+	d, err := dg.Dial(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	defer d.Close()
 
@@ -81,7 +81,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 			SDPSessionName: "AcmePBX",
 		}))
 
-		d, err := dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+		d, err := dg.Dial(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		defer d.Close()
 
@@ -99,7 +99,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 		}))
 
-		d, err := dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+		d, err := dg.Dial(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		defer d.Close()
 

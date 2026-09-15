@@ -43,9 +43,9 @@ func main() {
 			},
 		))
 
-	err := dg.Serve(ctx, func(_ context.Context, d *diago.DialogServerSession) error {
-		d.Trying()
-		if err := d.Answer(); err != nil {
+	err := dg.Serve(ctx, func(ctx context.Context, d *diago.DialogServerSession) error {
+		d.Trying(ctx)
+		if err := d.Answer(ctx); err != nil {
 			panic(err)
 		}
 

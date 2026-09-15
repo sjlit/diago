@@ -39,7 +39,7 @@ func TestRegisterCalcRetryPriority(t *testing.T) {
 		rtx := &RegisterTransaction{
 			expiry:     100 * time.Second,
 			retryAfter: 7 * time.Second,
-			register:   SignalRegisterParams{RetryInterval: 3 * time.Millisecond},
+			register:   signalRegisterParams{RetryInterval: 3 * time.Millisecond},
 		}
 		assert.Equal(t, 3*time.Millisecond, rtx.calcRetry(rtx.expiry))
 	})

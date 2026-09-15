@@ -220,6 +220,10 @@ with an active handler.
 | 2.4 | Internal methods | `ReadAck` unexported; `FromUser/ToUser/Transport` move into `DialogSession` (or an `Info()` accessor) | references | S |
 | 2.5 | `WaitAnswer` options | `WaitAnswer(ctx, opts ...SignalOption)`; stop exposing `sipgo.AnswerOptions` | call sites | S |
 
+Status: implemented on the `v2` branch. `Dial`/`DialBridge` replaced the
+helpers that took a dial target; `DialogClientSession.Invite` stayed low level.
+`Hangup`/`Close` semantics were already settled in P1.
+
 ## P3 - Option system
 
 | # | Item | New design | Break | Size |
@@ -233,6 +237,12 @@ with an active handler.
 Alternative (compile-time split into `InviteOption`/`AnswerOption`/... ) is
 rejected: it explodes the type set and makes cross-cutting options such as
 `WithHeaders` awkward. Runtime scope validation is the chosen trade-off.
+
+Status: implemented on the `v2` branch. The scope bits are capability-level
+(not the four coarse groups), so `WithBody` on `Trying` fails while
+`WithHeaders` passes. `UnsupportedOptionError{Method, Options}` lists the
+offending constructor names; `TestEveryOptionMarksScope` guards that no
+constructor forgets to mark its scope.
 
 ## P4 - Configuration model
 

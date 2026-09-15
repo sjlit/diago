@@ -59,13 +59,13 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 	defer ua.Close()
 	srv := NewDiago(ua, WithTransport(tran))
 
-	err := srv.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+	err := srv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		wg.Add(1)
 		defer wg.Done()
 
-		ctx := d.Context()
+		ctx = d.Context()
 
-		err := d.Answer()
+		err := d.Answer(ctx)
 		if err != nil {
 			t.Log(err.Error())
 			return nil
@@ -133,7 +133,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 						maxInvitesPerSec <- struct{}{}
 					}
 					dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					dialog, err := phone.Invite(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"})
+					dialog, err := phone.Dial(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"})
 					cancel()
 
 					require.NoError(t, err)

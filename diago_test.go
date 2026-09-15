@@ -219,7 +219,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 // TestRegisterOptionValidation locks the nil/empty validation of the options
 // introduced with the SignalOption unification.
 func TestRegisterOptionValidation(t *testing.T) {
-	p := &SignalParams{}
+	p := &signalParams{}
 	assert.Error(t, WithOnReferNotify(nil)(p))
 	assert.Error(t, WithOnRegistered(nil)(p))
 	assert.Error(t, WithRegisterProxyHost("")(p))
@@ -242,8 +242,8 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	})
 
 	ctx := context.TODO()
-	d, err := dg.Invite(ctx, sip.Uri{User: "alice", Host: "localhost"},
-		func(p *SignalParams) error {
+	d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"},
+		func(p *signalParams) error {
 			runs.Add(1)
 			p.Msg.Headers = append(p.Msg.Headers, sip.NewHeader("X-Test-Run", "once"))
 			return nil
@@ -268,8 +268,8 @@ func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
 
 	bridge := NewBridge()
 	ctx := context.TODO()
-	d, err := dg.InviteBridge(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge,
-		func(p *SignalParams) error {
+	d, err := dg.DialBridge(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge,
+		func(p *signalParams) error {
 			runs.Add(1)
 			return nil
 		})
@@ -287,7 +287,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
 		})
 
-		_, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
+		_, err := dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		if assert.Error(t, err) {
 			assert.ErrorIs(t, err, ErrSDPMissing)
 			assert.Equal(t, "no SDP in response: sdp missing", err.Error())
@@ -301,7 +301,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 	})
 
 	t.Run("DefaultCallerID", func(t *testing.T) {
-		go dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
+		go dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		req := <-reqCh
 
 		assert.Equal(t, dg.ua.Name(), req.From().Address.User)
@@ -326,7 +326,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
 		}, WithTransport(tran))
 
-		go dg.Invite(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+		go dg.Dial(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 
 		// Now check our req passed on client
 		req := <-reqCh
@@ -406,7 +406,6 @@ func TestDiagoNewDialog(t *testing.T) {
 	// 	require.NoError(t, err)
 	// 	defer dialog.Close()
 
-	// 	err = dialog.Invite(ctx, InviteOptions{})
 	// 	require.NoError(t, err)
 
 	// 	dialog.Audio
@@ -427,7 +426,7 @@ func TestDiagoNewDialog(t *testing.T) {
 		// assert.NotEmpty(t, dialog.ID())
 	})
 
-	// _, err := dg.Invite(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
+	// _, err := dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 	// if assert.Error(t, err) {
 	// 	assert.Equal(t, "no SDP in response", err.Error())
 	// }
@@ -445,7 +444,7 @@ func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 
 	dg := NewDiago(ua, WithTransport(tran))
 
-	err := dg.ServeBackground(context.TODO(), func(_ context.Context, d *DialogServerSession) error {
+	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -487,9 +486,9 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 				},
 			))
 
-		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
-			d.Trying()
-			if err := d.Answer(); err != nil {
+		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+			d.Trying(ctx)
+			if err := d.Answer(ctx); err != nil {
 				panic(err)
 			}
 
@@ -517,7 +516,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 			},
 		))
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
+	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	l16Audio := bytes.Repeat([]byte{0, 16, 96, 0}, l16Codec.Samples16()/4)
@@ -556,9 +555,9 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 				},
 			))
 
-		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
-			d.Trying()
-			if err := d.Answer(); err != nil {
+		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+			d.Trying(ctx)
+			if err := d.Answer(ctx); err != nil {
 				panic(err)
 			}
 
@@ -591,7 +590,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
+	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	// pb, err := d.CreatePlayback()
@@ -642,9 +641,9 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				},
 			))
 
-		err := dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
-			d.Trying()
-			if err := d.Answer(); err != nil {
+		err := dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+			d.Trying(ctx)
+			if err := d.Answer(ctx); err != nil {
 				panic(err)
 			}
 
@@ -681,7 +680,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
+	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	// pb, err := d.CreatePlayback()

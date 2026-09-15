@@ -45,11 +45,11 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	var errServer error
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	err := tu.ServeBackground(ctx, func(_ context.Context, in *DialogServerSession) error {
+	err := tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
 		defer wg.Done()
-		in.Trying()
-		in.Ringing()
-		in.Answer()
+		in.Trying(ctx)
+		in.Ringing(ctx)
+		in.Answer(ctx)
 		t.Log("Playing url ", urlStr)
 		pb, _ := in.CreatePlayback()
 		if _, err := pb.PlayURL(urlStr); err != nil {
@@ -71,12 +71,12 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 			BindPort:  15061,
 		}))
 		// Just to have handled BYE
-		err := phone.ServeBackground(context.TODO(), func(_ context.Context, d *DialogServerSession) error {
+		err := phone.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
 			return nil
 		})
 		require.NoError(t, err)
 
-		dialog, err := phone.Invite(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 15060})
+		dialog, err := phone.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 15060})
 		require.NoError(t, err)
 		defer dialog.Close()
 

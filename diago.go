@@ -409,13 +409,13 @@ func NewDiago(ua *sipgo.UserAgent, opts ...DiagoOption) *Diago {
 		}
 
 		// Race defense: notify the per-dialog ACK channel BEFORE calling
-		// ReadAck so any pending respondSignal waiter can treat a sipgo
+		// readAck so any pending respondSignal waiter can treat a sipgo
 		// WaitForAck loop exit as success. Only the ACK matching the INVITE
 		// CSeq counts; a stray ACK must not close the channel.
 		if sd.matchesInviteAck(req) {
 			sd.notifyAck()
 		}
-		return sd.ReadAck(req, tx)
+		return sd.readAck(req, tx)
 	}))
 
 	server.OnBye(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
@@ -788,43 +788,7 @@ func shutdownDialog(ctx context.Context, id string, d DialogSession) []error {
 	return errs
 }
 
-// InviteOptions is the legacy per-call option struct for Invite.
-//
-// Deprecated: Use Diago.Invite with SignalOptions; convert existing structs
-// with Options().
-type InviteOptions struct {
-	Originator DialogSession
-	OnResponse func(res *sip.Response) error
-	Transport  string
-	// For digest authentication
-	Username string
-	Password string
-	// Custom headers to pass. DO NOT SET THIS to nil
-	Headers []sip.Header
-}
-
-// Options converts legacy options into SignalOptions
-func (o *InviteOptions) Options() ([]SignalOption, error) {
-	var opts []SignalOption
-	if o.Originator != nil {
-		opts = append(opts, WithOriginator(o.Originator))
-	}
-	if o.OnResponse != nil {
-		opts = append(opts, WithOnResponse(o.OnResponse))
-	}
-	if o.Transport != "" {
-		opts = append(opts, WithDialogTransport(o.Transport))
-	}
-	if o.Username != "" || o.Password != "" {
-		opts = append(opts, WithAuthCredentials(o.Username, o.Password))
-	}
-	if len(o.Headers) > 0 {
-		opts = append(opts, WithHeaders(o.Headers...))
-	}
-	return opts, nil
-}
-
-// Invite makes outgoing call leg and waits for answer.
+// Dial makes outgoing call leg and waits for answer.
 // It is helper that calls
 // - NewDialog
 // - dialog.Invite
@@ -832,12 +796,13 @@ func (o *InviteOptions) Options() ([]SignalOption, error) {
 // Options allow full call customization, checkout SignalOption.
 // Each SignalOption func is executed exactly once for the whole call setup.
 // The final ACK is sent without options; call Ack directly if you need ACK headers.
-// Honors: everything DialogClientSession.Invite honors.
+// Scope: everything DialogClientSession.Invite accepts, plus
+// WithDialogTransport and WithDialogTransportID.
 //
 // For better control more details use above functions instead.
-// If you want to bridge call then use helper InviteBridge
-func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
-	params, err := newSignalParams(opts)
+// If you want to bridge call then use helper DialBridge
+func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
+	params, err := newSignalParams(opts, "Dial", scopeDial)
 	if err != nil {
 		return nil, err
 	}
@@ -858,14 +823,14 @@ func (dg *Diago) Invite(ctx context.Context, recipient sip.Uri, opts ...SignalOp
 	return d, nil
 }
 
-// InviteBridge makes outgoing call leg and does bridging.
+// DialBridge makes outgoing call leg and does bridging.
 // Outgoing session will be added into bridge on answer
 // If bridge has Originator (first participant) it will be used for creating outgoing call leg as in B2BUA
 // When bridge is provided then this call will be bridged with any participant already present in bridge
-// Honors: everything DialogClientSession.Invite honors; Originator defaults to
-// the bridge originator when not set. Options execute exactly once.
-func (dg *Diago) InviteBridge(ctx context.Context, recipient sip.Uri, bridge *Bridge, opts ...SignalOption) (d *DialogClientSession, err error) {
-	params, err := newSignalParams(opts)
+// Scope: same as Dial; Originator defaults to the bridge originator when not
+// set. Options execute exactly once.
+func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge *Bridge, opts ...SignalOption) (d *DialogClientSession, err error) {
+	params, err := newSignalParams(opts, "DialBridge", scopeDial)
 	if err != nil {
 		return nil, err
 	}
@@ -898,37 +863,14 @@ func (dg *Diago) InviteBridge(ctx context.Context, recipient sip.Uri, bridge *Br
 	return d, nil
 }
 
-// NewDialogOptions is the legacy option struct for NewDialog.
-//
-// Deprecated: Use NewDialog with SignalOptions; convert existing structs
-// with Options().
-type NewDialogOptions struct {
-	// Transport or protocol that should be used
-	Transport string
-	// TransportID matches diago transport by ID instead protocol
-	TransportID string
-}
-
-// Options converts legacy options into SignalOptions
-func (o *NewDialogOptions) Options() []SignalOption {
-	var opts []SignalOption
-	if o.Transport != "" {
-		opts = append(opts, WithDialogTransport(o.Transport))
-	}
-	if o.TransportID != "" {
-		opts = append(opts, WithDialogTransportID(o.TransportID))
-	}
-	return opts
-}
-
 // NewDialog creates a new client dialog session after you can perform dialog Invite
 // - You call Invite(...) after this call followed with ACK
-// Options allow selecting transport (WithDialogTransport, WithDialogTransportID),
-// overriding Contact and per-dialog media configuration.
-// Honors: dialog (Transport, TransportID), msg (Contact); the remaining fields
-// are honored by the later Invite call.
+// Options allow selecting transport (WithDialogTransport, WithDialogTransportID)
+// and overriding Contact.
+// Scope: WithDialogTransport, WithDialogTransportID, WithContact.
+// Pass the remaining options to the later Invite call; this method rejects them.
 func (dg *Diago) NewDialog(recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "NewDialog", scopeNewDialog)
 	if err != nil {
 		return nil, err
 	}
@@ -936,9 +878,9 @@ func (dg *Diago) NewDialog(recipient sip.Uri, opts ...SignalOption) (d *DialogCl
 }
 
 // newDialogWithParams creates a client dialog session from pre-computed params.
-// It exists so helpers (Invite, InviteBridge) can execute user-supplied
+// It exists so helpers (Dial, DialBridge) can execute user-supplied
 // SignalOption funcs a single time across dialog creation and Invite.
-func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *SignalParams) (d *DialogClientSession, err error) {
+func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *signalParams) (d *DialogClientSession, err error) {
 	transport := ""
 	transportID := ""
 	var contact *sip.ContactHeader
@@ -1111,8 +1053,9 @@ func (dg *Diago) findTransport(transport string, id string) (*Transport, bool) {
 // WithRegisterRetryInterval, WithRegisterProxyHost, WithRegisterAllowHeaders,
 // WithOnRegistered) and every REGISTER attempt (WithAuthCredentials,
 // WithContact, WithHeaders, WithRequestMutator).
-// Honors: msg (Headers, Contact, MutateRequest), dialog (Username, Password),
-// register (all).
+// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials,
+// WithRegisterExpiry, WithRegisterRetryInterval, WithRegisterAllowHeaders,
+// WithRegisterProxyHost, WithOnRegistered.
 func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...SignalOption) error {
 	t, err := dg.RegisterTransaction(ctx, recipient, opts...)
 	if err != nil {
@@ -1178,10 +1121,11 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...Signal
 
 // Register transaction creates register transaction object that can be used for Register Unregister requests
 // Options configure the transaction (see Register) and every REGISTER
-// attempt. Honors: msg (Headers, Contact, MutateRequest), dialog (Username,
-// Password), register (all).
+// attempt. Scope: WithHeaders, WithContact, WithRequestMutator,
+// WithAuthCredentials, WithRegisterExpiry, WithRegisterRetryInterval,
+// WithRegisterAllowHeaders, WithRegisterProxyHost, WithOnRegistered.
 func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (*RegisterTransaction, error) {
-	params, err := newSignalParams(opts)
+	params, err := newSignalParams(opts, "RegisterTransaction", scopeRegisterTx)
 	if err != nil {
 		return nil, err
 	}

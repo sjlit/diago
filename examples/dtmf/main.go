@@ -37,18 +37,18 @@ func start(ctx context.Context) error {
 	ua, _ := sipgo.NewUA()
 	tu := diago.NewDiago(ua)
 
-	return tu.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
+	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
-		ReadDTMF(inDialog)
+		ReadDTMF(ctx, inDialog)
 		return nil
 	})
 }
 
-func ReadDTMF(inDialog *diago.DialogServerSession) error {
-	inDialog.Trying()  // Progress -> 100 Trying
-	inDialog.Ringing() // Ringing -> 180 Response
-	if err := inDialog.Answer(); err != nil {
+func ReadDTMF(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	inDialog.Trying(ctx)  // 100 Trying
+	inDialog.Ringing(ctx) // 180 Ringing
+	if err := inDialog.Answer(ctx); err != nil {
 		return err
 	}
 	slog.Info("Reading DTMF")

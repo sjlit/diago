@@ -45,7 +45,7 @@ func TestDiagoShutdownTearsDownClientDialogs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := dg.Invite(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	_, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.Equal(t, 1, cacheCountClientDialogs(dg), "confirmed dialog must be tracked")
 
@@ -57,7 +57,7 @@ func TestDiagoShutdownTearsDownClientDialogs(t *testing.T) {
 	require.NoError(t, dg.Shutdown(ctx))
 
 	// Serving after Shutdown is refused.
-	err = dg.serve(ctx, func(_ context.Context, d *DialogServerSession) error {
+	err = dg.serve(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	}, func() {})
 	require.Error(t, err)
@@ -76,7 +76,7 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	require.NoError(t, dg.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+	require.NoError(t, dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	}))
 	require.NotZero(t, dg.transports[0].BindPort, "listener must have bound an ephemeral port")
@@ -87,11 +87,11 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 
 	// Already-serving must be rejected while up.
 	dg2 := NewDiago(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
-	require.NoError(t, dg2.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+	require.NoError(t, dg2.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	}))
 	t.Cleanup(func() { dg2.Shutdown(context.Background()) })
-	err = dg2.serve(ctx, func(_ context.Context, d *DialogServerSession) error {
+	err = dg2.serve(ctx, func(ctx context.Context, d *DialogServerSession) error {
 		return nil
 	}, func() {})
 	require.Error(t, err)
@@ -112,9 +112,9 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	require.NoError(t, dgS.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
-		d.Trying()
-		require.NoError(t, d.Answer())
+	require.NoError(t, dgS.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		d.Trying(ctx)
+		require.NoError(t, d.Answer(ctx))
 		<-d.Context().Done()
 		if handlerOnce.CompareAndSwap(false, true) {
 			close(handlerDone)
@@ -128,7 +128,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	t.Cleanup(func() { uaC.Close() })
 	dgC := NewDiago(uaC, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
-	d, err := dgC.Invite(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
+	d, err := dgC.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
 
@@ -194,7 +194,7 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 
 	chErr := make(chan error, 1)
 	go func() {
-		chErr <- dg.ServeBackground(context.Background(), func(_ context.Context, d *DialogServerSession) error {
+		chErr <- dg.ServeBackground(context.Background(), func(ctx context.Context, d *DialogServerSession) error {
 			return nil
 		})
 	}()

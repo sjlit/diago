@@ -63,8 +63,8 @@ func run(ctx context.Context) error {
 		diago.WithMediaConfig(diago.MediaConfig{MusicOnHold: holdTone}),
 	)
 
-	return dg.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
-		if err := inDialog.Answer(); err != nil {
+	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+		if err := inDialog.Answer(ctx); err != nil {
 			slog.Error("Answer failed", "error", err)
 			return err
 		}

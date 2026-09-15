@@ -22,6 +22,7 @@ user-visible rename, removal, and behavior change.
 | Handler return -> framework sends `Hangup` | Return `nil` -> `Hangup`; return `error` -> mapped response + teardown |
 | — | `ErrDecline` -> 480, `ErrBusy` -> 486, `ErrNotFound` -> 404, `ErrResponseSent` -> no second response, `*ResponseError{Code,Reason,Headers}` -> custom; a confirmed call gets BYE with a Reason header instead |
 | `d.Close()` local-only | Unchanged; `Hangup` is signaling, `Close` is local, `HangupAndClose(ctx)` combines them |
+| `DialogSession` interface | Adds `FromUser()/ToUser()/Transport()`; custom implementations must add the three methods |
 | `Progress()` sent 100 Trying | `Trying(ctx)` sends 100; `Progress(ctx)` sends 183 without SDP |
 | `Trying()/Ringing()/ProgressMedia()/Answer()/AnswerLate()/RespondSDP()` | First parameter is now `ctx` |
 | `AnswerOptions`, `ProgressMediaOptions` | Removed; use `SignalOption` |
@@ -43,9 +44,11 @@ user-visible rename, removal, and behavior change.
 |---|---|
 | Inapplicable options silently ignored | `UnsupportedOptionError` (for example `WithBody` on `Trying`) |
 | `WithMediaSDPSessionName` | `WithSDPSessionName` |
-| `WithAuthCredentials("", "")` accepted | Rejected |
-| `MediaConfig.SDPSessionName == ""` means default | Empty always means "no override" |
+| `WithAuthCredentials("", "")` accepted | Rejected (as are empty `WithCodecs`, `WithBody(nil)`, `WithHeader("", ...)`, nil callback options, out-of-range `WithRTPNAT`, negative REGISTER durations) |
+| `MediaConfig.SDPSessionName == ""` | Unchanged: empty keeps the library default; `WithSDPSessionName("")` is rejected |
 | `SignalParams` exported | Unexported; use the `With*` constructors |
+| Custom `SignalOption(func(p *SignalParams))` closures | Not possible (`signalParams` is unexported); use `WithRequestMutator`/`WithResponseMutator` |
+| `AnswerOptions` wrapper method | Removed; `Answer(ctx, ...SignalOption)` |
 
 ## 5. Media configuration
 
@@ -92,7 +95,9 @@ user-visible rename, removal, and behavior change.
    were used.
 4. Add `ctx` to server signaling calls (`Trying`, `Ringing`, `Answer`, ...).
 5. Replace `Progress()` with `Trying(ctx)` or the new `Progress(ctx)`.
-6. Replace removed option structs with `SignalOption` constructors.
+6. Replace removed option structs with `SignalOption` constructors, and stop
+   passing options a method does not consume (they now return
+   `*UnsupportedOptionError`).
 7. Rewrite media config literals into the `SRTP/Network/SDP` sub-structs and
    drop any manual `SecureRTP`/DTLS mode pairing (now automatic).
 8. Replace `DialogCacheServer/Client` usage with `MatchDialog`.

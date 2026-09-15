@@ -46,21 +46,21 @@ func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
 	d := diago.NewDiago(ua)
-	return d.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
-		BridgeCall(d, inDialog)
+	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+		BridgeCall(ctx, d, inDialog)
 
 		fmt.Println("Bridge state", bridge.String())
 		return nil
 	})
 }
 
-func BridgeCall(d *diago.Diago, inDialog *diago.DialogServerSession) error {
-	inDialog.Trying()  // Progress -> 100 Trying
-	inDialog.Ringing() // Ringing -> 180 Response
+func BridgeCall(ctx context.Context, d *diago.Diago, inDialog *diago.DialogServerSession) error {
+	inDialog.Trying(ctx)  // 100 Trying
+	inDialog.Ringing(ctx) // 180 Ringing
 
 	inCtx := inDialog.Context()
 
-	if err := inDialog.Answer(); err != nil {
+	if err := inDialog.Answer(ctx); err != nil {
 		return err
 	}
 	if err := bridge.AddDialogSession(inDialog); err != nil {

@@ -19,6 +19,12 @@ import (
 type DialogSession interface {
 	ID() string
 	Context() context.Context
+	// FromUser returns the user part of the From header (the caller).
+	FromUser() string
+	// ToUser returns the user part of the To header (the callee).
+	ToUser() string
+	// Transport returns the transport of the dialog's INVITE (ex. "UDP").
+	Transport() string
 	// Hangup terminates the dialog. Options allow customizing headers of the
 	// outgoing BYE / decline response (ex. Reason header)
 	Hangup(ctx context.Context, opts ...SignalOption) error
@@ -36,7 +42,7 @@ type DialogSession interface {
 // Here are many common functions built for dialog
 //
 
-func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referTo sip.Uri, refferedBy sip.Uri, params *SignalParams) error {
+func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referTo sip.Uri, refferedBy sip.Uri, params *signalParams) error {
 	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
 		return fmt.Errorf("can only be called on answered dialog")
 	}

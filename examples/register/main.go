@@ -41,7 +41,11 @@ func main() {
 		return
 	}
 
-	err := start(ctx, recipientUri, *fUsername, diago.WithAuthCredentials(*fUsername, *fPassword))
+	var regOpts []diago.SignalOption
+	if *fUsername != "" || *fPassword != "" {
+		regOpts = append(regOpts, diago.WithAuthCredentials(*fUsername, *fPassword))
+	}
+	err := start(ctx, recipientUri, *fUsername, regOpts...)
 	if err != nil {
 		slog.Error("PBX finished with error", "error", err)
 	}

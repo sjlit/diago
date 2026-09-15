@@ -4,6 +4,7 @@
 package diago
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -12,11 +13,13 @@ import (
 )
 
 func TestWaitAckOrGrace(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run("AlreadyClosedWinsImmediately", func(t *testing.T) {
 		ch := make(chan struct{})
 		close(ch)
 		start := time.Now()
-		assert.True(t, waitAckOrGrace(ch, time.Hour))
+		assert.True(t, waitAckOrGrace(ctx, ch, time.Hour))
 		assert.Less(t, time.Since(start), time.Second)
 	})
 
@@ -26,14 +29,31 @@ func TestWaitAckOrGrace(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			close(ch)
 		}()
-		assert.True(t, waitAckOrGrace(ch, time.Second))
+		assert.True(t, waitAckOrGrace(ctx, ch, time.Second))
 	})
 
 	t.Run("NoAckBeyondGrace", func(t *testing.T) {
 		ch := make(chan struct{})
 		start := time.Now()
-		assert.False(t, waitAckOrGrace(ch, 20*time.Millisecond))
+		assert.False(t, waitAckOrGrace(ctx, ch, 20*time.Millisecond))
 		assert.GreaterOrEqual(t, time.Since(start), 20*time.Millisecond)
+	})
+
+	t.Run("CancelledContext", func(t *testing.T) {
+		ch := make(chan struct{})
+		cctx, cancel := context.WithCancel(ctx)
+		cancel()
+		start := time.Now()
+		assert.False(t, waitAckOrGrace(cctx, ch, time.Hour))
+		assert.Less(t, time.Since(start), time.Second)
+	})
+
+	t.Run("AckRacingCancellationStillWins", func(t *testing.T) {
+		ch := make(chan struct{})
+		cctx, cancel := context.WithCancel(ctx)
+		close(ch)
+		cancel()
+		assert.True(t, waitAckOrGrace(cctx, ch, time.Hour))
 	})
 }
 
