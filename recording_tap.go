@@ -90,17 +90,22 @@ func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOp
 		return nil, err
 	}
 
+	// Mirror AudioReader/AudioWriter's typed-nil guard for the setup window
+	// (mediaSession set, stable handles not yet created). Check the source
+	// fields, not getAudioReader/getAudioWriter: those box a nil pointer into
+	// a non-nil interface value, so an `innerR == nil` test never matches.
+	if d.audioReader == nil && d.rtpPacketReader == nil {
+		return nil, ErrDialogNotAnswered
+	}
+	if d.audioWriter == nil && d.rtpPacketWriter == nil {
+		return nil, ErrDialogNotAnswered
+	}
 	innerR := d.getAudioReader()
 	innerW := d.getAudioWriter()
-	// Mirror AudioReader/AudioWriter's typed-nil guard for the setup window
-	// (mediaSession set, stable handles not yet created).
-	if innerR == nil && d.rtpPacketReader == nil {
-		return nil, ErrDialogNotAnswered
-	}
-	if innerW == nil && d.rtpPacketWriter == nil {
-		return nil, ErrDialogNotAnswered
-	}
 
+	// Both channels are recorded with the session's negotiated codec. The
+	// v1 per-direction codec override API (WithAudioReader/WriterMediaProps)
+	// was removed in v2, so a dialog has one codec for both directions.
 	codec := media.CodecAudioFromSession(d.mediaSession)
 
 	wavWriter := audio.NewWavWriter(w)

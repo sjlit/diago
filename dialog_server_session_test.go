@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -155,7 +156,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 			Transport{
 				Transport: "udp",
 				BindHost:  "127.0.0.1",
-				BindPort:  15070,
+				BindPort:  15470,
 			},
 		))
 		require.NoError(t, err)
@@ -165,7 +166,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 		require.NoError(t, err)
 
 		go func() {
-			dialog, err := dg.Dial(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15060})
+			dialog, err := dg.Dial(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15460})
 			require.NoError(t, err)
 			<-dialog.Context().Done()
 			t.Log("Dialog done")
@@ -179,7 +180,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
-			BindPort:  15060,
+			BindPort:  15460,
 		},
 	))
 	require.NoError(t, err)
@@ -720,6 +721,31 @@ func TestDialogServerSessionMatchesInviteAck(t *testing.T) {
 	assert.False(t, d.matchesInviteAck(nil))
 }
 
+// Regression: readAck used to process every ACK of the dialog, so a late-offer
+// call that later received a peer re-INVITE ACK (no SDP, different CSeq) was
+// misread as a missing late-offer answer and torn down. Foreign ACKs must be
+// ignored, and a retransmitted initial ACK must not re-run the media apply.
+func TestDialogServerSessionReadAckIgnoresForeignAck(t *testing.T) {
+	inviteReq, err := diagotestSafeNewRequest(sip.INVITE, sip.Uri{Scheme: "sip", Host: "127.0.0.1"})
+	require.NoError(t, err)
+	inviteReq.AppendHeader(&sip.CSeqHeader{SeqNo: 10, MethodName: sip.INVITE})
+	// Late offer: the initial INVITE carried no SDP.
+	require.Nil(t, inviteReq.Body())
+
+	d := &DialogServerSession{
+		DialogServerSession: &sipgo.DialogServerSession{
+			Dialog: sipgo.Dialog{InviteRequest: inviteReq},
+		},
+	}
+
+	foreign, err := diagotestSafeNewRequest(sip.ACK, sip.Uri{Scheme: "sip", Host: "127.0.0.1"})
+	require.NoError(t, err)
+	foreign.AppendHeader(&sip.CSeqHeader{SeqNo: 11, MethodName: sip.ACK})
+	require.NoError(t, d.readAck(foreign, nil), "re-INVITE ACK must be ignored")
+	require.Nil(t, d.ackResult())
+	require.False(t, d.ackProcessed.Load(), "foreign ACK must not consume the initial-ACK slot")
+}
+
 // Regression: the late-offer ACK install path stopped refreshing the
 // dialog-level remote-held flag, so IsRemoteHeld() stayed false after a peer
 // answered our offer with sendonly (and stayed true after it unheld).
@@ -760,4 +786,119 @@ type rtpBufferTestWriter struct {
 func (w *rtpBufferTestWriter) WriteRTP(p *rtp.Packet) error {
 	w.buf = append(w.buf, p)
 	return nil
+}
+
+// Regression: when the late-offer ACK carries an unusable SDP answer, readAck
+// fails. The ACK fast-path used to mask that failure: AnswerLate blocked for a
+// full 64*T1 retransmission window and returned a misleading error while the
+// peer (already past its ACK) received neither BYE nor any final response.
+// The dialog must be confirmed and BYE'd, and AnswerLate must fail promptly.
+func TestIntegrationDialogServerLateOfferInvalidAckSDP(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	answerErr := make(chan error, 1)
+	stateCh := make(chan sip.DialogState, 1)
+
+	srvPort := freeUDPPort(t)
+	uacPort := freeUDPPort(t)
+	uacAddr := fmt.Sprintf("127.0.0.1:%d", uacPort)
+
+	{
+		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("late-ack-uas"))
+		defer ua.Close()
+
+		dg, err := New(ua, WithTransport(Transport{
+			Transport: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
+		}))
+		require.NoError(t, err)
+
+		err = dg.ServeBackground(ctx, func(hctx context.Context, d *DialogServerSession) error {
+			err := d.AnswerLate(hctx)
+			answerErr <- err
+			stateCh <- d.LoadState()
+			select {
+			case <-d.Context().Done():
+			case <-time.After(3 * time.Second):
+			}
+			return nil
+		})
+		require.NoError(t, err)
+	}
+
+	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("late-ack-uac"))
+	defer ua.Close()
+
+	srv, err := sipgo.NewServer(ua)
+	require.NoError(t, err)
+	var byeCount atomic.Int32
+	srv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
+		byeCount.Add(1)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
+	})
+	go func() { _ = srv.ListenAndServe(ctx, "udp", uacAddr) }()
+	time.Sleep(100 * time.Millisecond)
+
+	cli, err := sipgo.NewClient(ua, sipgo.WithClientAddr(uacAddr))
+	require.NoError(t, err)
+
+	recipient := sip.Uri{User: "service", Host: "127.0.0.1", Port: srvPort}
+	invite := sip.NewRequest(sip.INVITE, recipient)
+	invite.AppendHeader(sip.NewHeader("Contact", "<sip:"+uacAddr+">"))
+	require.NoError(t, sipgo.ClientRequestBuild(cli, invite))
+
+	tx, err := cli.TransactionRequest(ctx, invite)
+	require.NoError(t, err)
+
+	var res200 *sip.Response
+	deadline := time.After(10 * time.Second)
+	for res200 == nil {
+		select {
+		case res := <-tx.Responses():
+			if res.IsSuccess() {
+				res200 = res
+			}
+		case <-deadline:
+			t.Fatal("no 200 OK for late offer")
+		}
+	}
+	require.NotEmpty(t, res200.Body(), "late offer must carry our SDP offer")
+
+	target := recipient
+	if res200.Contact() != nil {
+		target = res200.Contact().Address
+	}
+
+	ack := sip.NewRequest(sip.ACK, target)
+	ack.SipVersion = invite.SipVersion
+	ack.AppendHeader(sip.HeaderClone(invite.From()))
+	ack.AppendHeader(sip.HeaderClone(res200.To()))
+	ack.AppendHeader(sip.HeaderClone(invite.CallID()))
+	ack.AppendHeader(sip.HeaderClone(invite.CSeq()))
+	cseq := ack.CSeq()
+	cseq.MethodName = sip.ACK
+	maxFwd := sip.MaxForwardsHeader(70)
+	ack.AppendHeader(&maxFwd)
+	ack.AppendHeader(sip.HeaderClone(invite.Contact()))
+	ack.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	ack.SetBody([]byte("v=0\r\nthis-line-is-not-sdp\r\n"))
+	ack.SetTransport(invite.Transport())
+	require.NoError(t, cli.WriteRequest(ack))
+
+	select {
+	case err := <-answerErr:
+		require.Error(t, err, "unusable ACK answer must surface as an error")
+	case <-time.After(8 * time.Second):
+		t.Fatal("AnswerLate must fail promptly instead of waiting out 64*T1")
+	}
+
+	select {
+	case st := <-stateCh:
+		require.GreaterOrEqual(t, st, sip.DialogStateConfirmed, "dialog must be confirmed")
+	case <-time.After(3 * time.Second):
+		t.Fatal("dialog state not captured")
+	}
+
+	require.Eventually(t, func() bool { return byeCount.Load() >= 1 }, 3*time.Second, 20*time.Millisecond,
+		"peer must receive a BYE after the media failure")
 }

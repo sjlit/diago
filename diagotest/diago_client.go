@@ -1,6 +1,8 @@
 package diagotest
 
 import (
+	"fmt"
+
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2"
@@ -12,7 +14,10 @@ func NewClient(ua *sipgo.UserAgent, onRequest func(req *sip.Request) *sip.Respon
 		onRequest: onRequest,
 	}
 
-	client, _ := sipgo.NewClient(ua)
+	client, err := sipgo.NewClient(ua)
+	if err != nil {
+		return nil, fmt.Errorf("create sipgo client: %w", err)
+	}
 	client.TxRequester = cTxReq
 	return diago.New(ua, diago.WithClient(client), diago.WithDefaultTransport())
 }

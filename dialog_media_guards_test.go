@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/emiago/sipgo"
@@ -218,6 +219,27 @@ func TestDialogMediaGuardSetupWindow(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	_, err = d.AudioWriter()
 	assert.ErrorIs(t, err, ErrDialogNotAnswered)
+}
+
+// Regression: StartStereoRecording must return ErrDialogNotAnswered in the
+// same setup window. Its guard used interface nil checks on typed-nil
+// getAudioReader/getAudioWriter results, so it installed a recording tap whose
+// first read panicked with a nil pointer dereference.
+func TestDialogMediaStartStereoRecordingSetupWindow(t *testing.T) {
+	sess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
+	require.NoError(t, err)
+	defer sess.Close()
+
+	d := &DialogMedia{}
+	require.NoError(t, d.initMediaSessionFromConf(MediaConfig{Codecs: sess.Codecs}))
+
+	f, err := os.CreateTemp(t.TempDir(), "rec-*.wav")
+	require.NoError(t, err)
+	defer f.Close()
+
+	rec, err := d.StartStereoRecording(f)
+	require.ErrorIs(t, err, ErrDialogNotAnswered)
+	require.Nil(t, rec)
 }
 
 // TestDialogMediaPlaybackTimestampResetHook verifies that playback factories

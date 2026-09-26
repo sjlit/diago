@@ -5,6 +5,7 @@ package media
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 )
@@ -58,6 +59,9 @@ func (w *RTPDTMFReader) Read(b []byte) (int, error) {
 	}
 
 	// Check is this DTMF
+	if w.packetReader == nil {
+		return n, fmt.Errorf("dtmf reader: rtp packet reader is nil")
+	}
 	hdr := w.packetReader.PacketHeader
 	if hdr.PayloadType != w.codec.PayloadType {
 		return n, nil
@@ -66,7 +70,7 @@ func (w *RTPDTMFReader) Read(b []byte) (int, error) {
 	// Now decode DTMF
 	ev := DTMFEvent{}
 	if err := DTMFDecode(b, &ev); err != nil {
-		slog.Error("Failed to decode DTMF event", "error", err)
+		w.logger().Error("Failed to decode DTMF event", "error", err)
 	}
 
 	// A retransmitted end packet keeps the event timestamp. Suppress it so the

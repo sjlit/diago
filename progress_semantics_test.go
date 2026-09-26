@@ -31,7 +31,7 @@ func TestProgressSemantics(t *testing.T) {
 	uaSrv, _ := sipgo.NewUA()
 	defer uaSrv.Close()
 	dgSrv, err := New(uaSrv, WithTransport(Transport{
-		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15250,
+		Transport: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
 	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
@@ -45,15 +45,19 @@ func TestProgressSemantics(t *testing.T) {
 		return d.Answer(ctx)
 	})
 	require.NoError(t, err)
+	// Ephemeral bind: use the port reported by the listener to avoid clashes
+	// with other tests/processes sharing fixed ports.
+	srvPort := dgSrv.transports[0].BindPort
+	require.NotZero(t, srvPort)
 
 	uaCli, _ := sipgo.NewUA()
 	defer uaCli.Close()
 	dgCli, err := New(uaCli, WithTransport(Transport{
-		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15251,
+		Transport: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
 
-	d, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15250},
+	d, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort},
 		WithOnResponse(func(res *sip.Response) error {
 			mu.Lock()
 			responses = append(responses, seen{code: res.StatusCode, hasSDP: res.Body() != nil})

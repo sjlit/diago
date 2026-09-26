@@ -83,6 +83,9 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 	if err != nil {
 		return err
 	}
+	// Every early return below must release the response body: an unclosed
+	// body pins the transport connection until the client's 20s timeout.
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("non 200 received. code=%d", res.StatusCode)

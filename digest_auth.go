@@ -130,17 +130,9 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 	}
 
 	if cred.Response != digCred.Response {
-		// Burn the presented nonce and answer with a fresh challenge: the
-		// client can retry in the normal way, and the old nonce cannot be
-		// reused for password guessing within its expiry window.
-		s.mu.Lock()
-		if stale, ok := s.cache[cred.Nonce]; ok {
-			delete(s.cache, cred.Nonce)
-			if stale.expireTimer != nil {
-				stale.expireTimer.Stop()
-			}
-		}
-		s.mu.Unlock()
+		// The presented nonce was already consumed atomically by the lookup
+		// above (single-use), so the client cannot replay it for password
+		// guessing. Answer with a fresh challenge so it can retry normally.
 		return s.challenge(req, auth), ErrDigestAuthBadCreds
 	}
 

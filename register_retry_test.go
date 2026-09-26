@@ -341,3 +341,141 @@ func TestRegister3xxStops(t *testing.T) {
 	}
 	assert.EqualValues(t, 2, attempts.Load(), "3xx must not be retried")
 }
+
+// Regression: a transient failure's Retry-After override was sticky — it was
+// cleared only by the initial doRegister, not by a successful Qualify, so the
+// healthy re-registration pacing stayed pinned to it forever.
+func TestRegisterRetryAfterClearedOnSuccess(t *testing.T) {
+	var attempts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		switch n := attempts.Add(1); n {
+		case 1:
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		case 2:
+			res := sip.NewResponseFromRequest(req, 408, "Request Timeout", nil)
+			res.AppendHeader(sip.NewHeader("Retry-After", "7"))
+			return res
+		default:
+			res := sip.NewResponseFromRequest(req, 200, "OK", nil)
+			res.AppendHeader(sip.NewHeader("Expires", "3600"))
+			return res
+		}
+	})
+
+	delaysCh := make(chan time.Duration, 8)
+	dg.registerAfter = func(d time.Duration) <-chan time.Time {
+		delaysCh <- d
+		ch := make(chan time.Time, 1)
+		if d < time.Minute {
+			// Fast-forward the transient retry pacing.
+			ch <- time.Now()
+		}
+		return ch
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	}()
+
+	var delays []time.Duration
+	for i := 0; i < 3; i++ {
+		select {
+		case d := <-delaysCh:
+			delays = append(delays, d)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for delay %d, got %v", i+1, delays)
+		}
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Register did not return after cancel")
+	}
+
+	require.Len(t, delays, 3)
+	assert.Equal(t, 30*time.Second, delays[0], "initial pacing comes from the unset expiry")
+	assert.Equal(t, 7*time.Second, delays[1], "Retry-After must be honored once")
+	assert.Equal(t, 45*time.Minute, delays[2], "a successful Qualify must recompute pacing from Expires")
+}
+
+// 423 Interval Too Brief must not be terminal: the retry has to advertise at
+// least Min-Expires (RFC 3261 §10.2.8).
+func TestRegisterIntervalTooBriefUsesMinExpires(t *testing.T) {
+	var attempts atomic.Int32
+	var retryExpires atomic.Value // string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		n := attempts.Add(1)
+		if n == 3 {
+			if h := req.GetHeader("Expires"); h != nil {
+				retryExpires.Store(h.Value())
+			}
+		}
+		switch n {
+		case 1:
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		case 2:
+			res := sip.NewResponseFromRequest(req, 423, "Interval Too Brief", nil)
+			res.AppendHeader(sip.NewHeader("Min-Expires", "120"))
+			return res
+		default:
+			cancel()
+			res := sip.NewResponseFromRequest(req, 200, "OK", nil)
+			res.AppendHeader(sip.NewHeader("Expires", "120"))
+			return res
+		}
+	})
+
+	var mu sync.Mutex
+	var delays []time.Duration
+	dg.registerAfter = recordingAfter(&delays, &mu)
+
+	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	got, _ := retryExpires.Load().(string)
+	assert.Equal(t, "120", got, "retry after 423 must carry Min-Expires")
+	require.GreaterOrEqual(t, attempts.Load(), int32(3))
+}
+
+// A server that keeps answering 423 with the same Min-Expires after the client
+// already advertises it must not cause an endless 1s retry loop.
+func TestRegisterIntervalTooBriefRepeatedIsTerminal(t *testing.T) {
+	var attempts atomic.Int32
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		// The deferred Unregister must not count.
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		}
+		n := attempts.Add(1)
+		if n == 1 {
+			return sip.NewResponseFromRequest(req, 200, "OK", nil)
+		}
+		res := sip.NewResponseFromRequest(req, 423, "Interval Too Brief", nil)
+		res.AppendHeader(sip.NewHeader("Min-Expires", "120"))
+		return res
+	})
+
+	var mu sync.Mutex
+	var delays []time.Duration
+	dg.registerAfter = recordingAfter(&delays, &mu)
+
+	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	var rr *RegisterResponseError
+	require.ErrorAs(t, err, &rr, "a repeated 423 cannot be satisfied and must stop")
+	assert.Equal(t, 423, rr.StatusCode())
+	assert.EqualValues(t, 3, attempts.Load(), "one retry is attempted, then the loop stops")
+}

@@ -73,7 +73,7 @@ const (
 	scopeRinging       = scopeMsgResponse
 	scopeRespondSDP    = scopeMsgResponse
 	scopeAnswer        = scopeProgressMedia | scopeOnMediaUpdate | scopeOnRefer
-	scopeAnswerLate    = scopeProgressMedia
+	scopeAnswerLate    = scopeAnswer
 	scopeServerHangup  = scopeMsgResponse | scopeMutateRequest
 	scopeReInvite      = scopeMsgRequest
 	scopeHold          = scopeMsgRequest | scopeMusicOnHold
@@ -481,7 +481,7 @@ func WithMediaDTLS(conf media.DTLSConfig) SignalOption {
 }
 
 // WithSDPSessionName overrides the SDP "s=" session-name line for this call
-// only. Overlays MediaConfig.SDPSessionName; the empty string is rejected (it
+// only. Overlays MediaConfig.SDP.SessionName; the empty string is rejected (it
 // carries no information and is indistinguishable from "not set"), as are
 // line breaks — an "s=" value must stay on one SDP line.
 func WithSDPSessionName(name string) SignalOption {

@@ -137,10 +137,16 @@ func (d *DialogClientSession) RemoteContact() *sip.ContactHeader {
 	return d.remoteContactUnsafe()
 }
 
+// remoteContactUnsafe returns the current remote target or nil when the dialog
+// has no response yet (Invite failed or never completed) or the response
+// carried no Contact. Callers must check for nil.
 func (d *DialogClientSession) remoteContactUnsafe() *sip.ContactHeader {
 	if d.remoteContactTarget != nil {
 		// Invite update can change contact
 		return d.remoteContactTarget
+	}
+	if d.InviteResponse == nil {
+		return nil
 	}
 	return d.InviteResponse.Contact()
 }
@@ -183,7 +189,10 @@ func (d *DialogClientSession) Invite(ctx context.Context, opts ...SignalOption) 
 // It exists so callers (e.g. Diago.Dial, DialBridge) can compute params once
 // and avoid running user-supplied SignalOption funcs twice.
 func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *signalParams) error {
-	if params == nil || params.Media.MediaSession == nil {
+	if params == nil {
+		return fmt.Errorf("invite: signal params are nil")
+	}
+	if params.Media.MediaSession == nil {
 		conf := signalMediaConfig(d.mediaConfig, params)
 		if err := d.initMediaSessionFromConf(conf); err != nil {
 			return err
@@ -193,6 +202,7 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *sign
 		// Originator we must Fork the session: the originator branch in
 		// invite() rewrites Codecs and applies RemoteSDP/SetRemoteAddr, and
 		// we don't want to mutate a session that the caller may reuse.
+		conf := signalMediaConfig(d.mediaConfig, params)
 		sess := params.Media.MediaSession
 		if params.Dialog.Originator != nil {
 			sess = params.Media.MediaSession.Fork()
@@ -204,6 +214,9 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *sign
 		}
 		if d.mediaSession == nil {
 			d.initMediaSessionUnsafe(sess, nil, nil)
+			// Precreated sessions skip initMediaSessionFromConf; pick up the
+			// dialog-level hold music here.
+			d.mohTone = conf.MusicOnHold
 		}
 		d.mu.Unlock()
 	}
@@ -370,9 +383,9 @@ func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
 
 // WaitAnswer waits for the final answer of a dialog whose Invite returned
 // ErrClientEarlyMedia (or otherwise did not complete). Media options are
-// ignored here: the media session was already negotiated by Invite.
-// Options allow receiving responses (WithOnResponse) and digest credentials
-// (WithAuthCredentials).
+// rejected here with *UnsupportedOptionError: the media session was already
+// negotiated by Invite. Options allow receiving responses (WithOnResponse) and
+// digest credentials (WithAuthCredentials).
 // Scope: WithOnResponse, WithAuthCredentials.
 func (d *DialogClientSession) WaitAnswer(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts, "WaitAnswer", scopeWaitAnswer)
@@ -561,6 +574,9 @@ func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption
 	sdpBody := d.mediaSession.LocalSDP()
 	contact := d.remoteContactUnsafe()
 	d.mu.Unlock()
+	if contact == nil {
+		return fmt.Errorf("reinvite: %w", ErrRemoteContactMissing)
+	}
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
 	if err := buildReInviteRequest(req, sdpBody, d.InviteRequest.Contact(), params); err != nil {
@@ -592,6 +608,9 @@ func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *medi
 	d.mu.Lock()
 	contact := d.remoteContactUnsafe()
 	d.mu.Unlock()
+	if contact == nil {
+		return fmt.Errorf("reinvite media update: %w", ErrRemoteContactMissing)
+	}
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
 	req.AppendHeader(d.InviteRequest.Contact())
@@ -631,6 +650,9 @@ func (d *DialogClientSession) reInviteKeepAlive(ctx context.Context) error {
 	d.mu.Lock()
 	contact := d.remoteContactUnsafe()
 	d.mu.Unlock()
+	if contact == nil {
+		return fmt.Errorf("reinvite keep-alive: %w", ErrRemoteContactMissing)
+	}
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
 	req.AppendHeader(d.InviteRequest.Contact())

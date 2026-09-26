@@ -27,6 +27,12 @@ func (r *RTPRealTimeReader) Init(reader io.Reader, rtpReader *RTPPacketReader, c
 	if codec.SampleDur == 0 {
 		return fmt.Errorf("codec sample dur not defined: %+v", codec)
 	}
+	if codec.SampleTimestamp() == 0 {
+		// Read divides the RTP timestamp delta by this value; a degenerate
+		// codec (SampleRate==0 with SampleDur>0) would panic with a division
+		// by zero on the second packet.
+		return fmt.Errorf("codec sample rate not defined: %+v", codec)
+	}
 
 	r.r = reader
 	r.rtpReader = rtpReader

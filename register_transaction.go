@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -22,6 +23,10 @@ type RegisterResponseError struct {
 
 	Msg string
 }
+
+// statusIntervalTooBrief is the REGISTER 423 final response (RFC 3261 §10.2.8),
+// absent from sipgo's status constants.
+const statusIntervalTooBrief = 423
 
 func (e *RegisterResponseError) StatusCode() int {
 	return e.RegisterRes.StatusCode
@@ -338,10 +343,12 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 // transient and the re-registration loop should schedule another attempt.
 //
 // Retryable: 408 Request Timeout, 491 Request Pending, and 5xx except
-// 501/505. Terminal: 3xx, every other 4xx (401/407 in particular: credentials
-// are transaction-scoped, so retrying only repeats the same failure), 6xx and
-// anything outside the SIP error space. `Retry-After` is honored on every
-// retryable response by the caller.
+// 501/505. 423 Interval Too Brief is handled separately by Diago.Register
+// (RFC 3261 §10.2.8: retry with the Min-Expires value). Terminal: 3xx, every
+// other 4xx (401/407 in particular: credentials are transaction-scoped, so
+// retrying only repeats the same failure), 6xx and anything outside the SIP
+// error space. `Retry-After` is honored on every retryable response by the
+// caller.
 func shouldRetryRegister(code int) bool {
 	switch {
 	case code == sip.StatusRequestTimeout || code == sip.StatusRequestPending:
@@ -432,5 +439,36 @@ func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, p
 		t.expiry = time.Duration(val) * time.Second
 	}
 
+	// The attempt succeeded: a Retry-After override from a previous failure
+	// must not leak into the healthy re-registration pacing (calcRetry would
+	// otherwise keep returning the stale value forever).
+	t.retryAfter = 0
+
 	return nil
+}
+
+// setExpiry raises the registration expiry used by subsequent attempts and
+// updates the Origin request template so they advertise it. It implements the
+// RFC 3261 §10.2.8 reaction to 423 Interval Too Brief / Min-Expires.
+func (t *RegisterTransaction) setExpiry(d time.Duration) {
+	t.register.Expiry = d
+	expires := sip.ExpiresHeader(d.Seconds())
+	t.Origin.RemoveHeader("Expires")
+	t.Origin.AppendHeader(&expires)
+}
+
+// minExpiresDelay extracts a positive, representable Min-Expires value from a
+// 423 response.
+func minExpiresDelay(res *sip.Response) (time.Duration, bool) {
+	h := res.GetHeader("Min-Expires")
+	if h == nil {
+		return 0, false
+	}
+	sec, err := strconv.Atoi(strings.TrimSpace(h.Value()))
+	// Reject non-positive and absurd values: the seconds->duration conversion
+	// must not overflow, and sip.ExpiresHeader is a uint32 seconds value.
+	if err != nil || sec <= 0 || sec > math.MaxInt32 {
+		return 0, false
+	}
+	return time.Duration(sec) * time.Second, true
 }

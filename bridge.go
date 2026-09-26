@@ -118,6 +118,15 @@ func (b *Bridge) ensureInit() {
 	b.Init(media.DefaultLogger())
 }
 
+// originator returns the current bridge originator under mu. The field is
+// guarded because AddDialogSession updates it while callers (ex. DialBridge)
+// may read it concurrently.
+func (b *Bridge) originator() DialogSession {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Originator
+}
+
 func (b *Bridge) AddDialogSession(d DialogSession) error {
 	if d == nil {
 		return fmt.Errorf("bridge: dialog session is nil")
@@ -414,31 +423,39 @@ func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
 		proxyErr <- err
 	}()
 
+	// A second stop call must not pause the writers again nor block on the
+	// already-consumed proxyErr channel: repeated calls share the first
+	// result.
+	var stopOnce sync.Once
+	var stopErr error
 	stopF := func() error {
-		// Interrupt the proxy through the write gate: the in-flight write
-		// completes and the next write surfaces media.ErrWritePaused, which
-		// the proxy treats as a clean stop.
-		b.mu.Lock()
-		dialogs := slices.Clone(b.dialogs)
-		b.mu.Unlock()
+		stopOnce.Do(func() {
+			// Interrupt the proxy through the write gate: the in-flight write
+			// completes and the next write surfaces media.ErrWritePaused, which
+			// the proxy treats as a clean stop.
+			b.mu.Lock()
+			dialogs := slices.Clone(b.dialogs)
+			b.mu.Unlock()
 
-		rels := make([]StopFunc, 0, len(dialogs))
-		var pauseErrs error
-		for _, d := range dialogs {
-			release, err := d.DialogMedia().PauseAudioWrite()
-			if err != nil {
-				pauseErrs = errors.Join(pauseErrs, err)
-				continue
+			rels := make([]StopFunc, 0, len(dialogs))
+			var pauseErrs error
+			for _, d := range dialogs {
+				release, err := d.DialogMedia().PauseAudioWrite()
+				if err != nil {
+					pauseErrs = errors.Join(pauseErrs, err)
+					continue
+				}
+				rels = append(rels, release)
 			}
-			rels = append(rels, release)
-		}
 
-		// Wait goroutine termination
-		err := <-proxyErr
-		for _, release := range rels {
-			pauseErrs = errors.Join(pauseErrs, release())
-		}
-		return errors.Join(pauseErrs, err)
+			// Wait goroutine termination
+			err := <-proxyErr
+			for _, release := range rels {
+				pauseErrs = errors.Join(pauseErrs, release())
+			}
+			stopErr = errors.Join(pauseErrs, err)
+		})
+		return stopErr
 	}
 
 	return stopF, nil
@@ -998,7 +1015,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 	}
 
 	if firstDialogCodec.SampleRate == 0 {
-		firstDialogCodec = &p.Codec
+		*firstDialogCodec = p.Codec
 	}
 
 	if firstDialogCodec.SampleRate != p.Codec.SampleRate || firstDialogCodec.SampleDur != p.Codec.SampleDur {

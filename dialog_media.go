@@ -240,9 +240,21 @@ func (d *DialogMedia) Close() error {
 }
 
 func (d *DialogMedia) OnClose(f func() error) {
+	if f == nil {
+		return
+	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	if d.closed {
+		// Close already ran its hook list; a hook registered afterwards would
+		// otherwise never execute and leak whatever it was meant to release.
+		d.mu.Unlock()
+		if err := f(); err != nil {
+			d.logger().Error("Dialog media close hook failed after close", "error", err)
+		}
+		return
+	}
 	d.onCloseUnsafe(f)
+	d.mu.Unlock()
 }
 
 func (d *DialogMedia) onCloseUnsafe(f func() error) {
@@ -269,10 +281,29 @@ func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media
 		// left behind without an owner; callers close what they created.
 		return ErrDialogClosed
 	}
+	// A second install (repeated ProgressMedia, ProgressMedia followed by
+	// AnswerLate, ...) must stop the previous monitor. Leaving it running
+	// duplicates RTCP readers on the shared connection and leaks the old
+	// session's goroutines and ticker.
+	if old := d.rtpSession; old != nil && old != rtpSess {
+		if err := old.MonitorClose(); err != nil {
+			return err
+		}
+	}
 	d.mediaSession = m
 	d.rtpSession = rtpSess
-	d.rtpPacketReader = media.NewRTPPacketReaderSession(rtpSess)
-	d.rtpPacketWriter = media.NewRTPPacketWriterSession(rtpSess)
+	// Reuse the stable handles when they exist: components (DTMF readers,
+	// stats interceptors, bridge pipelines) hold them across media updates.
+	if d.rtpPacketReader != nil {
+		d.rtpPacketReader.UpdateRTPSession(rtpSess)
+	} else {
+		d.rtpPacketReader = media.NewRTPPacketReaderSession(rtpSess)
+	}
+	if d.rtpPacketWriter != nil {
+		d.rtpPacketWriter.UpdateRTPSession(rtpSess)
+	} else {
+		d.rtpPacketWriter = media.NewRTPPacketWriterSession(rtpSess)
+	}
 	d.updateRemoteHeldUnsafe()
 	return nil
 }
@@ -374,6 +405,16 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 	}
 	d.mediaSession = sess
 	return nil
+}
+
+// setMohTone records the dialog-level hold music outside
+// initMediaSessionFromConf. Precreated sessions (WithMediaSession) skip that
+// function, so their setup paths call this to honor WithMusicOnHold and
+// MediaConfig.MusicOnHold too.
+func (d *DialogMedia) setMohTone(t audio.Tone) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.mohTone = t
 }
 
 // RTPSession returns underhood rtp session
@@ -554,6 +595,7 @@ func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
 		r := &media.RTPStatsReader{
 			Reader:         d.getAudioReader(),
 			RTPSession:     d.rtpSession,
+			Session:        d.rtpSessionHandle,
 			OnRTPReadStats: hook,
 		}
 		d.audioReader = r
@@ -561,13 +603,31 @@ func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
 	}
 }
 
+// rtpSessionHandle resolves the current RTP session at use time. Long-lived
+// pipeline components (ex. RTP stats interceptors) install it so a re-INVITE
+// session swap does not freeze them on a stale session.
+func (d *DialogMedia) rtpSessionHandle() *media.RTPSession {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.rtpSession
+}
+
 // WithAudioReaderDTMF creates DTMF interceptor
 func WithAudioReaderDTMF(r *DTMFReader) AudioReaderOption {
 	return func(d *DialogMedia) error {
+		if d.rtpPacketReader == nil {
+			// RTP DTMF decoding inspects RTP packet headers; without the
+			// stable packet reader handle there is nothing to decode and the
+			// read path would dereference nil.
+			return ErrDialogNotAnswered
+		}
 		r.dm = d
 		r.packetReader = d.rtpPacketReader
 		r.dtmfReader = media.NewRTPDTMFReader(d.dtmfCodec(), d.rtpPacketReader, d.getAudioReader())
 		d.audioReader = r
+		// Out-of-band (SIP INFO) DTMF is delivered only to registered
+		// readers; register here too or bridged/INFO digits would be dropped.
+		d.registerDTMFReader(r)
 		return nil
 	}
 }
@@ -680,6 +740,7 @@ func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
 		w := media.RTPStatsWriter{
 			Writer:          d.getAudioWriter(),
 			RTPSession:      d.rtpSession,
+			Session:         d.rtpSessionHandle,
 			OnRTPWriteStats: hook,
 		}
 		d.audioWriter = &w
@@ -1124,6 +1185,11 @@ func (m *DialogMedia) CreateDTMFReader() (*DTMFReader, error) {
 		return nil, err
 	}
 	if m.audioReader == nil && m.rtpPacketReader == nil {
+		return nil, ErrDialogNotAnswered
+	}
+	if m.rtpPacketReader == nil {
+		// RTP DTMF decoding inspects the packet reader's header; without it
+		// (custom MediaSession / fake IO) the read path would panic.
 		return nil, ErrDialogNotAnswered
 	}
 	r := &DTMFReader{

@@ -24,6 +24,11 @@ import (
 // a changed sample rate without a resampler. It assumes the exclusive write
 // path while active (single-writer rule): stop other
 // playback before starting hold music.
+//
+// NOTE: do not run hold music on a dialog that is attached to a Bridge or
+// BridgeMix. The mixer owns that leg's writer and the single-writer rule
+// above makes the two conflict; hold the call through the bridge (or remove
+// the leg from the bridge) instead.
 type MusicOnHold struct {
 	// auto marks handles started by Hold; Unhold stops only those.
 	isAuto bool

@@ -260,8 +260,8 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	assert.NotNil(t, req.GetHeader("X-Test-Run"), "option-applied header must be present on the INVITE")
 }
 
-// TestDiagoInviteBridgeOptionsRunOnce locks the same guarantee for InviteBridge.
-func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
+// TestDiagoDialBridgeOptionsRunOnce locks the same guarantee for DialBridge.
+func TestDiagoDialBridgeOptionsRunOnce(t *testing.T) {
 	var runs atomic.Int32
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
@@ -278,8 +278,24 @@ func TestDiagoInviteBridgeOptionsRunOnce(t *testing.T) {
 	require.NoError(t, err)
 	defer d.Close()
 
-	assert.Equal(t, int32(1), runs.Load(), "user SignalOption must execute exactly once per Diago.InviteBridge")
+	assert.Equal(t, int32(1), runs.Load(), "user SignalOption must execute exactly once per Diago.DialBridge")
 	require.NoError(t, d.Hangup(d.Context()))
+}
+
+// Regression: a typed-nil *Bridge/*BridgeMix stored in the Bridger interface
+// must be rejected instead of dereferencing the nil receiver.
+func TestDiagoDialBridgeTypedNilBridge(t *testing.T) {
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	var b *Bridge
+	_, err := dg.DialBridge(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, b)
+	require.ErrorContains(t, err, "bridge is nil")
+
+	var bm *BridgeMix
+	_, err = dg.DialBridge(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, bm)
+	require.ErrorContains(t, err, "bridge is nil")
 }
 
 func TestDiagoInviteCallerID(t *testing.T) {

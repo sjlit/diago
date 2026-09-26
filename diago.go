@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +29,7 @@ type Diago struct {
 	server     *sipgo.Server
 	transports []Transport
 
-	serveHandler DialogHandler
+	serveHandler atomic.Pointer[DialogHandler]
 
 	mediaConf MediaConfig
 
@@ -371,11 +372,9 @@ func WithServerRequestMiddleware(f func(next sipgo.RequestHandler) sipgo.Request
 // WithTransport or WithDefaultTransport.
 func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	dg := &Diago{
-		ua:  ua,
-		log: sip.DefaultLogger(),
-		// Refuse calls until Serve installs a real handler.
-		serveHandler: defaultDialogHandler,
-		transports:   []Transport{},
+		ua:         ua,
+		log:        sip.DefaultLogger(),
+		transports: []Transport{},
 		mediaConf: MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 		},
@@ -387,6 +386,9 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 
 		registerAfter: time.After,
 	}
+	// Refuse calls until Serve installs a real handler.
+	handler := DialogHandler(defaultDialogHandler)
+	dg.serveHandler.Store(&handler)
 
 	for _, o := range opts {
 		o(dg)
@@ -489,7 +491,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		}()
 
 		hctx, hcancel := dg.dialogHandlerContext(dialog.Context())
-		herr := dg.serveHandler(hctx, dWrap)
+		herr := dg.handler()(hctx, dWrap)
 		hcancel()
 
 		// Check is dialog closed
@@ -704,6 +706,15 @@ func (dg *Diago) Serve(ctx context.Context, h DialogHandler) error {
 	return dg.serve(ctx, h, func() {})
 }
 
+// handler returns the installed DialogHandler. Serve swaps it atomically, so
+// request goroutines never race with a serve (re)start.
+func (dg *Diago) handler() DialogHandler {
+	if p := dg.serveHandler.Load(); p != nil {
+		return *p
+	}
+	return defaultDialogHandler
+}
+
 func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) error {
 	if dg.stopped.Load() {
 		return fmt.Errorf("diago is shut down and cannot serve again")
@@ -711,10 +722,15 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 	if !dg.serving.CompareAndSwap(false, true) {
 		return fmt.Errorf("diago is already serving")
 	}
+	// Reset serving on every exit path from here on, including the
+	// concurrent-Shutdown refusal below.
+	defer dg.serving.Store(false)
+
 	if h == nil {
 		h = defaultDialogHandler
 	}
-	dg.serveHandler = h
+	handler := h
+	dg.serveHandler.Store(&handler)
 
 	// Derived ctx so Shutdown can stop the listeners even when Serve was
 	// called with a caller-owned context.
@@ -746,7 +762,16 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 	dg.serveStartupDone = startupDone
 	dg.serveMu.Unlock()
 
-	defer dg.serving.Store(false)
+	// Listeners get a diago-private context. The cancel signals of serveCtx
+	// (caller ctx and Shutdown) are forwarded only after every listener
+	// settled: a cancel delivered during sipgo's startup window is dropped by
+	// its ctx-watcher (no socket to close yet) and would leak the listener.
+	listenerCtx, listenerCancel := context.WithCancel(context.Background())
+	defer listenerCancel()
+	_ = context.AfterFunc(serveCtx, func() {
+		<-startupDone
+		listenerCancel()
+	})
 
 	server := dg.server
 	errCh := make(chan error, len(dg.transports))
@@ -763,7 +788,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 			defer settle()
 			// Update transport
 			//nolint:staticcheck // sipgo exposes ListenReadyCtxKey as an untyped string key.
-			ctx := context.WithValue(serveCtx, sipgo.ListenReadyCtxKey, sipgo.ListenReadyFuncCtxValue(func(network, addr string) {
+			ctx := context.WithValue(listenerCtx, sipgo.ListenReadyCtxKey, sipgo.ListenReadyFuncCtxValue(func(network, addr string) {
 				// This now fixes port for empheral binding
 				// Alternative to use is tp.GetListenPort but it squashes networks
 				_, port, _ := sip.ParseAddr(addr)
@@ -971,7 +996,7 @@ func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOpti
 // Scope: same as Dial; for a *Bridge, Originator defaults to the bridge
 // originator when not set. Options execute exactly once.
 func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridger, opts ...SignalOption) (d *DialogClientSession, err error) {
-	if bridge == nil {
+	if isNilBridger(bridge) {
 		return nil, fmt.Errorf("dial bridge: bridge is nil")
 	}
 	params, err := newSignalParams(opts, "DialBridge", scopeDial)
@@ -987,8 +1012,10 @@ func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridg
 	// Params are computed once above, so user-supplied SignalOption funcs
 	// run a single time across dialog creation and Invite.
 	if params == nil || params.Dialog.Originator == nil {
-		if b, ok := bridge.(*Bridge); ok && b.Originator != nil {
-			params.Dialog.Originator = b.Originator
+		if b, ok := bridge.(*Bridge); ok {
+			if orig := b.originator(); orig != nil {
+				params.Dialog.Originator = orig
+			}
 		}
 	}
 
@@ -1005,6 +1032,23 @@ func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridg
 		return nil, errors.Join(err, d.Close())
 	}
 	return d, nil
+}
+
+// isNilBridger reports whether bridge is nil, including a typed-nil pointer
+// stored in the interface (ex. var b *Bridge; DialBridge(ctx, uri, b)).
+// Without this check the type assertion succeeds and the originator access
+// dereferences a nil receiver.
+func isNilBridger(bridge Bridger) bool {
+	if bridge == nil {
+		return true
+	}
+	v := reflect.ValueOf(bridge)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // NewDialog creates a new client dialog session after you can perform dialog Invite
@@ -1223,6 +1267,16 @@ func (dg *Diago) findTransport(transport string, id string) (*Transport, bool) {
 
 // Register will create register transaction and keep registration ongoing until error is hit.
 // For more granular control over registrations use RegisterTransaction.
+//
+// Retry semantics: a terminal REGISTER response (401/407, other 4xx, 3xx, 6xx)
+// ends the loop and is returned. 423 Interval Too Brief is retried once with
+// the server's Min-Expires (RFC 3261 §10.2.8); 408/491 and 5xx (except
+// 501/505) are retried honoring Retry-After. Failures without a final
+// response (transport/DNS errors, unusable digest challenges) are retried
+// indefinitely with a 5s floor: the only way to stop the loop is canceling
+// ctx (the error is then returned) or Shutdown, so callers that need an
+// upper bound must pass a bounded/cancelable ctx.
+//
 // Options configure the transaction (WithRegisterExpiry,
 // WithRegisterRetryInterval, WithRegisterProxyHost, WithRegisterAllowHeaders,
 // WithOnRegistered) and every REGISTER attempt (WithAuthCredentials,
@@ -1260,7 +1314,25 @@ func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...Signal
 		var rr *RegisterResponseError
 		if errors.As(err, &rr) {
 			resCode := rr.RegisterRes.StatusCode
-			if !shouldRetryRegister(resCode) {
+			switch {
+			case resCode == statusIntervalTooBrief:
+				// RFC 3261 §10.2.8: retry with an Expires of at least
+				// Min-Expires instead of treating the response as terminal.
+				minExpires, ok := minExpiresDelay(rr.RegisterRes)
+				if !ok {
+					return err
+				}
+				if t.register.Expiry >= minExpires {
+					// We already advertise at least Min-Expires, so another
+					// attempt cannot satisfy the server; repeated 423 must not
+					// become a 1s retry loop.
+					return err
+				}
+				t.setExpiry(minExpires)
+				retryAfter = time.Second
+			case shouldRetryRegister(resCode):
+				// Retry-After is honored below.
+			default:
 				return err
 			}
 

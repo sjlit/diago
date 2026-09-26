@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
-			BindPort:  15060,
+			BindPort:  0,
 		},
 	))
 	require.NoError(t, err)
@@ -46,7 +47,13 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	var errServer error
 	wg := sync.WaitGroup{}
 	wg.Add(1)
+	var handled atomic.Bool
 	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+		// Stray retransmissions from other tests used to reach this fixed
+		// port; only the first dialog is the one under test.
+		if !handled.CompareAndSwap(false, true) {
+			return ErrBusy
+		}
 		defer wg.Done()
 		in.Trying(ctx)
 		in.Ringing(ctx)
@@ -62,6 +69,8 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+	srvPort := tu.transports[0].BindPort
+	require.NotZero(t, srvPort)
 
 	{
 		ua, _ := sipgo.NewUA()
@@ -69,7 +78,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		phone, err := New(ua, WithTransport(Transport{
 			Transport: "udp",
 			BindHost:  "127.0.0.1",
-			BindPort:  15061,
+			BindPort:  0,
 		}))
 		require.NoError(t, err)
 		// Just to have handled BYE
@@ -78,7 +87,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		dialog, err := phone.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 15060})
+		dialog, err := phone.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
 		defer dialog.Close()
 

@@ -265,3 +265,54 @@ a=rtpmap:0 PCMU/8000`
 		require.NotContains(t, out, "opus")
 	}
 }
+
+// Partial parse tolerance: a malformed rtpmap on one payload type must not
+// reject the whole offer as long as another codec parsed (RFC 3264 allows
+// answering with a subset); an offer where nothing parses must still fail.
+func TestCodecsFromSDPReadPartialMalformedRtpmap(t *testing.T) {
+	t.Run("valid codec survives a malformed sibling", func(t *testing.T) {
+		formats := []string{"96", "97"}
+		attrs := []string{
+			"rtpmap:97 ???",
+			"rtpmap:96 PCMU/8000",
+		}
+		codecs := make([]Codec, len(formats))
+
+		n, err := CodecsFromSDPRead(formats, attrs, codecs)
+		require.Error(t, err, "the malformed attribute is reported")
+		require.Equal(t, 1, n)
+		assert.Equal(t, "PCMU", codecs[0].Name)
+		assert.Equal(t, uint8(96), codecs[0].PayloadType)
+	})
+
+	t.Run("RemoteSDP negotiates the valid codec", func(t *testing.T) {
+		sd := `v=0
+o=- 1 1 IN IP4 127.0.0.1
+s=-
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 4000 RTP/AVP 96 97
+a=rtpmap:97 ???/8000
+a=rtpmap:96 PCMU/8000`
+		m := &MediaSession{
+			Codecs: []Codec{CodecAudioUlaw},
+			Mode:   sdp.ModeSendrecv,
+		}
+		require.NoError(t, m.RemoteSDP([]byte(sd)))
+	})
+
+	t.Run("RemoteSDP rejects an offer when nothing parses", func(t *testing.T) {
+		sd := `v=0
+o=- 1 1 IN IP4 127.0.0.1
+s=-
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 4000 RTP/AVP 97
+a=rtpmap:97 ???/8000`
+		m := &MediaSession{
+			Codecs: []Codec{CodecAudioUlaw},
+			Mode:   sdp.ModeSendrecv,
+		}
+		require.Error(t, m.RemoteSDP([]byte(sd)))
+	})
+}

@@ -44,8 +44,19 @@ type DialogServerSession struct {
 	// ackMu guards the lazy creation and the one-shot close: ACK retransmits
 	// can be dispatched concurrently and a bare check-then-close would panic
 	// with "close of closed channel".
-	ackMu sync.Mutex
-	ackCh chan struct{}
+	ackMu   sync.Mutex
+	ackCh   chan struct{}
+	ackDone chan struct{}
+
+	// ackResultMu guards ackErr, the failure readAck detected while processing
+	// the ACK (media answer/finalize/confirm). respondSignal surfaces it so a
+	// delivered ACK never masks a failed media setup.
+	ackResultMu sync.Mutex
+	ackErr      error
+
+	// ackProcessed ensures the initial INVITE ACK is processed once; ACK
+	// retransmits must not re-apply the media answer or re-run finalization.
+	ackProcessed atomic.Bool
 }
 
 // DialogMedia returns the media half of the session. It is never nil.
@@ -53,15 +64,61 @@ func (d *DialogServerSession) DialogMedia() *DialogMedia {
 	return &d.dialogMedia
 }
 
-// ackChannel lazily allocates and returns the per-dialog ACK channel.
+// ackChannel lazily allocates and returns the per-dialog ACK-arrival channel.
 // It is closed by diago's OnAck handler when the matching ACK arrives.
 func (d *DialogServerSession) ackChannel() <-chan struct{} {
+	ackCh, _ := d.ackChannels()
+	return ackCh
+}
+
+// ackChannels lazily allocates the ACK-arrival and ACK-processed channels.
+// ackCh is closed when the matching ACK arrives; ackDone when readAck finished
+// processing it (including media finalization and failure teardown).
+func (d *DialogServerSession) ackChannels() (<-chan struct{}, <-chan struct{}) {
 	d.ackMu.Lock()
 	defer d.ackMu.Unlock()
 	if d.ackCh == nil {
 		d.ackCh = make(chan struct{})
 	}
-	return d.ackCh
+	if d.ackDone == nil {
+		d.ackDone = make(chan struct{})
+	}
+	return d.ackCh, d.ackDone
+}
+
+// setAckError records the first readAck failure. It must be called before the
+// dialog advances to Confirmed so respondSignal observes it.
+func (d *DialogServerSession) setAckError(err error) {
+	if err == nil {
+		return
+	}
+	d.ackResultMu.Lock()
+	defer d.ackResultMu.Unlock()
+	if d.ackErr == nil {
+		d.ackErr = err
+	}
+}
+
+// ackResult returns the recorded readAck failure, if any.
+func (d *DialogServerSession) ackResult() error {
+	d.ackResultMu.Lock()
+	defer d.ackResultMu.Unlock()
+	return d.ackErr
+}
+
+// notifyAckDone closes the ACK-processed channel, signaling that readAck
+// finished. It is safe to call multiple times (subsequent calls are no-ops).
+func (d *DialogServerSession) notifyAckDone() {
+	d.ackMu.Lock()
+	defer d.ackMu.Unlock()
+	if d.ackDone == nil {
+		d.ackDone = make(chan struct{})
+	}
+	select {
+	case <-d.ackDone:
+	default:
+		close(d.ackDone)
+	}
 }
 
 // notifyAck closes the dialog's ack channel, signaling any pending
@@ -186,10 +243,12 @@ func (d *DialogServerSession) respondSignal(ctx context.Context, statusCode int,
 		return d.DialogServerSession.WriteResponse(res)
 	}
 
-	ackCh := d.ackChannel()
+	ackCh, ackDone := d.ackChannels()
 	err := d.DialogServerSession.WriteResponse(res)
 	if err == nil {
-		return nil
+		// The wait loop only returns cleanly after the dialog state advanced,
+		// which readAck does after recording any media failure.
+		return d.ackResult()
 	}
 
 	// Race defense: if sipgo's WaitForAck loop exited with "No ACK
@@ -198,7 +257,13 @@ func (d *DialogServerSession) respondSignal(ctx context.Context, statusCode int,
 	// race, not a real transport problem.
 	if isAckWaitRaceError(err) {
 		if waitAckOrGrace(ctx, ackCh, ackGraceWindow) {
-			return nil
+			// Wait briefly for readAck to finish so a media failure it found
+			// is returned instead of being masked by the race defense.
+			select {
+			case <-ackDone:
+			case <-time.After(ackResultWindow):
+			}
+			return d.ackResult()
 		}
 		// The same upstream error is raised when the dialog was terminated
 		// while the ACK was still in flight (a BYE processed first wakes the
@@ -227,6 +292,13 @@ func ackWaitFailure(state sip.DialogState, err error) error {
 // before calling readAck). The ACK is ground truth, so this small window
 // turns that race into success.
 const ackGraceWindow = 100 * time.Millisecond
+
+// ackResultWindow bounds how long respondSignal waits for readAck to finish
+// after the ACK-arrival channel already reported success (sipgo race path).
+// readAck failures are detected before the dialog is confirmed, so they are
+// almost always visible immediately; the window only covers the rare case
+// where the sipgo wait loop raced ahead of readAck.
+const ackResultWindow = time.Second
 
 // waitAckOrGrace reports whether the ACK was observed before the grace window
 // elapsed or ctx was canceled. An already-closed channel wins immediately: a
@@ -344,6 +416,10 @@ func (d *DialogServerSession) setupProgressMedia(params *signalParams) (*media.R
 			return nil, err
 		}
 		sess = d.mediaSession
+	} else {
+		// Precreated sessions skip initMediaSessionFromConf; honor the
+		// dialog-level hold music explicitly.
+		d.setMohTone(signalMediaConfig(d.mediaConf, params).MusicOnHold)
 	}
 	rtpSess := media.NewRTPSession(sess)
 	if err := d.setupRTPSession(rtpSess); err != nil {
@@ -404,20 +480,27 @@ func (d *DialogServerSession) RespondSDP(ctx context.Context, body []byte, opts 
 // waits for it before returning (RFC 3261 §13.3.1.4; bounded by 64*T1 ≈ 32s
 // without an ACK). ctx is honored before the response is written but does not
 // interrupt that ACK wait, so Answer can outlive its ctx on a slow/absent ACK.
+// applyDialogCallbacks records the per-dialog callbacks carried by
+// SignalOptions. Callers must hold d.mu.
+func (d *DialogServerSession) applyDialogCallbacks(params *signalParams) {
+	if params == nil {
+		return
+	}
+	if params.Dialog.OnRefer != nil {
+		d.onReferDialog = params.Dialog.OnRefer
+	}
+	if params.Dialog.OnMediaUpdate != nil {
+		d.onMediaUpdate = params.Dialog.OnMediaUpdate
+	}
+}
+
 func (d *DialogServerSession) Answer(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts, "Answer", scopeAnswer)
 	if err != nil {
 		return err
 	}
 	d.mu.Lock()
-	if params != nil {
-		if params.Dialog.OnRefer != nil {
-			d.onReferDialog = params.Dialog.OnRefer
-		}
-		if params.Dialog.OnMediaUpdate != nil {
-			d.onMediaUpdate = params.Dialog.OnMediaUpdate
-		}
-	}
+	d.applyDialogCallbacks(params)
 	sess := d.mediaSession
 	d.mu.Unlock()
 
@@ -455,6 +538,10 @@ func (d *DialogServerSession) newAnswerRTPSession(params *signalParams) (*media.
 			return nil, err
 		}
 		sess = d.mediaSession
+	} else {
+		// Precreated sessions skip initMediaSessionFromConf; honor the
+		// dialog-level hold music explicitly.
+		d.setMohTone(signalMediaConfig(d.mediaConf, params).MusicOnHold)
 	}
 	return media.NewRTPSession(sess), nil
 }
@@ -540,9 +627,10 @@ func (d *DialogServerSession) setupRTPSession(rtpSess *media.RTPSession) error {
 
 // AnswerLate does answer with Late offer.
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
-// Scope: WithHeaders, WithContact, WithBody, WithResponseMutator, plus the
-// media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP, WithMediaExternalIP,
-// WithMediaDTLS, WithSDPSessionName, WithMediaSession, WithMusicOnHold).
+// Scope: WithHeaders, WithContact, WithBody, WithResponseMutator,
+// WithOnMediaUpdate, WithOnRefer, plus the media overrides (WithCodecs,
+// WithRTPNAT, WithMediaBindIP, WithMediaExternalIP, WithMediaDTLS,
+// WithSDPSessionName, WithMediaSession, WithMusicOnHold).
 //
 // Like Answer, the 2xx ACK wait (up to 64*T1 ≈ 32s) is not interruptible by
 // ctx.
@@ -551,6 +639,10 @@ func (d *DialogServerSession) AnswerLate(ctx context.Context, opts ...SignalOpti
 	if err != nil {
 		return err
 	}
+
+	d.mu.Lock()
+	d.applyDialogCallbacks(params)
+	d.mu.Unlock()
 
 	rtpSess, err := d.newAnswerRTPSession(params)
 	if err != nil {
@@ -586,11 +678,28 @@ func (d *DialogServerSession) AnswerLate(ctx context.Context, opts ...SignalOpti
 // readAck processes the ACK that confirms the dialog. It is unexported: ACKs
 // are dispatched by diago's OnAck handler, callers must not drive it.
 func (d *DialogServerSession) readAck(req *sip.Request, tx sip.ServerTransaction) error {
+	if !d.matchesInviteAck(req) {
+		// Only the ACK for our initial INVITE confirms the offer/answer and
+		// the dialog. ACKs for peer re-INVITEs are handled by their own
+		// exchange (handleMediaUpdate) and must not run — or fail — the
+		// late-offer media processing here.
+		return nil
+	}
+	if !d.ackProcessed.CompareAndSwap(false, true) {
+		// Retransmitted ACK: the dialog is already confirmed and the media
+		// answer applied.
+		return nil
+	}
+	defer d.notifyAckDone()
+
+	// A late-offer INVITE (no SDP) makes the ACK answer mandatory: the dialog
+	// has no remote media address otherwise (RFC 3261 §13.3.1.4).
+	lateOffer := d.InviteRequest != nil && d.InviteRequest.Body() == nil
+
 	// Apply the late-offer SDP under the lock, resolving the media session
 	// for Finalize which must run outside it: Finalize performs the DTLS
 	// handshake, a network operation that would block Answer/Hangup and SIP
-	// handling on d.mu for its duration. Ordering is preserved - Finalize
-	// completes before the dialog is confirmed below.
+	// handling on d.mu for its duration.
 	sess, err := func() (*media.MediaSession, error) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -599,11 +708,11 @@ func (d *DialogServerSession) readAck(req *sip.Request, tx sip.ServerTransaction
 			return nil, nil
 		}
 		contentType := req.ContentType()
-		if contentType == nil {
-			return nil, nil
-		}
 		body := req.Body()
-		if body == nil || contentType.Value() != "application/sdp" {
+		if contentType == nil || body == nil || contentType.Value() != "application/sdp" {
+			if lateOffer {
+				return nil, fmt.Errorf("late offer ACK without sdp answer: %w", ErrSDPMissing)
+			}
 			return nil, nil
 		}
 		// This is Late offer response
@@ -615,19 +724,35 @@ func (d *DialogServerSession) readAck(req *sip.Request, tx sip.ServerTransaction
 		err = sess.Finalize()
 	}
 	if err != nil {
-		e := d.Hangup(d.Context())
-		return errors.Join(err, e)
+		// The peer acknowledged the 2xx, so the dialog is confirmed from its
+		// point of view: advance sipgo state first (Hangup would otherwise
+		// try to decline an already-answered INVITE, which cannot be put on
+		// the wire) and then send a real BYE. Record the failure before the
+		// state change so a waiting respondSignal surfaces it.
+		d.setAckError(err)
+		aerr := d.DialogServerSession.ReadAck(req, tx)
+		herr := d.Hangup(d.Context())
+		return errors.Join(err, aerr, herr)
 	}
 
-	return d.DialogServerSession.ReadAck(req, tx)
+	aerr := d.DialogServerSession.ReadAck(req, tx)
+	if aerr != nil {
+		d.setAckError(aerr)
+	}
+	return aerr
 }
 
-// Hangup terminates dialog. When dialog is confirmed BYE is sent,
-// otherwise the INVITE is declined with 480 (and nil is returned — declining
-// succeeded). Options allow customizing headers (ex. Reason), Contact and body
-// of the outgoing message.
+// Hangup terminates dialog. When dialog is confirmed BYE is sent, otherwise
+// the INVITE is declined with 480 (and nil is returned — declining succeeded).
+// Options allow customizing headers (ex. Reason), Contact and body of the
+// outgoing message.
 // Scope: WithHeaders, WithContact, WithRequestMutator (BYE),
 // WithResponseMutator (480 decline).
+//
+// The BYE waits for the peer's 200 and honors ctx. The 480 decline of an
+// unconfirmed INVITE is sent even when ctx is already canceled: the caller
+// asked to terminate and the peer is still waiting for a final response, so
+// skipping the decline would hang the INVITE transaction.
 func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) error {
 	params, err := newSignalParams(opts, "Hangup", scopeServerHangup)
 	if err != nil {
@@ -638,7 +763,10 @@ func (d *DialogServerSession) Hangup(ctx context.Context, opts ...SignalOption) 
 	if state >= sip.DialogStateConfirmed {
 		return d.byeSignal(ctx, params)
 	}
-	return d.respondSignal(ctx, sip.StatusTemporarilyUnavailable, "Temporarily Unavailable", nil, params)
+	// The decline must go out even when ctx is already canceled (see the
+	// method doc); context.WithoutCancel keeps the values but drops the
+	// cancellation. The send itself is bounded by the INVITE transaction.
+	return d.respondSignal(context.WithoutCancel(ctx), sip.StatusTemporarilyUnavailable, "Temporarily Unavailable", nil, params)
 }
 
 // ReInvite sends a re-INVITE with the current media session.
