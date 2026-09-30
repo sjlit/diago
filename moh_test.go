@@ -22,9 +22,9 @@ func mohTone() audio.Tone {
 }
 
 func TestMusicOnHoldLoopsUntilStop(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 
-	moh, err := m.PlayMusicOnHold(context.Background(), WithMoHTone(mohTone()))
+	moh, err := m.StartMusicOnHold(context.Background(), WithMoHTone(mohTone()))
 	require.NoError(t, err)
 
 	// 40ms cadence of 20ms ulaw packets: several packets must arrive and keep
@@ -50,43 +50,43 @@ func TestMusicOnHoldLoopsUntilStop(t *testing.T) {
 }
 
 func TestMusicOnHoldDoubleStart(t *testing.T) {
-	m, _ := newFakeDialogMedia(t, ulawCodecs())
+	m, _ := newFakeMedia(t, ulawCodecs())
 	ctx := context.Background()
 
-	first, err := m.PlayMusicOnHold(ctx, WithMoHTone(mohTone()))
+	first, err := m.StartMusicOnHold(ctx, WithMoHTone(mohTone()))
 	require.NoError(t, err)
 
-	_, err = m.PlayMusicOnHold(ctx, WithMoHTone(mohTone()))
+	_, err = m.StartMusicOnHold(ctx, WithMoHTone(mohTone()))
 	require.ErrorIs(t, err, ErrMusicOnHoldActive)
 
 	require.NoError(t, first.Stop())
 
-	second, err := m.PlayMusicOnHold(ctx, WithMoHTone(mohTone()))
+	second, err := m.StartMusicOnHold(ctx, WithMoHTone(mohTone()))
 	require.NoError(t, err, "restart must be possible after Stop")
 	require.NoError(t, second.Stop())
 	require.NoError(t, second.Stop(), "Stop must be idempotent")
 }
 
 func TestMusicOnHoldNoToneConfigured(t *testing.T) {
-	m, _ := newFakeDialogMedia(t, ulawCodecs())
+	m, _ := newFakeMedia(t, ulawCodecs())
 	ctx := context.Background()
 
-	_, err := m.PlayMusicOnHold(ctx)
+	_, err := m.StartMusicOnHold(ctx)
 	require.ErrorIs(t, err, ErrMusicOnHoldNoTone)
 
 	// Dialog-level default (what MediaConfig.MusicOnHold installs) applies
 	// when no option overrides it.
 	m.mohTone = mohTone()
-	moh, err := m.PlayMusicOnHold(ctx)
+	moh, err := m.StartMusicOnHold(ctx)
 	require.NoError(t, err)
 	require.NoError(t, moh.Stop())
 }
 
 func TestMusicOnHoldCtxCancel(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	moh, err := m.PlayMusicOnHold(ctx, WithMoHTone(mohTone()))
+	moh, err := m.StartMusicOnHold(ctx, WithMoHTone(mohTone()))
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool { return sink.count() >= 2 }, 2*time.Second, 10*time.Millisecond)
@@ -101,9 +101,9 @@ func TestMusicOnHoldCtxCancel(t *testing.T) {
 }
 
 func TestMusicOnHoldCloseStopsLoop(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 
-	moh, err := m.PlayMusicOnHold(context.Background(), WithMoHTone(mohTone()))
+	moh, err := m.StartMusicOnHold(context.Background(), WithMoHTone(mohTone()))
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return sink.count() >= 2 }, 2*time.Second, 10*time.Millisecond)
 
@@ -117,18 +117,18 @@ func TestMusicOnHoldCloseStopsLoop(t *testing.T) {
 		t.Fatal("loop must exit after Close")
 	}
 
-	_, err = m.PlayMusicOnHold(context.Background(), WithMoHTone(mohTone()))
+	_, err = m.StartMusicOnHold(context.Background(), WithMoHTone(mohTone()))
 	require.ErrorIs(t, err, ErrDialogClosed)
 }
 
 func TestMusicOnHoldWaitsWritePause(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	release, err := m.PauseAudioWrite()
 	require.NoError(t, err)
 
 	// Starting while the write gate is held succeeds; no frame may pass the
 	// gate until it is released (same cooperation as PlayTone).
-	moh, err := m.PlayMusicOnHold(context.Background(), WithMoHTone(mohTone()))
+	moh, err := m.StartMusicOnHold(context.Background(), WithMoHTone(mohTone()))
 	require.NoError(t, err)
 
 	time.Sleep(80 * time.Millisecond)
@@ -146,7 +146,7 @@ func TestMusicOnHoldWaitsWritePause(t *testing.T) {
 // flag; our own Hold path (sendonly fork negotiating against a recvonly
 // answer) never trips it.
 func TestRemoteHeldTracksInboundSDP(t *testing.T) {
-	d := newTestDialogMedia(t)
+	d := newTestMedia(t)
 	ip := net.ParseIP("127.0.0.1")
 	require.False(t, d.IsRemoteHeld())
 
@@ -185,7 +185,7 @@ func TestRemoteHeldTracksInboundSDP(t *testing.T) {
 // signaling: the auto handle is started on Hold and stopped by Unhold, while
 // a manually started loop survives Unhold.
 func TestHoldAutoStartStopsOnUnhold(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	tone := mohTone()
 
 	// What Hold does after its re-INVITE succeeds (auto=true), with the
@@ -201,7 +201,7 @@ func TestHoldAutoStartStopsOnUnhold(t *testing.T) {
 	assert.LessOrEqual(t, sink.count(), n+1, "auto music must stop on Unhold")
 
 	// A manually started loop is not Unhold's business.
-	manual, err := m.PlayMusicOnHold(context.Background(), WithMoHTone(tone))
+	manual, err := m.StartMusicOnHold(context.Background(), WithMoHTone(tone))
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return sink.count() >= n+2 }, 2*time.Second, 10*time.Millisecond)
 	m.mohAutoStop()
@@ -227,7 +227,7 @@ func TestHoldAutoStartStopsOnUnhold(t *testing.T) {
 	// An active manual loop must not be stopped or replaced by a subsequent
 	// auto start. The new auto start sees the slot is busy and skips.
 	m.mohTone = tone
-	manual2, err := m.PlayMusicOnHold(context.Background(), WithMoHTone(tone))
+	manual2, err := m.StartMusicOnHold(context.Background(), WithMoHTone(tone))
 	require.NoError(t, err)
 	pre := sink.count()
 	m.mohAutoStart(context.Background(), nil) // manual loop already active: skip

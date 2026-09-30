@@ -17,41 +17,47 @@ import (
 	"github.com/sjlit/diago/v2/media/sdp"
 )
 
+// ErrClientEarlyMedia is returned by Invite with WithEarlyMediaDetect when a
+// 183 Session Progress with SDP arrives: media is negotiated and WaitAnswer
+// can continue the call.
 var (
 	ErrClientEarlyMedia = errors.New("early media detected")
 )
 
-// DialogClientSession represents outbound channel
-type DialogClientSession struct {
+// OutboundCall is an outbound (UAC) dialog created by Dial/DialURI or
+// NewCall+Invite. It embeds the sipgo dialog; the diago methods are the
+// supported API surface.
+type OutboundCall struct {
 	*sipgo.DialogClientSession
 
-	dialogMedia
+	callMedia
 
-	onReferDialog OnReferDialogFunc
+	onReferDialog OnReferFunc
 	mediaConfig   MediaConfig
 
 	closed atomic.Uint32
 }
 
-// DialogMedia returns the media half of the session. It is never nil.
-func (d *DialogClientSession) DialogMedia() *DialogMedia {
-	return &d.dialogMedia
+// Media returns the media half of the session. It is never nil.
+func (d *OutboundCall) Media() *Media {
+	return &d.callMedia
 }
 
 // Close frees local resources (media stack and dialog cleanup hooks).
 // It is idempotent and does NOT send any SIP message: closing without Hangup
 // leaves the remote leg up. Signaling teardown is the caller's responsibility
 // on client dialogs.
-func (d *DialogClientSession) Close() error {
+func (d *OutboundCall) Close() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
-	e1 := d.dialogMedia.Close()
+	e1 := d.callMedia.Close()
 	e2 := d.DialogClientSession.Close()
 	return errors.Join(e1, e2)
 }
 
-func (d *DialogClientSession) ID() string {
+// ID returns the dialog identifier (Call-ID, tags and tags-derived hash).
+func (d *OutboundCall) ID() string {
 	return d.DialogClientSession.ID
 }
 
@@ -66,25 +72,21 @@ func (d *DialogClientSession) ID() string {
 //   - confirmed: BYE, waits for 200
 //   - already ended: returns nil silently
 //
+// Hangup ends the signaling; local resources are released with Close (the
+// framework also releases them when the dialog ends).
+//
 // Scope: WithHeaders, WithContact, WithRequestMutator.
-func (d *DialogClientSession) Hangup(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Hangup", scopeClientHangup)
+func (d *OutboundCall) Hangup(ctx context.Context, opts ...HangupOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
 	return d.byeSignal(ctx, params)
 }
 
-// HangupAndClose terminates the dialog with Hangup (sending BYE when
-// possible) and then releases local resources with Close. The local close
-// always runs, so resources are not leaked even when Hangup fails.
-func (d *DialogClientSession) HangupAndClose(ctx context.Context, opts ...SignalOption) error {
-	return errors.Join(d.Hangup(ctx, opts...), d.Close())
-}
-
 // byeSignal builds BYE request applying signaling options and writes it.
 // Mandatory dialog headers (From/To/Call-ID/CSeq) are filled by sipgo.
-func (d *DialogClientSession) byeSignal(ctx context.Context, params *signalParams) error {
+func (d *OutboundCall) byeSignal(ctx context.Context, params *signalParams) error {
 	if d.InviteResponse == nil {
 		return byeNotPossible()
 	}
@@ -114,24 +116,28 @@ func byeNotPossible() error {
 	return fmt.Errorf("bye: %w", ErrDialogNotAnswered)
 }
 
-func (d *DialogClientSession) FromUser() string {
+// FromUser returns the caller user part of the dialog's From header.
+func (d *OutboundCall) FromUser() string {
 	return d.InviteRequest.From().Address.User
 }
 
-func (d *DialogClientSession) ToUser() string {
+// ToUser returns the callee user part of the dialog's To header.
+func (d *OutboundCall) ToUser() string {
 	return d.InviteRequest.To().Address.User
 }
 
 // Transport returns the transport of the dialog's INVITE request (ex. "UDP").
-func (d *DialogClientSession) Transport() string {
+func (d *OutboundCall) Transport() string {
 	return d.InviteRequest.Transport()
 }
 
-func (d *DialogClientSession) DialogSIP() *sipgo.Dialog {
+// SIP exposes the underlying sipgo dialog as the escape hatch.
+func (d *OutboundCall) SIP() *Dialog {
 	return &d.Dialog
 }
 
-func (d *DialogClientSession) RemoteContact() *sip.ContactHeader {
+// RemoteContact returns the current remote target of the dialog.
+func (d *OutboundCall) RemoteContact() *ContactHeader {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.remoteContactUnsafe()
@@ -140,7 +146,7 @@ func (d *DialogClientSession) RemoteContact() *sip.ContactHeader {
 // remoteContactUnsafe returns the current remote target or nil when the dialog
 // has no response yet (Invite failed or never completed) or the response
 // carried no Contact. Callers must check for nil.
-func (d *DialogClientSession) remoteContactUnsafe() *sip.ContactHeader {
+func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 	if d.remoteContactTarget != nil {
 		// Invite update can change contact
 		return d.remoteContactTarget
@@ -177,8 +183,8 @@ func (d *DialogClientSession) remoteContactUnsafe() *sip.ContactHeader {
 //
 // NOTE: It updates internal invite request so NOT THREAD SAFE.
 // If you pass originator it will use originator to set correct from header and avoid media transcoding
-func (d *DialogClientSession) Invite(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Invite", scopeClientInvite)
+func (d *OutboundCall) Invite(ctx context.Context, opts ...InviteOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -186,9 +192,9 @@ func (d *DialogClientSession) Invite(ctx context.Context, opts ...SignalOption) 
 }
 
 // inviteWithParams performs the Invite flow using a pre-computed *signalParams.
-// It exists so callers (e.g. Diago.Dial, DialBridge) can compute params once
+// It exists so callers (e.g. Agent.Dial, DialBridge) can compute params once
 // and avoid running user-supplied SignalOption funcs twice.
-func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *signalParams) error {
+func (d *OutboundCall) inviteWithParams(ctx context.Context, params *signalParams) error {
 	if params == nil {
 		return fmt.Errorf("invite: signal params are nil")
 	}
@@ -208,7 +214,7 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *sign
 			sess = params.Media.MediaSession.Fork()
 		}
 		d.mu.Lock()
-		if d.dialogMedia.closed {
+		if d.callMedia.closed {
 			d.mu.Unlock()
 			return ErrDialogClosed
 		}
@@ -220,10 +226,10 @@ func (d *DialogClientSession) inviteWithParams(ctx context.Context, params *sign
 		}
 		d.mu.Unlock()
 	}
-	return d.invite(ctx, &d.dialogMedia, params)
+	return d.invite(ctx, &d.callMedia, params)
 }
 
-func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, params *signalParams) error {
+func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalParams) error {
 	sess := med.mediaSession
 	inviteReq := d.InviteRequest
 	originator := params.Dialog.Originator
@@ -236,7 +242,7 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 		// In case originator then:
 		// - check do we support this media formats by conf
 		// - if we do, then filter and pass to dial endpoint filtered
-		origInvite := originator.DialogSIP().InviteRequest
+		origInvite := originator.SIP().InviteRequest
 		if fromHDR := inviteReq.From(); fromHDR == nil {
 			// From header should be preserved from originator
 			fromHDROrig := origInvite.From()
@@ -350,7 +356,7 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 	// via := inviteReq.Via()
 	// if via.Host == "" {
 	// }
-	err := d.DialogClientSession.Invite(ctx, func(c *sipgo.Client, req *sip.Request) error {
+	err := d.DialogClientSession.Invite(ctx, func(c *Client, req *Request) error {
 		// Do nothing
 		return nil
 	})
@@ -369,7 +375,7 @@ func (d *DialogClientSession) invite(ctx context.Context, med *DialogMedia, para
 
 // answerOptionsFromParams extracts the sipgo-level answer options from parsed
 // signalParams. It is the bridge between diago's SignalOption surface and the
-// sipgo DialogClientSession API.
+// sipgo OutboundCall API.
 func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
 	if params == nil {
 		return sipgo.AnswerOptions{}
@@ -382,25 +388,25 @@ func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
 }
 
 // WaitAnswer waits for the final answer of a dialog whose Invite returned
-// ErrClientEarlyMedia (or otherwise did not complete). Media options are
-// rejected here with *UnsupportedOptionError: the media session was already
-// negotiated by Invite. Options allow receiving responses (WithOnResponse) and
-// digest credentials (WithAuthCredentials).
+// ErrClientEarlyMedia (or otherwise did not complete). Media options are not
+// part of WaitAnswerOption: the media session was already negotiated by
+// Invite. Options allow receiving responses (WithOnResponse) and digest
+// credentials (WithAuthCredentials).
 // Scope: WithOnResponse, WithAuthCredentials.
-func (d *DialogClientSession) WaitAnswer(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "WaitAnswer", scopeWaitAnswer)
+func (d *OutboundCall) WaitAnswer(ctx context.Context, opts ...WaitAnswerOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
-	return d.waitAnswer(ctx, &d.dialogMedia, answerOptionsFromParams(params))
+	return d.waitAnswer(ctx, &d.callMedia, answerOptionsFromParams(params))
 }
 
-func (d *DialogClientSession) waitAnswerEarly(ctx context.Context, med *DialogMedia, opts sipgo.AnswerOptions) error {
+func (d *OutboundCall) waitAnswerEarly(ctx context.Context, med *Media, opts sipgo.AnswerOptions) error {
 	sess := med.mediaSession
 	onResps := opts.OnResponse
 
 	// Add early media check
-	opts.OnResponse = func(res *sip.Response) error {
+	opts.OnResponse = func(res *Response) error {
 		// https://datatracker.ietf.org/doc/html/rfc3261#section-8.1.3.2
 		// 		UAC MUST treat any provisional response different than 100 that it
 		//    does not recognize as 183 (Session Progress).
@@ -456,7 +462,7 @@ func (d *DialogClientSession) waitAnswerEarly(ctx context.Context, med *DialogMe
 	return d.waitAnswer(ctx, med, opts)
 }
 
-func (d *DialogClientSession) waitAnswer(ctx context.Context, med *DialogMedia, opts sipgo.AnswerOptions) error {
+func (d *OutboundCall) waitAnswer(ctx context.Context, med *Media, opts sipgo.AnswerOptions) error {
 	if err := d.DialogClientSession.WaitAnswer(ctx, opts); err != nil {
 		return err
 	}
@@ -476,7 +482,7 @@ func (d *DialogClientSession) waitAnswer(ctx context.Context, med *DialogMedia, 
 	return nil
 }
 
-func (d *DialogClientSession) applyRemoteSDP(med *DialogMedia, remoteSDP []byte) error {
+func (d *OutboundCall) applyRemoteSDP(med *Media, remoteSDP []byte) error {
 	sess := med.mediaSession
 
 	// Apply SDP on existing (Early) media if it exists
@@ -508,8 +514,8 @@ func (d *DialogClientSession) applyRemoteSDP(med *DialogMedia, remoteSDP []byte)
 // Before Ack normally you want to setup more stuff like bridging
 // Options allow customizing headers of the ACK request.
 // Scope: WithHeaders, WithContact, WithRequestMutator.
-func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Ack", scopeClientAck)
+func (d *OutboundCall) Ack(ctx context.Context, opts ...AckOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -535,7 +541,7 @@ func (d *DialogClientSession) Ack(ctx context.Context, opts ...SignalOption) err
 	return nil
 }
 
-func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, body []byte, params *signalParams) error {
+func (d *OutboundCall) ack(ctx context.Context, remoteTarget URI, body []byte, params *signalParams) error {
 	ackRequest := sip.NewRequest(
 		sip.ACK,
 		remoteTarget,
@@ -560,8 +566,8 @@ func (d *DialogClientSession) ack(ctx context.Context, remoteTarget sip.Uri, bod
 // ReInvite sends new invite based on current media session
 // Options allow customizing Contact, headers, SDP body and to mutate the final request.
 // Scope: WithHeaders, WithContact, WithBody, WithRequestMutator.
-func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "ReInvite", scopeReInvite)
+func (d *OutboundCall) ReInvite(ctx context.Context, opts ...RequestOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -592,13 +598,13 @@ func (d *DialogClientSession) ReInvite(ctx context.Context, opts ...SignalOption
 
 // writeReInviteACK sends the final ACK of a re-INVITE exchange without
 // options; see reInviteExchange.
-func (d *DialogClientSession) writeReInviteACK(ctx context.Context, target sip.Uri) error {
+func (d *OutboundCall) writeReInviteACK(ctx context.Context, target URI) error {
 	return d.ack(ctx, target, nil, nil)
 }
 
 // reInviteMediaSession updates with full new media session
 // media MUST BE Forked
-func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *signalParams) error {
+func (d *OutboundCall) reInviteMediaSession(ctx context.Context, ms *media.MediaSession, params *signalParams) error {
 	sdpBody := ms.LocalSDP()
 	if params != nil && params.Msg.Body != nil {
 		sdpBody = params.Msg.Body
@@ -645,7 +651,7 @@ func (d *DialogClientSession) reInviteMediaSession(ctx context.Context, ms *medi
 }
 
 // reInvites withs empty SDP are way to keep alive or do some post media update after receiving offer on 2xx
-func (d *DialogClientSession) reInviteKeepAlive(ctx context.Context) error {
+func (d *OutboundCall) reInviteKeepAlive(ctx context.Context) error {
 	// NOTE: we do not change original invite request
 	d.mu.Lock()
 	contact := d.remoteContactUnsafe()
@@ -679,19 +685,19 @@ func (d *DialogClientSession) reInviteKeepAlive(ctx context.Context) error {
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithOnReferNotify.
 //
 // NOTE: It is expected that after calling this you are hanguping call to send BYE
-func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Refer", scopeRefer)
+func (d *OutboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
 	// Guard before dereferencing InviteResponse: it is nil until the first
 	// response is received (dialogRefer's own check would run too late).
-	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
-		return fmt.Errorf("can only be called on answered dialog")
+	if d.SIP().LoadState() != sip.DialogStateConfirmed {
+		return fmt.Errorf("refer: %w", ErrDialogNotAnswered)
 	}
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()
-	var localContact *sip.ContactHeader
+	var localContact *ContactHeader
 	if d.InviteResponse != nil {
 		localContact = d.InviteResponse.Contact()
 	}
@@ -707,7 +713,7 @@ func (d *DialogClientSession) Refer(ctx context.Context, referTo sip.Uri, opts .
 // previous target only when one was seen); dereferencing it used to panic.
 // Referred-By falls back to the Contact of our own INVITE when the answer
 // carried none.
-func (d *DialogClientSession) referWithContacts(ctx context.Context, cont, localContact *sip.ContactHeader, referTo sip.Uri, params *signalParams) error {
+func (d *OutboundCall) referWithContacts(ctx context.Context, cont, localContact *ContactHeader, referTo URI, params *signalParams) error {
 	if cont == nil {
 		return fmt.Errorf("can not refer: remote contact is missing")
 	}
@@ -720,11 +726,11 @@ func (d *DialogClientSession) referWithContacts(ctx context.Context, cont, local
 	return dialogRefer(ctx, d, cont.Address, referTo, localContact.Address, params)
 }
 
-func (d *DialogClientSession) handleReferNotify(req *sip.Request, tx sip.ServerTransaction) {
+func (d *OutboundCall) handleReferNotify(req *Request, tx ServerTransaction) {
 	dialogHandleReferNotify(d, req, tx)
 }
 
-func (d *DialogClientSession) handleRefer(dg *Diago, req *sip.Request, tx sip.ServerTransaction) {
+func (d *OutboundCall) handleRefer(dg *Agent, req *Request, tx ServerTransaction) {
 	d.mu.Lock()
 	onRefDialog := d.onReferDialog
 	d.mu.Unlock()
@@ -739,7 +745,7 @@ func (d *DialogClientSession) handleRefer(dg *Diago, req *sip.Request, tx sip.Se
 	}
 }
 
-func (d *DialogClientSession) handleReInvite(req *sip.Request, tx sip.ServerTransaction) error {
+func (d *OutboundCall) handleReInvite(req *Request, tx ServerTransaction) error {
 	if err := d.ReadRequest(req, tx); err != nil {
 		return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request - "+err.Error(), nil))
 	}
@@ -747,7 +753,7 @@ func (d *DialogClientSession) handleReInvite(req *sip.Request, tx sip.ServerTran
 	return d.handleMediaUpdate(req, tx, d.InviteRequest.Contact())
 }
 
-func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerTransaction) error {
+func (d *OutboundCall) handleReInviteACK(req *Request, tx ServerTransaction) error {
 	// Check do we need to handle Late Offer from ACK and update media
 	body := req.Body()
 	if body != nil {
@@ -761,7 +767,7 @@ func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerT
 		}
 
 		if onMediaUpdate != nil {
-			onMediaUpdate(d.DialogMedia())
+			onMediaUpdate(d.Media())
 		}
 	}
 
@@ -773,8 +779,8 @@ func (d *DialogClientSession) handleReInviteACK(req *sip.Request, tx sip.ServerT
 	return nil
 }
 
-func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTransaction) error {
-	return readSIPInfoDTMF(&d.dialogMedia, req, tx)
+func (d *OutboundCall) readSIPInfoDTMF(req *Request, tx ServerTransaction) error {
+	return readSIPInfoDTMF(&d.callMedia, req, tx)
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
@@ -787,8 +793,8 @@ func (d *DialogClientSession) readSIPInfoDTMF(req *sip.Request, tx sip.ServerTra
 // typically carries the re-INVITE timeout) until Unhold, Stop/StopMusicOnHold,
 // or dialog Close; when the dialog-level default is unset (no MusicOnHold
 // configured anywhere) Hold behaves as before and plays nothing.
-func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Hold", scopeHold)
+func (d *OutboundCall) Hold(ctx context.Context, opts ...HoldOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -808,8 +814,8 @@ func (d *DialogClientSession) Hold(ctx context.Context, opts ...SignalOption) er
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
 // Scope: WithHeaders, WithContact, WithBody, WithRequestMutator. The music
 // started automatically by Hold is stopped on success; media options are rejected.
-func (d *DialogClientSession) Unhold(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Unhold", scopeUnhold)
+func (d *OutboundCall) Unhold(ctx context.Context, opts ...RequestOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}

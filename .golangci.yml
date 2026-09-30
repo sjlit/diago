@@ -8,6 +8,7 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    - revive
 
   settings:
     staticcheck:
@@ -24,6 +25,13 @@ linters:
         - -ST1020
         - -ST1021
         - -ST1022
+    revive:
+      rules:
+        # Only the doc-comment rule: every exported identifier needs a comment
+        # that starts with its name (stutter check disabled).
+        - name: exported
+          arguments:
+            - disableStutteringCheck
 
   exclusions:
     rules:
@@ -35,3 +43,9 @@ linters:
       - path: ^examples/
         linters:
           - errcheck
+      # The exported-doc rule is enforced on the root diago package. The
+      # lower-level packages still have undocumented exports; document them and
+      # remove this exclusion.
+      - path: ^(audio|media|diagotest|testdata|examples)/
+        linters:
+          - revive

@@ -34,20 +34,17 @@ func (t *testRTPTracer) RTPTraceWrite(laddr string, raddr string, packet *rtp.Pa
 	t.writes = append(t.writes, rtpTraceEvent{laddr: laddr, raddr: raddr, packet: packet.Clone()})
 }
 
+// TestRTPDebugTracer locks the per-session tracing contract: tracing is
+// enabled with MediaSession.RTPDebug and delivered to MediaSession.Tracer
+// without touching process-wide state.
 func TestRTPDebugTracer(t *testing.T) {
-	prevDebug := RTPDebug.Load()
-	prevTracer := rtpTracerCurrent()
-	prevLogger := defLoggerPtr.Load()
-	t.Cleanup(func() {
-		RTPDebug.Store(prevDebug)
-		RTPDebugTracer(prevTracer)
-		SetDefaultLogger(prevLogger)
-	})
-
 	tracer := &testRTPTracer{}
-	RTPDebugTracer(tracer)
 
 	sess := fakeMediaSessionWriter(0, 1234, nil)
+	// The writer is the same session under test: enable tracing on it.
+	sess.RTPDebug = false
+	sess.Tracer = tracer
+
 	pkt := &rtp.Packet{
 		Header: rtp.Header{
 			Version:        2,
@@ -59,11 +56,10 @@ func TestRTPDebugTracer(t *testing.T) {
 		Payload: []byte("payload"),
 	}
 
-	RTPDebug.Store(false)
 	require.NoError(t, sess.WriteRTP(pkt))
-	require.Empty(t, tracer.writes)
+	require.Empty(t, tracer.writes, "tracing must be off by default")
 
-	RTPDebug.Store(true)
+	sess.RTPDebug = true
 	require.NoError(t, sess.WriteRTP(pkt))
 	require.Len(t, tracer.writes, 1)
 	require.Equal(t, sess.Laddr.String(), tracer.writes[0].laddr)
@@ -73,8 +69,10 @@ func TestRTPDebugTracer(t *testing.T) {
 	data, err := pkt.Marshal()
 	require.NoError(t, err)
 	reader := &MediaSession{
-		Laddr: sess.Laddr,
-		Raddr: sess.Raddr,
+		Laddr:    sess.Laddr,
+		Raddr:    sess.Raddr,
+		RTPDebug: true,
+		Tracer:   tracer,
 		rtpConn: &fakes.UDPConn{
 			RAddr:  sess.Raddr,
 			Reader: bytes.NewReader(data),
@@ -92,30 +90,22 @@ func TestRTPDebugTracer(t *testing.T) {
 	require.Equal(t, pkt.SSRC, tracer.reads[0].packet.SSRC)
 	require.Equal(t, pkt.Payload, tracer.reads[0].packet.Payload)
 
-	RTPDebugTracer(nil)
-	require.Nil(t, rtpTracerCurrent())
-
+	// Without a tracer the packets go to the session logger.
 	var logs bytes.Buffer
-	SetDefaultLogger(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	logRTPWrite(sess, pkt)
+	reader.Tracer = nil
+	reader.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logRTPWrite(reader, pkt)
 	require.Contains(t, logs.String(), "RTP write")
 }
 
 func TestRTPDebugTracerSkipsFailedWrite(t *testing.T) {
-	prevDebug := RTPDebug.Load()
-	prevTracer := rtpTracerCurrent()
-	t.Cleanup(func() {
-		RTPDebug.Store(prevDebug)
-		RTPDebugTracer(prevTracer)
-	})
-
 	tracer := &testRTPTracer{}
-	RTPDebug.Store(true)
-	RTPDebugTracer(tracer)
 
 	sess := &MediaSession{
-		Laddr: net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
-		Raddr: net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234},
+		Laddr:    net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
+		Raddr:    net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234},
+		RTPDebug: true,
+		Tracer:   tracer,
 		rtpConn: &fakes.UDPConn{
 			Writers: map[string]io.Writer{},
 		},

@@ -14,17 +14,10 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync/atomic"
 
 	"github.com/emiago/dtls/v3"
 	"github.com/emiago/dtls/v3/pkg/crypto/elliptic"
 	"github.com/pion/logging"
-)
-
-var (
-	// DTLSDebug enables DTLS handshake logging. Atomic so it can be flipped
-	// while handshakes run
-	DTLSDebug atomic.Bool
 )
 
 const (
@@ -64,6 +57,10 @@ type DTLSConfig struct {
 	// it will default to X25519, P-256, P-384 in this specific order.
 	// Check values with media.Eliptic<name>
 	EllipticCurves []uint16
+
+	// Debug enables DTLS handshake logging (trace level) for sessions using
+	// this configuration.
+	Debug bool
 }
 
 func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints, log *slog.Logger) *dtls.Config {
@@ -138,7 +135,7 @@ func (conf *DTLSConfig) ToLibConf(fingerprints []sdpFingerprints, log *slog.Logg
 		}
 	}
 
-	if DTLSDebug.Load() {
+	if conf.Debug {
 		loggerFactory := logging.NewDefaultLoggerFactory()
 		loggerFactory.DefaultLogLevel = logging.LogLevelTrace
 		config.LoggerFactory = loggerFactory

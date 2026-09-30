@@ -6,8 +6,6 @@ package diago
 import (
 	"errors"
 	"fmt"
-
-	"github.com/emiago/sipgo/sip"
 )
 
 // Lifecycle sentinels for dialog media operations. All media entry points
@@ -32,6 +30,20 @@ var (
 	// this from a genuine transport or ACK-wait failure.
 	ErrDialogEnded = errors.New("dialog ended")
 
+	// ErrAlreadyAnswered is returned by Answer/AnswerLate/RespondSDP when a
+	// final 2xx response was already sent for the dialog. A dialog can only
+	// be answered once.
+	ErrAlreadyAnswered = errors.New("dialog already answered")
+
+	// ErrAckTimeout is returned by WaitAck when the dialog's 2xx response was
+	// never acknowledged and the retransmission window (64*T1, RFC 3261
+	// §13.3.1.4) elapsed without the dialog ending for another reason.
+	ErrAckTimeout = errors.New("ack timeout")
+
+	// ErrInvalidTarget is returned when a dial/register target string is
+	// empty or cannot be parsed as a SIP URI.
+	ErrInvalidTarget = errors.New("invalid SIP target")
+
 	// ErrSDPMissing is returned when an SDP body is required but absent:
 	// an INVITE without an offer, a 2xx answering an offer without SDP, or a
 	// delayed-offer flow missing the answer. Callers can use errors.Is to
@@ -51,17 +63,17 @@ var (
 	// negotiate telephone-event and the selected method has no fallback.
 	ErrDTMFUnsupported = errors.New("dtmf: telephone-event not negotiated")
 
-	// ErrMusicOnHoldActive is returned by PlayMusicOnHold when a hold-music
+	// ErrMusicOnHoldActive is returned by StartMusicOnHold when a hold-music
 	// loop is already running on the dialog (one loop per dialog).
 	ErrMusicOnHoldActive = errors.New("music on hold already active")
 
-	// ErrMusicOnHoldNoTone is returned by PlayMusicOnHold when neither the
+	// ErrMusicOnHoldNoTone is returned by StartMusicOnHold when neither the
 	// WithMoHTone option nor the dialog MediaConfig provides a hold music tone.
 	ErrMusicOnHoldNoTone = errors.New("music on hold: no tone configured")
 )
 
-// DialogHandler error mapping. Return (or wrap) one of these sentinels from a
-// DialogHandler to select the final response the framework sends. For a call
+// CallHandler error mapping. Return (or wrap) one of these sentinels from a
+// CallHandler to select the final response the framework sends. For a call
 // that is already answered the framework sends BYE with a matching Reason
 // header (RFC 3326) instead of a response.
 var (
@@ -79,13 +91,13 @@ var (
 	ErrResponseSent = errors.New("response already sent")
 )
 
-// ResponseError lets a DialogHandler map an error to an arbitrary final SIP
+// ResponseError lets a CallHandler map an error to an arbitrary final SIP
 // response. Code must be a final non-2xx status; values below 300 are treated
 // as 500 to keep the dialog state consistent.
 type ResponseError struct {
 	Code    int
 	Reason  string
-	Headers []sip.Header
+	Headers []Header
 }
 
 func (e *ResponseError) Error() string {

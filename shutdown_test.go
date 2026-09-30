@@ -21,16 +21,16 @@ func shutdownTestSDP() []byte {
 	return sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
 }
 
-func cacheCountClientDialogs(dg *Diago) int {
+func cacheCountClientDialogs(dg *Agent) int {
 	n := 0
-	dg.cache.client.rangeDialogs(context.Background(), func(id string, d *DialogClientSession) bool {
+	dg.cache.client.rangeDialogs(context.Background(), func(id string, d *OutboundCall) bool {
 		n++
 		return true
 	})
 	return n
 }
 
-// TestDiagoShutdownTearsDownClientDialogs covers Shutdown phase 1 without real
+// TestDiagoShutdownTearsDownClientDialogs covers Close phase 1 without real
 // sockets: a confirmed client dialog must be hung up (BYE observed), closed,
 // evicted from the cache, and further serving must be refused.
 func TestDiagoShutdownTearsDownClientDialogs(t *testing.T) {
@@ -45,19 +45,19 @@ func TestDiagoShutdownTearsDownClientDialogs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	_, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.Equal(t, 1, cacheCountClientDialogs(dg), "confirmed dialog must be tracked")
 
-	require.NoError(t, dg.Shutdown(ctx))
-	assert.Equal(t, int32(1), byeCount.Load(), "Shutdown must send BYE to confirmed dialogs")
-	assert.Equal(t, 0, cacheCountClientDialogs(dg), "Shutdown must evict dialogs from the cache")
+	require.NoError(t, dg.Close(ctx))
+	assert.Equal(t, int32(1), byeCount.Load(), "Close must send BYE to confirmed dialogs")
+	assert.Equal(t, 0, cacheCountClientDialogs(dg), "Close must evict dialogs from the cache")
 
 	// Idempotent.
-	require.NoError(t, dg.Shutdown(ctx))
+	require.NoError(t, dg.Close(ctx))
 
-	// Serving after Shutdown is refused.
-	err = dg.serve(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	// Serving after Close is refused.
+	err = dg.serve(ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	}, func() {})
 	require.Error(t, err)
@@ -71,29 +71,29 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	require.NoError(t, dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	}))
 	require.NotZero(t, dg.transports[0].BindPort, "listener must have bound an ephemeral port")
 	assert.True(t, dg.serving.Load())
 
-	require.NoError(t, dg.Shutdown(ctx))
-	assert.False(t, dg.serving.Load(), "listeners must be stopped after Shutdown")
+	require.NoError(t, dg.Close(ctx))
+	assert.False(t, dg.serving.Load(), "listeners must be stopped after Close")
 
 	// Already-serving must be rejected while up.
-	dg2, err := New(ua, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg2, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
-	require.NoError(t, dg2.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, dg2.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	}))
-	t.Cleanup(func() { dg2.Shutdown(context.Background()) })
-	err = dg2.serve(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	t.Cleanup(func() { dg2.Close(context.Background()) })
+	err = dg2.serve(ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	}, func() {})
 	require.Error(t, err)
@@ -101,21 +101,21 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 }
 
 // TestIntegrationDiagoShutdownServerDialog exercises the full loop: a real
-// incoming call, then the server side Shutdown hangs the call up (BYE reaches
+// incoming call, then the server side Close hangs the call up (BYE reaches
 // the client leg), evicts the dialog and stops the listeners.
 func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	uaS, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { uaS.Close() })
 
-	dgS, err := New(uaS, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dgS, err := New(WithUserAgent(uaS), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 	handlerDone := make(chan struct{})
 	var handlerOnce atomic.Bool
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	require.NoError(t, dgS.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, dgS.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		d.Trying(ctx)
 		require.NoError(t, d.Answer(ctx))
 		<-d.Context().Done()
@@ -129,19 +129,19 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	uaC, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { uaC.Close() })
-	dgC, err := New(uaC, WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dgC, err := New(WithUserAgent(uaC), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 
-	d, err := dgC.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
+	d, err := dgC.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
 
 	// Wait for the server dialog to reach Confirmed (ACK processed), so
-	// Shutdown exercises the BYE path instead of racing the 200/ACK
+	// Close exercises the BYE path instead of racing the 200/ACK
 	// handshake.
 	require.Eventually(t, func() bool {
 		confirmed := false
-		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
+		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *InboundCall) bool {
 			confirmed = dd.LoadState() == sip.DialogStateConfirmed
 			return false
 		})
@@ -149,25 +149,25 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 
 	serverDialogs := 0
-	dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
+	dgS.cache.server.rangeDialogs(ctx, func(id string, dd *InboundCall) bool {
 		serverDialogs++
 		return true
 	})
 	require.Equal(t, 1, serverDialogs, "server dialog must be tracked")
 
-	// Server Shutdown hangs the call up: BYE goes out, the client leg ends.
-	require.NoError(t, dgS.Shutdown(ctx))
+	// Server Close hangs the call up: BYE goes out, the client leg ends.
+	require.NoError(t, dgS.Close(ctx))
 
 	select {
 	case <-handlerDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("serve handler did not finish after Shutdown")
+		t.Fatal("serve handler did not finish after Close")
 	}
 
 	select {
 	case <-d.Context().Done():
 	case <-time.After(5 * time.Second):
-		t.Fatal("client dialog was not terminated by server Shutdown")
+		t.Fatal("client dialog was not terminated by server Close")
 	}
 
 	// The framework evicts server dialogs from the cache in the INVITE
@@ -175,7 +175,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	// allow that to settle instead of racing it.
 	require.Eventually(t, func() bool {
 		serverDialogs := 0
-		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
+		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *InboundCall) bool {
 			serverDialogs++
 			return true
 		})
@@ -183,7 +183,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "server cache must be drained")
 
 	// Client side shutdown tears down its (now ended) dialog state cleanly.
-	require.NoError(t, dgC.Shutdown(ctx))
+	require.NoError(t, dgC.Close(ctx))
 }
 
 // TestDiagoServePartialFailureReturnsError locks that a transport bind failure
@@ -201,15 +201,15 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 	t.Cleanup(func() { occupied.Close() })
 	occupiedPort := occupied.LocalAddr().(*net.UDPAddr).Port
 
-	dg, err := New(ua,
-		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 0}),
-		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: occupiedPort}),
+	dg, err := New(WithUserAgent(ua),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: occupiedPort}),
 	)
 	require.NoError(t, err)
 
 	chErr := make(chan error, 1)
 	go func() {
-		chErr <- dg.ServeBackground(context.Background(), func(ctx context.Context, d *DialogServerSession) error {
+		chErr <- dg.ServeBackground(context.Background(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 	}()

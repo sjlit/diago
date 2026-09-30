@@ -19,22 +19,19 @@ import (
 	"time"
 )
 
-var (
-	DefaultPlaybackURLRangeSize int = 65536
-)
+// playbackURLRangeSize is the HTTP Range chunk size used by streaming URL
+// playback.
+const playbackURLRangeSize = 65536
 
-// playbackHTTPClient returns the client used for playback URL requests. When
-// HTTPDebug is enabled it returns a dedicated client with the logging
-// transport instead of mutating the exported DefaultPlaybackHTTPClient. A
-// Transport set by the user on DefaultPlaybackHTTPClient takes precedence.
-func playbackHTTPClient() *http.Client {
-	if !HTTPDebug || DefaultPlaybackHTTPClient.Transport != nil {
-		return &DefaultPlaybackHTTPClient
+// httpClientOrDefault returns the HTTP client configured for this playback
+// (MediaConfig.HTTPClient / WithHTTPClient). The default client carries a 20s
+// timeout; wrap the transport with WithHTTPClient when request logging or
+// custom TLS is needed.
+func (p *AudioPlayback) httpClientOrDefault() *http.Client {
+	if p.httpClient != nil {
+		return p.httpClient
 	}
-	return &http.Client{
-		Transport: &loggingTransport{},
-		Timeout:   DefaultPlaybackHTTPClient.Timeout,
-	}
+	return &http.Client{Timeout: 20 * time.Second}
 }
 
 // PlayURL plays wav content from url.
@@ -76,10 +73,10 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 	// WAV header size is 44 bytes so we have more than enough
 	// This must be correctly round up in case partial reads
 	pcmSamples := p.codec.Samples16()
-	readSize := (DefaultPlaybackURLRangeSize / pcmSamples) * pcmSamples
+	readSize := (playbackURLRangeSize / pcmSamples) * pcmSamples
 	req.Header.Add("Range", "bytes=0-"+strconv.Itoa(readSize-1)) // Try with range request
 
-	res, err := playbackHTTPClient().Do(req)
+	res, err := p.httpClientOrDefault().Do(req)
 	if err != nil {
 		return err
 	}
@@ -143,7 +140,7 @@ func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int
 				rangeHDR := fmt.Sprintf("bytes=%d-%d", start, end)
 
 				req.Header.Set("Range", rangeHDR) // Try with range request
-				res, err = playbackHTTPClient().Do(req)
+				res, err = p.httpClientOrDefault().Do(req)
 				if err != nil {
 					return fmt.Errorf("failed to request range: %w", err)
 				}

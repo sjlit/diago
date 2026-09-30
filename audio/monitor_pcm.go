@@ -15,9 +15,9 @@ import (
 	"github.com/sjlit/diago/v2/media"
 )
 
-var (
-	RecordingFlushSize = 4096
-)
+// RecordingFlushSize is the buffer size used to batch recording PCM writes
+// and the spool buffer size of the stereo recording tap.
+const RecordingFlushSize = 4096
 
 type pcmBufioWriter struct {
 	writer    *bufio.Writer // Lets use Buffered flushing

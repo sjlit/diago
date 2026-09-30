@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Response, opts ...DiagoOption) *Diago {
+func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Response, opts ...AgentOption) *Agent {
 	// Create client transaction request
 	cTxReq := &clientTxRequester{
 		onRequest: onRequest,
@@ -39,8 +39,8 @@ func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Respons
 		ua.Close()
 	})
 
-	opts = append(opts, WithDefaultTransport(), WithClient(client))
-	dg, err := New(ua, opts...)
+	opts = append(opts, WithDefaultTransport(), WithClient(client), WithUserAgent(ua))
+	dg, err := New(opts...)
 	require.NoError(t, err)
 	return dg
 }
@@ -231,9 +231,20 @@ func TestRegisterOptionValidation(t *testing.T) {
 	assert.NoError(t, WithRegisterProxyHost("127.0.0.1:5060")(p))
 }
 
-// TestDiagoInviteOptionsRunOnce locks the single-execution guarantee: a user
-// SignalOption func must run exactly once across Diago.Invite dialog creation
-// and Invite.
+// runOnceOption is a test-only option counting how many times the library
+// applies it. It implements the dial option interfaces (unexported markers are
+// implementable only inside the package).
+type runOnceOption struct{ runs *atomic.Int32 }
+
+func (o runOnceOption) applySignal(p *signalParams) error {
+	o.runs.Add(1)
+	p.Msg.Headers = append(p.Msg.Headers, sip.NewHeader("X-Test-Run", "once"))
+	return nil
+}
+func (runOnceOption) isDialOption() {}
+
+// TestDiagoInviteOptionsRunOnce locks the single-execution guarantee: an
+// option must be applied exactly once across dialog creation and Invite.
 func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	var runs atomic.Int32
 	reqCh := make(chan *sip.Request, 4)
@@ -244,16 +255,11 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	})
 
 	ctx := context.TODO()
-	d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"},
-		func(p *signalParams) error {
-			runs.Add(1)
-			p.Msg.Headers = append(p.Msg.Headers, sip.NewHeader("X-Test-Run", "once"))
-			return nil
-		})
+	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, runOnceOption{runs: &runs})
 	require.NoError(t, err)
 	defer d.Close()
 
-	assert.Equal(t, int32(1), runs.Load(), "user SignalOption must execute exactly once per Diago.Invite")
+	assert.Equal(t, int32(1), runs.Load(), "user option must execute exactly once per Agent.Dial")
 	require.NoError(t, d.Hangup(d.Context()))
 
 	req := <-reqCh
@@ -270,15 +276,11 @@ func TestDiagoDialBridgeOptionsRunOnce(t *testing.T) {
 
 	bridge := NewBridge()
 	ctx := context.TODO()
-	d, err := dg.DialBridge(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge,
-		func(p *signalParams) error {
-			runs.Add(1)
-			return nil
-		})
+	d, err := dg.DialBridgeURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge, runOnceOption{runs: &runs})
 	require.NoError(t, err)
 	defer d.Close()
 
-	assert.Equal(t, int32(1), runs.Load(), "user SignalOption must execute exactly once per Diago.DialBridge")
+	assert.Equal(t, int32(1), runs.Load(), "user option must execute exactly once per Agent.DialBridge")
 	require.NoError(t, d.Hangup(d.Context()))
 }
 
@@ -290,11 +292,11 @@ func TestDiagoDialBridgeTypedNilBridge(t *testing.T) {
 	})
 
 	var b *Bridge
-	_, err := dg.DialBridge(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, b)
+	_, err := dg.DialBridgeURI(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, b)
 	require.ErrorContains(t, err, "bridge is nil")
 
 	var bm *BridgeMix
-	_, err = dg.DialBridge(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, bm)
+	_, err = dg.DialBridgeURI(context.Background(), sip.Uri{User: "alice", Host: "localhost"}, bm)
 	require.ErrorContains(t, err, "bridge is nil")
 }
 
@@ -305,7 +307,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
 		})
 
-		_, err := dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
+		_, err := dg.DialURI(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		if assert.Error(t, err) {
 			assert.ErrorIs(t, err, ErrSDPMissing)
 			assert.Equal(t, "no sdp in response: sdp missing", err.Error())
@@ -319,7 +321,7 @@ func TestDiagoInviteCallerID(t *testing.T) {
 	})
 
 	t.Run("default caller id", func(t *testing.T) {
-		go dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
+		go dg.DialURI(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 		req := <-reqCh
 
 		assert.Equal(t, dg.ua.Name(), req.From().Address.User)
@@ -332,19 +334,26 @@ func TestDiagoInviteCallerID(t *testing.T) {
 func TestDiagoTransportConfs(t *testing.T) {
 	type testCase = struct {
 		tran                    Transport
+		profile                 *MediaConfig
 		expectedContactHostPort string
 		expectedMediaHost       string
 	}
 
 	doTest := func(tc testCase) {
 		tran := tc.tran
+		opts := []AgentOption{}
+		if tc.profile != nil {
+			tran.Profile = "test"
+			opts = append(opts, WithMediaProfile("test", *tc.profile))
+		}
+		opts = append(opts, WithTransport(tran))
 		reqCh := make(chan *sip.Request)
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 			reqCh <- req
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
-		}, WithTransport(tran))
+		}, opts...)
 
-		go dg.Dial(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
+		go dg.DialURI(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 
 		// Now check our req passed on client
 		req := <-reqCh
@@ -362,7 +371,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 	t.Run("external host", func(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
-				Transport:    "udp",
+				Network:      "udp",
 				BindHost:     "127.0.0.1",
 				BindPort:     15060,
 				ExternalHost: "1.2.3.4",
@@ -377,7 +386,7 @@ func TestDiagoTransportConfs(t *testing.T) {
 	t.Run("external host fqdn", func(t *testing.T) {
 		tc := testCase{
 			tran: Transport{
-				Transport:    "udp",
+				Network:      "udp",
 				BindHost:     "127.0.0.1",
 				BindPort:     15060,
 				ExternalHost: "myhost.pbx.com",
@@ -390,18 +399,20 @@ func TestDiagoTransportConfs(t *testing.T) {
 	})
 
 	t.Run("external host fqdn external media", func(t *testing.T) {
+		profile := MediaConfig{
+			Codecs:  []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
+			Network: NetworkConfig{ExternalIP: net.IPv4(1, 2, 3, 4)},
+		}
 		tc := testCase{
 			tran: Transport{
-				Transport:    "udp",
+				Network:      "udp",
 				BindHost:     "127.0.0.1",
 				BindPort:     15060,
 				ExternalHost: "myhost.pbx.com",
-				Media: TransportMediaConfig{
-					Network: NetworkConfig{ExternalIP: net.IPv4(1, 2, 3, 4)},
-				},
 			},
+			profile:                 &profile,
 			expectedContactHostPort: "myhost.pbx.com:15060",
-			expectedMediaHost:       "1.2.3.4", // Hosts are not resolved so it goes with bind
+			expectedMediaHost:       "1.2.3.4", // Hosts are not resolved so it uses the profile
 		}
 
 		doTest(tc)
@@ -416,13 +427,13 @@ func TestDiagoNewDialog(t *testing.T) {
 	ctx := context.TODO()
 
 	t.Run("close no error", func(t *testing.T) {
-		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
+		dialog, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		dialog.Close()
 	})
 
 	// t.Run("no acked", func(t *testing.T) {
-	// 	dialog, err := dg.NewDialog( sip.Uri{User: "alice", Host: "localhost"}, NewDialogOpts{})
+	// 	dialog, err := dg.NewCall( sip.Uri{User: "alice", Host: "localhost"}, NewDialogOpts{})
 	// 	require.NoError(t, err)
 	// 	defer dialog.Close()
 
@@ -432,7 +443,7 @@ func TestDiagoNewDialog(t *testing.T) {
 	// })
 
 	t.Run("full dialog", func(t *testing.T) {
-		dialog, err := dg.NewDialog(sip.Uri{User: "alice", Host: "localhost"})
+		dialog, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 		defer dialog.Close()
 
@@ -446,7 +457,7 @@ func TestDiagoNewDialog(t *testing.T) {
 		// assert.NotEmpty(t, dialog.ID())
 	})
 
-	// _, err := dg.Dial(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
+	// _, err := dg.DialURI(context.Background(), sip.Uri{User: "alice", Host: "localhost"})
 	// if assert.Error(t, err) {
 	// 	assert.Equal(t, "no SDP in response", err.Error())
 	// }
@@ -454,18 +465,18 @@ func TestDiagoNewDialog(t *testing.T) {
 
 func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 	tran := Transport{
-		Transport: "udp",
-		BindHost:  "127.0.0.1",
-		BindPort:  0,
+		Network:  "udp",
+		BindHost: "127.0.0.1",
+		BindPort: 0,
 	}
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := New(ua, WithTransport(tran))
+	dg, err := New(WithUserAgent(ua), WithTransport(tran))
 	require.NoError(t, err)
 
-	err = dg.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
+	err = dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -492,13 +503,13 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(ua,
+		dg, err := New(WithUserAgent(ua),
 			WithTransport(
 				Transport{
-					ID:        "tcp",
-					Transport: "tcp",
-					BindHost:  "127.0.0.1",
-					BindPort:  15066,
+					ID:       "tcp",
+					Network:  "tcp",
+					BindHost: "127.0.0.1",
+					BindPort: 15066,
 				},
 			),
 			WithMediaConfig(
@@ -508,7 +519,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 			))
 		require.NoError(t, err)
 
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				panic(err)
@@ -524,12 +535,12 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := New(ua,
+	dg, err := New(WithUserAgent(ua),
 		WithTransport(
 			Transport{
-				ID:        "tcp",
-				Transport: "tcp",
-				BindHost:  "127.0.0.1",
+				ID:       "tcp",
+				Network:  "tcp",
+				BindHost: "127.0.0.1",
 			},
 		),
 		WithMediaConfig(
@@ -539,7 +550,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		))
 	require.NoError(t, err)
 
-	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	l16Audio := bytes.Repeat([]byte{0, 16, 96, 0}, l16Codec.Samples16()/4)
@@ -562,26 +573,23 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(ua,
+		dg, err := New(WithUserAgent(ua),
+			WithMediaProfile("secure", MediaConfig{
+				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				SRTP:   SRTPConfig{Mode: SecureRTPSDES}, // This enables SRTP
+			}),
 			WithTransport(
 				Transport{
-					ID:        "tcp",
-					Transport: "tcp",
-					BindHost:  "127.0.0.1",
-					BindPort:  15443,
-					Media: TransportMediaConfig{
-						SRTP: SRTPConfig{Mode: SecureRTPSDES}, // This enables SRTP
-					},
-				},
-			),
-			WithMediaConfig(
-				MediaConfig{
-					Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+					ID:       "tcp",
+					Network:  "tcp",
+					BindHost: "127.0.0.1",
+					BindPort: 15443,
+					Profile:  "secure",
 				},
 			))
 		require.NoError(t, err)
 
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				panic(err)
@@ -597,32 +605,29 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := New(ua,
+	dg, err := New(WithUserAgent(ua),
+		WithMediaProfile("secure", MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+			SRTP:   SRTPConfig{Mode: SecureRTPSDES}, // USE SRTP
+		}),
 		WithTransport(
 			Transport{
-				ID:        "tcp",
-				Transport: "tcp",
-				BindHost:  "127.0.0.1",
-				BindPort:  15441,
-				Media: TransportMediaConfig{
-					SRTP: SRTPConfig{Mode: SecureRTPSDES}, // USE SRTP
-				},
-			},
-		),
-		WithMediaConfig(
-			MediaConfig{
-				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				ID:       "tcp",
+				Network:  "tcp",
+				BindHost: "127.0.0.1",
+				BindPort: 15441,
+				Profile:  "secure",
 			},
 		))
 	require.NoError(t, err)
 
-	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
+	// err = dg.ServeBackground(ctx, func(d *InboundCall) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
-	// pb, err := d.CreatePlayback()
+	// pb, err := d.StartPlayback()
 	// if err != nil {
 	// 	panic(err)
 	// }
@@ -643,39 +648,36 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 
 func TestIntegrationDiagoDTLSCall(t *testing.T) {
 	// TODO: USE TLS as transport for more correct test
-	// media.DTLSDebug = true
+	// Enable with MediaConfig{SRTP: SRTPConfig{DTLS: media.DTLSConfig{Debug: true}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(ua,
-			WithTransport(
-				Transport{
-					ID:        "tcp",
-					Transport: "tcp",
-					BindHost:  "127.0.0.1",
-					BindPort:  16443,
-					Media: TransportMediaConfig{
-						SRTP: SRTPConfig{ // This enables SRTP DTLS
-							Mode: SecureRTPDTLS,
-							DTLS: media.DTLSConfig{
-								Certificates:     []tls.Certificate{testdata.ServerCertificate()},
-								ServerClientAuth: media.ServerClientAuthNoCert,
-							},
-						},
+		dg, err := New(WithUserAgent(ua),
+			WithMediaProfile("secure", MediaConfig{
+				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				SRTP: SRTPConfig{ // This enables SRTP DTLS
+					Mode: SecureRTPDTLS,
+					DTLS: media.DTLSConfig{
+						Certificates:     []tls.Certificate{testdata.ServerCertificate()},
+						ServerClientAuth: media.ServerClientAuthNoCert,
 					},
 				},
-			),
-			WithMediaConfig(
-				MediaConfig{
-					Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+			}),
+			WithTransport(
+				Transport{
+					ID:       "tcp",
+					Network:  "tcp",
+					BindHost: "127.0.0.1",
+					BindPort: 16443,
+					Profile:  "secure",
 				},
 			))
 		require.NoError(t, err)
 
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				panic(err)
@@ -691,38 +693,35 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := New(ua,
-		WithTransport(
-			Transport{
-				ID:        "tcp",
-				Transport: "tcp",
-				BindHost:  "127.0.0.1",
-				BindPort:  16441,
-				Media: TransportMediaConfig{
-					SRTP: SRTPConfig{ // USE DTLS
-						Mode: SecureRTPDTLS,
-						// DTLS-SRTP requires both sides to present certificates (RFC 5763 §5).
-						DTLS: media.DTLSConfig{
-							Certificates: []tls.Certificate{testdata.ClientCertificate()},
-						},
-					},
+	dg, err := New(WithUserAgent(ua),
+		WithMediaProfile("secure", MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+			SRTP: SRTPConfig{ // USE DTLS
+				Mode: SecureRTPDTLS,
+				// DTLS-SRTP requires both sides to present certificates (RFC 5763 §5).
+				DTLS: media.DTLSConfig{
+					Certificates: []tls.Certificate{testdata.ClientCertificate()},
 				},
 			},
-		),
-		WithMediaConfig(
-			MediaConfig{
-				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+		}),
+		WithTransport(
+			Transport{
+				ID:       "tcp",
+				Network:  "tcp",
+				BindHost: "127.0.0.1",
+				BindPort: 16441,
+				Profile:  "secure",
 			},
 		))
 	require.NoError(t, err)
 
-	// err = dg.ServeBackground(ctx, func(d *DialogServerSession) {})
+	// err = dg.ServeBackground(ctx, func(d *InboundCall) {})
 	// require.NoError(t, err)
 
-	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
-	// pb, err := d.CreatePlayback()
+	// pb, err := d.StartPlayback()
 	// if err != nil {
 	// 	panic(err)
 	// }

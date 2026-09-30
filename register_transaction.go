@@ -5,21 +5,24 @@ package diago
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
 
+// RegisterResponseError reports a final non-200 REGISTER response.
 type RegisterResponseError struct {
-	RegisterReq *sip.Request
-	RegisterRes *sip.Response
+	RegisterReq *Request
+	RegisterRes *Response
 
 	Msg string
 }
@@ -28,6 +31,7 @@ type RegisterResponseError struct {
 // absent from sipgo's status constants.
 const statusIntervalTooBrief = 423
 
+// StatusCode returns the SIP status code of the REGISTER response.
 func (e *RegisterResponseError) StatusCode() int {
 	return e.RegisterRes.StatusCode
 }
@@ -36,16 +40,20 @@ func (e RegisterResponseError) Error() string {
 	return e.Msg
 }
 
+// RegisterTransaction is a REGISTER transaction: it owns the request
+// template, credentials and expiry, and can register, qualify and
+// unregister the contact. Agent.Register builds one and drives the
+// re-registration loop.
 type RegisterTransaction struct {
 	register signalRegisterParams
 	username string
 	password string
 	// mutateRequest is the transaction-level WithRequestMutator hook. It runs
 	// on every request cloned from Origin, before per-call options.
-	mutateRequest func(*sip.Request) error
-	Origin        *sip.Request
+	mutateRequest func(*Request) error
+	Origin        *Request
 
-	client *sipgo.Client
+	client *Client
 	log    *slog.Logger
 
 	// expiry tracks the server's Expires value for the current registration.
@@ -53,7 +61,7 @@ type RegisterTransaction struct {
 	// response.
 	expiry time.Duration
 	// retryAfter carries the server-requested Retry-After delay for the next
-	// attempt. It is set by the retry orchestration (Diago.Register) after a
+	// attempt. It is set by the retry orchestration (Agent.Register) after a
 	// retryable failure and cleared on the next successful REGISTER.
 	retryAfter time.Duration
 	// after is the timer factory used between REGISTER attempts. It is a
@@ -61,7 +69,7 @@ type RegisterTransaction struct {
 	after func(time.Duration) <-chan time.Time
 }
 
-func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip.ContactHeader, log *slog.Logger, params *signalParams, after func(time.Duration) <-chan time.Time) *RegisterTransaction {
+func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader, log *slog.Logger, params *signalParams, after func(time.Duration) <-chan time.Time) *RegisterTransaction {
 	if params == nil {
 		params = &signalParams{}
 	}
@@ -119,7 +127,7 @@ func newRegisterTransaction(client *sipgo.Client, recipient sip.Uri, contact sip
 // transaction-level WithRequestMutator hook so it shapes every REGISTER of
 // this transaction. Per-call options are applied afterwards and keep the last
 // word.
-func (t *RegisterTransaction) cloneOrigin() (*sip.Request, error) {
+func (t *RegisterTransaction) cloneOrigin() (*Request, error) {
 	req := t.Origin.Clone()
 	if t.mutateRequest == nil {
 		return req, nil
@@ -134,8 +142,8 @@ func (t *RegisterTransaction) cloneOrigin() (*sip.Request, error) {
 // extra headers and the final request of this registration attempt.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials;
 // credentials fall back to the transaction ones when not provided via options.
-func (t *RegisterTransaction) Register(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Register", scopeRegisterAttempt)
+func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAttemptOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -180,7 +188,7 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalPara
 	// also sees the NAT-learned address.
 	contact := req.Contact()
 
-	res, err := func() (*sip.Response, error) {
+	res, err := func() (*Response, error) {
 		if contact.Address.Port == 0 && net.ParseIP(contact.Address.Host) != nil {
 
 			if err := sipgo.ClientRequestRegisterBuild(client, req); err != nil {
@@ -284,6 +292,8 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalPara
 	return nil
 }
 
+// QualifyLoop refreshes the registration on the negotiated expiry until
+// ctx is canceled or a terminal failure occurs (see Agent.Register).
 func (t *RegisterTransaction) QualifyLoop(ctx context.Context) error {
 	// t.expiry tracks the server's Expires response header (set by Qualify)
 	// and is re-read on every loop iteration, so server-driven expiry
@@ -343,7 +353,7 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 // transient and the re-registration loop should schedule another attempt.
 //
 // Retryable: 408 Request Timeout, 491 Request Pending, and 5xx except
-// 501/505. 423 Interval Too Brief is handled separately by Diago.Register
+// 501/505. 423 Interval Too Brief is handled separately by Agent.Register
 // (RFC 3261 §10.2.8: retry with the Min-Expires value). Terminal: 3xx, every
 // other 4xx (401/407 in particular: credentials are transaction-scoped, so
 // retrying only repeats the same failure), 6xx and anything outside the SIP
@@ -362,8 +372,8 @@ func shouldRetryRegister(code int) bool {
 
 // Unregister unregisters the contact. Options allow customizing the request.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
-func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Unregister", scopeRegisterAttempt)
+func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAttemptOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -385,8 +395,8 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...SignalOpti
 
 // Qualify refreshes the registration. Options allow customizing the request.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
-func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption) error {
-	params, err := newSignalParams(opts, "Qualify", scopeRegisterAttempt)
+func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...RegisterAttemptOption) error {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -400,7 +410,7 @@ func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...SignalOption)
 	return t.doRequest(ctx, req, params)
 }
 
-func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, params *signalParams) error {
+func (t *RegisterTransaction) doRequest(ctx context.Context, req *Request, params *signalParams) error {
 	// log := p.getLoggerCtx(ctx, "Register")
 	client := t.client
 	username, password := t.signalCredentials(params)
@@ -447,6 +457,223 @@ func (t *RegisterTransaction) doRequest(ctx context.Context, req *sip.Request, p
 	return nil
 }
 
+// ErrRegistrationClosed is returned by Registration.WaitReady when the handle
+// was closed (or the loop stopped) before the first successful REGISTER.
+var ErrRegistrationClosed = errors.New("registration closed")
+
+// Registration is a running REGISTER loop created by Agent.Register. The
+// initial REGISTER and every re-registration run in a background goroutine;
+// the handle owns their lifecycle:
+//
+//   - Ready is closed after the first successful REGISTER.
+//   - Done is closed when the loop ends (terminal response, ctx cancellation
+//     or Close).
+//   - Err reports the loop's terminal error (nil when Close stopped it).
+//   - Wait blocks until the loop ends and returns Err.
+//   - WaitReady waits for Ready, Done or ctx.
+//   - Close stops the loop, unregisters the contact and waits for the loop to
+//     exit (bounded by ctx). It is idempotent.
+//
+// The handle is safe for concurrent use.
+type Registration struct {
+	log   *slog.Logger
+	trans *RegisterTransaction
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	ready chan struct{}
+	done  chan struct{}
+
+	mu     sync.Mutex
+	err    error
+	closed bool
+	once   sync.Once
+}
+
+func newRegistration(ctx context.Context, log *slog.Logger, t *RegisterTransaction) *Registration {
+	runCtx, cancel := context.WithCancel(ctx)
+	r := &Registration{
+		log:    log,
+		trans:  t,
+		ctx:    runCtx,
+		cancel: cancel,
+		ready:  make(chan struct{}),
+		done:   make(chan struct{}),
+	}
+	go r.run()
+	return r
+}
+
+// Ready is closed after the first successful REGISTER. It is never closed
+// when the initial registration fails terminally; observe Done in that case.
+func (r *Registration) Ready() <-chan struct{} {
+	return r.ready
+}
+
+// Done is closed when the registration loop exits.
+func (r *Registration) Done() <-chan struct{} {
+	return r.done
+}
+
+// Err reports the loop's terminal error. It returns nil while the loop is
+// running and after a clean Close.
+func (r *Registration) Err() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
+}
+
+// Wait blocks until the registration loop exits and returns its terminal
+// error (nil for a clean Close).
+func (r *Registration) Wait() error {
+	<-r.done
+	return r.Err()
+}
+
+// WaitReady waits until the first REGISTER succeeded, the loop terminated, or
+// ctx is done. When the handle was closed (or the loop stopped) before the
+// first success it returns the terminal error, or ErrRegistrationClosed for a
+// clean Close.
+func (r *Registration) WaitReady(ctx context.Context) error {
+	select {
+	case <-r.ready:
+		return nil
+	case <-r.done:
+		if err := r.Err(); err != nil {
+			return err
+		}
+		return ErrRegistrationClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close stops the loop, waits for the deferred unregister to complete and
+// returns the wait error (nil unless ctx expired first). It is idempotent and
+// safe for concurrent use.
+func (r *Registration) Close(ctx context.Context) error {
+	r.once.Do(func() {
+		r.mu.Lock()
+		r.closed = true
+		r.mu.Unlock()
+		r.cancel()
+	})
+	select {
+	case <-r.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// isClosed reports whether Close was called.
+func (r *Registration) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
+}
+
+// setErr records the first terminal error of the loop.
+func (r *Registration) setErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err == nil {
+		r.err = err
+	}
+}
+
+// run executes the initial REGISTER and the re-registration loop, replicating
+// the historical pacing/retry rules (see Register), then unregisters before
+// Done is closed.
+func (r *Registration) run() {
+	defer close(r.done)
+	// unregister is only meaningful once a REGISTER succeeded: on an initial
+	// failure there is no binding to remove, so exit without an extra request
+	// (matching the historical behavior).
+	unregister := false
+	defer func() {
+		if !unregister {
+			return
+		}
+		// The timeout context is independent of r.ctx on purpose.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := r.trans.Unregister(ctx); err != nil {
+			r.log.Error("Failed to unregister", "error", err)
+			return
+		}
+		r.log.Debug("Unregister successfull")
+	}()
+
+	t := r.trans
+	if err := t.Register(r.ctx); err != nil {
+		if r.isClosed() && errors.Is(err, context.Canceled) {
+			// Close canceled the loop: a clean stop, not a failure.
+			return
+		}
+		r.setErr(err)
+		return
+	}
+	unregister = true
+	close(r.ready)
+
+	for {
+		r.log.Debug("Qualify sent")
+		err := t.QualifyLoop(r.ctx)
+
+		retryAfter := 5 * time.Second
+		var rr *RegisterResponseError
+		if errors.As(err, &rr) {
+			resCode := rr.RegisterRes.StatusCode
+			switch {
+			case resCode == statusIntervalTooBrief:
+				// RFC 3261 §10.2.8: retry with an Expires of at least
+				// Min-Expires instead of treating the response as terminal.
+				minExpires, ok := minExpiresDelay(rr.RegisterRes)
+				if !ok {
+					r.setErr(err)
+					return
+				}
+				if t.register.Expiry >= minExpires {
+					// We already advertise at least Min-Expires, so another
+					// attempt cannot satisfy the server; repeated 423 must not
+					// become a 1s retry loop.
+					r.setErr(err)
+					return
+				}
+				t.setExpiry(minExpires)
+				retryAfter = time.Second
+			case shouldRetryRegister(resCode):
+				// Retry-After is honored below.
+			default:
+				r.setErr(err)
+				return
+			}
+
+			if h := rr.RegisterRes.GetHeader("Retry-After"); h != nil {
+				ra, _ := strconv.Atoi(h.Value())
+				if ra > 0 {
+					retryAfter = time.Duration(ra) * time.Second
+				}
+			}
+		}
+
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if r.isClosed() && errors.Is(err, context.Canceled) {
+				// Close canceled the loop: a clean stop, not a failure.
+				return
+			}
+			r.setErr(err)
+			return
+		}
+
+		// Retry pacing: explicit RetryInterval > Retry-After value > the
+		// default computed from the negotiated expiry (see calcRetry).
+		t.retryAfter = retryAfter
+	}
+}
+
 // setExpiry raises the registration expiry used by subsequent attempts and
 // updates the Origin request template so they advertise it. It implements the
 // RFC 3261 §10.2.8 reaction to 423 Interval Too Brief / Min-Expires.
@@ -459,7 +686,7 @@ func (t *RegisterTransaction) setExpiry(d time.Duration) {
 
 // minExpiresDelay extracts a positive, representable Min-Expires value from a
 // 423 response.
-func minExpiresDelay(res *sip.Response) (time.Duration, bool) {
+func minExpiresDelay(res *Response) (time.Duration, bool) {
 	h := res.GetHeader("Min-Expires")
 	if h == nil {
 		return 0, false

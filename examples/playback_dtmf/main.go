@@ -37,12 +37,12 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu, err := diago.New(ua, diago.WithDefaultTransport())
+	tu, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}
 
-	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
@@ -53,14 +53,14 @@ func start(ctx context.Context) error {
 	})
 }
 
-func PlaybackDTMF(ctx context.Context, inDialog *diago.DialogServerSession) error {
+func PlaybackDTMF(ctx context.Context, inDialog *diago.InboundCall) error {
 	inDialog.Trying(ctx)  // 100 Trying
 	inDialog.Ringing(ctx) // 180 Ringing
 	if err := inDialog.Answer(ctx); err != nil {
 		return err
 	}
 
-	pb, err := inDialog.CreatePlaybackDTMF(
+	pb, err := inDialog.StartPlaybackDTMF(
 		diago.WithReplayKeys("*"),
 	)
 	if err != nil {

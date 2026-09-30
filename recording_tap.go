@@ -16,7 +16,7 @@ import (
 // Close.
 var ErrRecordingClosed = errors.New("recording already closed")
 
-// RecordingOption configures DialogMedia.StartStereoRecording.
+// RecordingOption configures Media.StartStereoRecording.
 type RecordingOption func(*recordingConfig) error
 
 type recordingConfig struct {
@@ -43,9 +43,9 @@ func WithRecordingSpoolDir(dir string) RecordingOption {
 }
 
 // StereoRecording is an active inline recording tap returned by
-// DialogMedia.StartStereoRecording. All methods are safe for concurrent use.
+// Media.StartStereoRecording. All methods are safe for concurrent use.
 type StereoRecording struct {
-	dm  *DialogMedia
+	dm  *Media
 	mon *audio.MonitorPCMStereo
 	wav *audio.WavWriter
 
@@ -66,13 +66,13 @@ type StereoRecording struct {
 // window and no manual pipeline surgery is needed.
 //
 // It must be called before the dialog joins a Bridge: BridgeMix resolves each
-// leg's reader/writer exactly once at AddDialogSession, so a tap installed
+// leg's reader/writer exactly once at AddCall, so a tap installed
 // afterwards is bypassed by bridged traffic.
 //
 // The caller keeps ownership of w: StartStereoRecording and Close never close
 // it. Close the underlying file (and, for a recording to a fresh file, handle
 // its fd) after Close returns.
-func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOption) (*StereoRecording, error) {
+func (d *Media) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOption) (*StereoRecording, error) {
 	cfg := recordingConfig{isFailOpen: true}
 	for _, o := range opts {
 		if o == nil {
@@ -132,7 +132,7 @@ func (d *DialogMedia) StartStereoRecording(w io.WriteSeeker, opts ...RecordingOp
 	d.audioWriter = mon
 	// #23: guarantee spool FD/files are reclaimed on BYE even when the
 	// caller forgets rec.Close. StereoRecording.Close is idempotent, so an
-	// explicit Close followed by DialogMedia.Close is a no-op.
+	// explicit Close followed by Media.Close is a no-op.
 	d.onCloseUnsafe(func() error { return rec.Close() })
 	return rec, nil
 }

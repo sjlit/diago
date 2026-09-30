@@ -24,5 +24,5 @@ func TestStereoRecording_CleanedByDialogClose(t *testing.T) {
 	entries, err := os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries)
-	require.NoError(t, d.Close(), "DialogMedia.Close idempotent")
+	require.NoError(t, d.Close(), "Media.Close idempotent")
 }

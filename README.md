@@ -1,10 +1,10 @@
 # diago
 
 SIP user agent library for building B2BUA and media server applications on top
-of [sipgo](https://github.com/emiago/sipgo).
+of [sipgo](https://github.com/emiago/sipgo): inbound/outbound calls, RTP media
+with playback/recording/DTMF, bridging and REGISTER.
 
-This is the **v2** module (`github.com/sjlit/diago/v2`). It is a breaking
-release: see [Migrating from v1](#migrating-from-v1).
+Module: `github.com/sjlit/diago/v2`.
 
 ## Install
 
@@ -16,7 +16,7 @@ Requires Go 1.23+.
 
 ## Quickstart
 
-Inbound call: answer, read audio, hang up when the handler returns.
+Inbound call: ring, answer, keep the call up while the handler runs.
 
 ```go
 package main
@@ -27,7 +27,6 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 )
 
@@ -35,29 +34,25 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	ua, _ := sipgo.NewUA()
-	defer ua.Close()
-
-	// v2 has no implicit transport: configure at least one.
-	dg, err := diago.New(ua, diago.WithDefaultTransport())
+	// No sipgo UserAgent needed: New creates a private one and Close owns it.
+	// (WithUserAgent supplies a shared, caller-owned UserAgent instead.)
+	agent, err := diago.New(diago.WithDefaultTransport())
 	if err != nil {
 		panic(err)
 	}
+	defer agent.Close(context.Background())
 
-	err = dg.Serve(ctx, func(ctx context.Context, d *diago.DialogServerSession) error {
-		if err := d.Trying(ctx); err != nil {
+	err = agent.Serve(ctx, func(ctx context.Context, call *diago.InboundCall) error {
+		if err := call.Ringing(ctx); err != nil {
 			return err
 		}
-		if err := d.Ringing(ctx); err != nil {
+		if err := call.Answer(ctx); err != nil {
 			return err
 		}
-		if err := d.Answer(ctx); err != nil {
-			return err
-		}
-
-		// d.DialogMedia() owns the media pipeline: playback, recording,
-		// DTMF, MoH. Block until the call ends.
-		<-d.Context().Done()
+		// Returning after Answer keeps the call alive: the framework closes
+		// the dialog and its media when the peer hangs up. Block here while
+		// the call is in progress (playback, DTMF, recording, ...).
+		<-call.Context().Done()
 		return nil
 	})
 	if err != nil {
@@ -69,11 +64,17 @@ func main() {
 Outbound call:
 
 ```go
-d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 5060})
+call, err := agent.Dial(ctx, "sip:alice@127.0.0.1:5060")
 if err != nil {
 	return err
 }
-defer d.HangupAndClose(ctx)
+defer call.Close()
+
+// ... use call.Media() for playback, DTMF, recording, ...
+
+if err := call.Hangup(ctx); err != nil {
+	return err
+}
 ```
 
 See [`examples/`](examples) for runnable programs (playback, recording, DTMF,
@@ -81,61 +82,105 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 
 ## Key concepts
 
-- **DialogHandler** (`diago.DialogHandler`): `Serve` installs one handler per
-  inbound dialog. Returning `nil` hangs the call up (BYE once confirmed,
-  otherwise a 480 decline). Returning an error maps it to a final response
-  (`ErrDecline` → 480, `ErrBusy` → 486, `ErrNotFound` → 404, `*ResponseError`
-  → custom, anything else → 500); a confirmed call is ended with BYE + an
-  RFC 3326 `Reason` header. Wrap `ErrResponseSent` when the handler already
-  wrote its own final response.
-- **Serve lifecycle**: `Serve` returns only after every listener stopped, and
-  joins the listener errors. `Shutdown` hangs up tracked dialogs and stops the
-  listeners; the `sipgo.UserAgent` is caller-owned and never closed.
-  `ServeBackground` is the non-blocking variant.
-- **DialogMedia**: single owner of the active media session. Components resolve
-  the reader/writer at use time through `DialogMedia`, so re-INVITEs hot-swap
-  the internals without replacing installed handles. Media entry points return
-  `ErrDialogNotAnswered`/`ErrDialogClosed` instead of panicking.
-- **MediaConfig**: construction-time media settings (`Codecs`, `SRTP`,
-  `Network`, `SDP`, `MusicOnHold`, `Logger`). Transport-scoped overrides live in
-  `Transport.Media`. Zero fields inherit the documented defaults.
-- **StopFunc** (`func() error`): teardown handle returned by background media
-  helpers (`ListenBackground`, `PlayBackground`, `PauseAudioRead/Write`,
-  `ProxyMediaControl`). It is idempotent unless documented otherwise.
+- **CallHandler**: `Serve` installs one handler per inbound dialog. A handler
+  that returns before sending a final response declines the pending INVITE
+  (`nil` → 480, or the mapped response for an error: `ErrDecline` → 480,
+  `ErrBusy` → 486, `ErrNotFound` → 404, `*ResponseError` → custom, anything
+  else → 500). **Answering and returning keeps the call alive**; an answered
+  call ends with BYE carrying an RFC 3326 `Reason` header when the handler
+  returns an error, or when the peer hangs up. Wrap `ErrResponseSent` when the
+  handler already wrote its own final response.
+- **Calls**: `InboundCall` (UAS) and `OutboundCall` (UAC) share the `Call`
+  interface. `Dial` accepts a SIP URI string; `DialURI` takes a `diago.URI`.
+  `Hangup` performs the signaling teardown, `Close` releases local resources
+  (Close is idempotent; Hangup on an already ended dialog is a no-op).
+- **Lifecycle**: `Agent.Close` hangs up tracked dialogs, stops the listeners
+  started by `Serve`/`ServeBackground` and closes the private UserAgent. A
+  UserAgent supplied with `WithUserAgent` (and servers/clients from
+  `WithServer`/`WithClient`) stay caller-owned.
+- **Media**: `call.Media()` is the single owner of the media session.
+  Components (`StartPlayback`, `StartRecording`, `StartMusicOnHold`, `SendDTMF`,
+  `PlayTone`, ...) resolve the reader/writer at use time, so re-INVITEs
+  hot-swap the internals without replacing installed handles. Media entry
+  points return `ErrDialogNotAnswered`/`ErrDialogClosed` instead of panicking.
+- **Answer/ACK**: `Answer`, `AnswerLate` and `RespondSDP` return once the 2xx
+  was handed to the transaction layer; the ACK wait continues in the
+  background. Use `WaitAck` (or `AckReceived`/`AckErr`) when the call must be
+  fully established before continuing.
+- **Options**: each API takes the option interface for its operation
+  (`AnswerOption`, `HangupOption`, `InviteOption`, `DialOption`,
+  `RegisterOption`, ...); passing an option an API does not consume is a
+  compile error. Constructors validate their values at call time.
+- **Configuration**: construction-time media settings live in `MediaConfig`
+  (`Codecs`, `SRTP`, `Network`, `SDP`, `MusicOnHold`, `Logger`, `Debug`,
+  `Tracer`, `HTTPClient`). Transports can select a complete named profile with
+  `WithMediaProfile` + `Transport.Profile`; there is no package-level mutable
+  configuration.
+- **REGISTER**: `Agent.Register` returns a `*Registration` handle
+  (`WaitReady`/`Wait`/`Close`) that keeps the registration refreshed and
+  unregisters on `Close`. `RegisterTransaction` exposes single attempts
+  (`Register`/`Qualify`/`Unregister`).
+- **sipgo interop**: sipgo types in signatures are aliases (`diago.URI`,
+  `diago.Header`, `diago.Request`, `diago.Response`, ...), so importing sipgo
+  is optional. Escape hatches: `WithUserAgent`, `WithServer`, `WithClient`,
+  `Agent.Server`, `Agent.UA`, `call.SIP`.
+- **Background helpers**: `ListenBackground`, `AudioRingtone.PlayBackground`,
+  `PauseAudioRead/Write` and `Bridge.ProxyMediaControl` return `StopFunc`
+  (`func() error`).
 
-Package-level docs: `go doc github.com/sjlit/diago/v2`.
+Package docs: `go doc github.com/sjlit/diago/v2`; API conventions:
+[API.md](API.md).
 
 ## Migrating from v1
 
 v1 imported `github.com/sjlit/diago`; v2 is `github.com/sjlit/diago/v2`.
 
-| v1 | v2 |
+| v1 | current |
 | --- | --- |
-| `diago.NewDiago(ua, opts...) *Diago` | `diago.New(ua, opts...) (*Diago, error)` — fails without a transport |
+| `diago.NewDiago(ua, opts...) *Diago` | `diago.New(opts...) (*Agent, error)`; `ua` is optional (`WithUserAgent`) |
 | implicit loopback transport | `WithDefaultTransport()` or `WithTransport(...)` |
-| `ServeDialogFunc func(d)` | `DialogHandler func(ctx, d) error` (error → SIP response) |
+| `ServeDialogFunc func(d)` | `CallHandler func(ctx, *InboundCall) error` (error → SIP response) |
 | `HandleFunc(f)` | handler is passed to `Serve`/`ServeBackground` |
-| `Invite` / `InviteBridge` | `Dial` / `DialBridge` (accepts a `Bridger`; nil-safe) |
-| `WithAuth` | removed (was unused); use `WithAuthCredentials` or server-side `DigestAuthServer` |
-| `InviteOptions` / `NewDialogOptions` / `ProgressMediaOptions` / `AnswerOptions` | removed; use `SignalOption`s |
+| `Invite` / `InviteBridge` | `Dial` / `DialBridge` (string target; `DialURI` for a parsed URI) |
+| `WithAuth` | removed (was unused); use `WithAuthCredentials` or `DigestAuthServer` |
+| `InviteOptions` / `NewDialogOptions` / `ProgressMediaOptions` / `AnswerOptions` | removed; per-operation option interfaces |
 | `Answer/Progress/...` without ctx | all signaling methods take `ctx` |
-| `WaitAnswer(ctx, sipgo.AnswerOptions)` | `WaitAnswer(ctx, ...SignalOption)` |
+| `WaitAnswer(ctx, sipgo.AnswerOptions)` | `WaitAnswer(ctx, ...WaitAnswerOption)` |
 | `MediaConfig.SecureRTP/SecureRTPAlg/BindIP/ExternalIP/RTPNAT/DTLSConf/...` | grouped into `MediaConfig.SRTP/Network/SDP` |
-| `Transport.MediaSRTP/MediaExternalIP/MediaDTLSConf` | `Transport.Media` (`TransportMediaConfig`) |
-| `AudioStereoRecordingCreate` | `DialogMedia.StartStereoRecording` |
-| `DialogCacheServer/Client`, `MatchDialog*` on the cache | removed; `Diago.MatchDialog(req)` remains |
-| `Bridge.GetDialogs` | removed; track the sessions you add (the bridge has `AddDialogSession/RemoveDialogSession`) |
+| `Transport.MediaSRTP/MediaExternalIP/MediaDTLSConf` | `WithMediaProfile` + `Transport.Profile` |
+| `AudioStereoRecordingCreate` | `Media.StartStereoRecording` |
+| `DialogCacheServer/Client`, cache `MatchDialog*` | removed; `Agent.FindCall(req)` |
+| `Bridge.GetDialogs` | removed; track the sessions you add (`Bridge.Add/Remove`) |
 | `dg.serveHandler`/`DialogStore`-style internals | unexported |
+
+Breaking changes since the first v2 preview (same module path):
+
+| first v2 preview | current |
+| --- | --- |
+| `Diago`, `Shutdown` | `Agent`, `Close` |
+| `DialogClientSession` / `DialogServerSession` | `OutboundCall` / `InboundCall` |
+| `DialogMedia` / `DialogHandler` | `Media` / `CallHandler` |
+| `MatchDialog` / `NewDialog` | `FindCall` / `NewCall` |
+| `HangupAndClose` | removed: `Hangup` + `Close` |
+| `WithHeader` | removed: `WithHeaders(sip.NewHeader(name, value))` |
+| `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `StartPlayback*` / `NewDTMF*` / `StartRingtone` |
+| `PlayMusicOnHold` | `StartMusicOnHold` |
+| `WithAudioReader*` / `WithAudioWriter*` | `WithReader*` / `WithWriter*` |
+| `Transport.Transport` | `Transport.Network` |
+| runtime option scope (`UnsupportedOptionError`) | compile-time option interfaces |
+| handler return hangs up the call | answering then returning keeps it alive |
+| `Answer` blocks until ACK | returns after the 2xx; `WaitAck` opt-in |
+| `Register(...) error` | `Register(...) (*Registration, error)` |
 
 Behavioral notes:
 
-- `WithOnRefer`/`WithOnMediaUpdate` are accepted by `Answer` **and**
-  `AnswerLate`; other APIs reject unsupported options with
-  `*UnsupportedOptionError` instead of silently ignoring them.
-- REGISTER: 423 Interval Too Brief is retried with `Min-Expires`; a transient
-  failure no longer pins the re-registration interval (Retry-After is consumed
-  once). Transport failures are retried until ctx is canceled.
-- `Hangup` sends the 480 decline even when the passed ctx is already canceled.
+- `WithOnRefer`/`WithOnMediaUpdate` are accepted by `Answer`, `AnswerLate`,
+  `Invite` and `Dial`.
+- REGISTER: 423 Interval Too Brief is retried with `Min-Expires`; transient
+  failures honor `Retry-After` once; transport failures are retried until ctx
+  is canceled (or `Registration.Close`).
+- Server `Hangup` on a still-pending INVITE sends the 480 decline even when the
+  passed ctx is already canceled.
 
 ## License
 

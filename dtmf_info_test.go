@@ -91,7 +91,7 @@ func diagotestSafeNewRequest(method sip.RequestMethod, recipient sip.Uri) (*sip.
 
 func TestReadSIPInfoDTMFDeliversToReader(t *testing.T) {
 	var got atomic.Int32
-	media := DialogMedia{}
+	media := Media{}
 	media.registerDTMFReader(&DTMFReader{
 		onDTMF: func(dtmf rune) error {
 			if dtmf != '5' {
@@ -117,7 +117,7 @@ func TestReadSIPInfoDTMFDeliversToReader(t *testing.T) {
 }
 
 func TestReadSIPInfoDTMFBadBodyResponds400(t *testing.T) {
-	media := DialogMedia{}
+	media := Media{}
 	req, tx := newInfoDTMFRequest(t, "garbage body")
 
 	if err := readSIPInfoDTMF(&media, req, tx); err != nil {
@@ -131,7 +131,7 @@ func TestReadSIPInfoDTMFBadBodyResponds400(t *testing.T) {
 }
 
 func TestReadSIPInfoDTMFNoReaderStill200(t *testing.T) {
-	media := DialogMedia{}
+	media := Media{}
 	req, tx := newInfoDTMFRequest(t, "Signal=1\nDuration=160\n")
 
 	if err := readSIPInfoDTMF(&media, req, tx); err != nil {
@@ -147,7 +147,7 @@ func TestReadSIPInfoDTMFNoReaderStill200(t *testing.T) {
 func TestDeliverDTMFNilCallbackNoPanic(t *testing.T) {
 	// A registered reader without an installed callback (pure audio consumer
 	// that never called OnDTMF) must be skipped, not panicked on.
-	m := DialogMedia{}
+	m := Media{}
 	m.registerDTMFReader(&DTMFReader{})
 	m.deliverDTMF('5', 160*time.Millisecond)
 }
@@ -156,7 +156,7 @@ func TestDTMFCallbackConcurrentAccess(t *testing.T) {
 	// OnDTMF is installed on the application/media goroutine while SIP INFO
 	// digits are delivered on transaction goroutines. Run under -race: plain
 	// field access fails here.
-	m := &DialogMedia{}
+	m := &Media{}
 	r := &DTMFReader{}
 	m.registerDTMFReader(r)
 

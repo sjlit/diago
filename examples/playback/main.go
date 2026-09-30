@@ -33,12 +33,12 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu, err := diago.New(ua, diago.WithDefaultTransport())
+	tu, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}
 
-	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 		if err := Playback(ctx, inDialog); err != nil {
@@ -48,7 +48,7 @@ func start(ctx context.Context) error {
 	})
 }
 
-func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
+func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 	inDialog.Trying(ctx)  // 100 Trying
 	inDialog.Ringing(ctx) // 180 Ringing
 	if err := inDialog.Answer(ctx); err != nil {
@@ -58,10 +58,18 @@ func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
 	playfile, _ := testdata.OpenFile("demo-echodone.wav")
 	slog.Info("Playing a file", "file", "demo-echodone.wav")
 
-	pb, err := inDialog.CreatePlayback()
+	pb, err := inDialog.StartPlayback()
 	if err != nil {
 		return err
 	}
 	_, err = pb.PlayContext(ctx, playfile, "audio/wav")
-	return err
+	if err != nil {
+		return err
+	}
+	// The call stays alive after the handler returns (v3 semantics); end it
+	// after the announcement.
+	if err := inDialog.Hangup(ctx); err != nil {
+		slog.Error("Hangup failed", "error", err)
+	}
+	return nil
 }

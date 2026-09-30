@@ -82,7 +82,7 @@ func dtmfRelaySignal(signal string) (rune, bool) {
 // It is shared by server and client dialog sessions: valid DTMF is answered
 // 200 OK and delivered through the same callbacks used for RTP DTMF
 // (DTMFReader listeners, AudioPlaybackDTMF channel).
-func readSIPInfoDTMF(media *DialogMedia, req *sip.Request, tx sip.ServerTransaction) error {
+func readSIPInfoDTMF(media *Media, req *Request, tx ServerTransaction) error {
 	dtmf, dur, err := parseDTMFRelay(req.Body())
 	if err != nil {
 		return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))

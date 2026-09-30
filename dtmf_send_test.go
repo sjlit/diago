@@ -30,7 +30,7 @@ func dtmfEvents(sink *capturedRTPWriter) []media.DTMFEvent {
 }
 
 func TestSendDTMFRTPNegotiated(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	if err := m.SendDTMF(context.Background(), "19"); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestSendDTMFRTPNegotiated(t *testing.T) {
 }
 
 func TestSendDTMFMethodAndOptions(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	err := m.SendDTMF(context.Background(), "5",
 		WithDTMFMethod(DTMFMethodRTP),
 		WithDTMFVolume(20),
@@ -67,7 +67,7 @@ func TestSendDTMFMethodAndOptions(t *testing.T) {
 }
 
 func TestSendDTMFAutoFallsBackToInband(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, []media.Codec{media.CodecAudioUlaw}) // no tel-event
+	m, sink := newFakeMedia(t, []media.Codec{media.CodecAudioUlaw}) // no tel-event
 	err := m.SendDTMF(context.Background(), "5", WithDTMFInterval(time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestSendDTMFAutoFallsBackToInband(t *testing.T) {
 }
 
 func TestSendDTMFRTPExplicitUnsupported(t *testing.T) {
-	m, _ := newFakeDialogMedia(t, []media.Codec{media.CodecAudioUlaw})
+	m, _ := newFakeMedia(t, []media.Codec{media.CodecAudioUlaw})
 	err := m.SendDTMF(context.Background(), "5", WithDTMFMethod(DTMFMethodRTP))
 	if !errors.Is(err, ErrDTMFUnsupported) {
 		t.Fatalf("want ErrDTMFUnsupported, got %v", err)
@@ -96,7 +96,7 @@ func TestSendDTMFRTPExplicitUnsupported(t *testing.T) {
 func TestSendDTMFExplicitInband(t *testing.T) {
 	// Inband forced even though the peer negotiated telephone-event: the
 	// digit must ride the audio payload type, no PT101 events.
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	err := m.SendDTMF(context.Background(), "7",
 		WithDTMFMethod(DTMFMethodInband), WithDTMFInterval(time.Millisecond))
 	if err != nil {
@@ -113,7 +113,7 @@ func TestSendDTMFExplicitInband(t *testing.T) {
 func TestSendDTMFVolumeZero(t *testing.T) {
 	// Volume 0 is a legal wire value (loudest); the option must pass it
 	// through instead of falling back to the default 10.
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	if err := m.SendDTMF(context.Background(), "1", WithDTMFVolume(0)); err != nil {
 		t.Fatal(err)
 	}
@@ -127,14 +127,14 @@ func TestSendDTMFVolumeZero(t *testing.T) {
 }
 
 func TestSendDTMFInvalidDigit(t *testing.T) {
-	m, _ := newFakeDialogMedia(t, ulawCodecs())
+	m, _ := newFakeMedia(t, ulawCodecs())
 	if err := m.SendDTMF(context.Background(), "5x"); err == nil {
 		t.Fatal("must reject non DTMF digits")
 	}
 }
 
 func TestSendDTMFContextCancel(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	err := m.SendDTMF(ctx, "111111") // ~1 digit per 160ms: cannot finish
@@ -147,7 +147,7 @@ func TestSendDTMFContextCancel(t *testing.T) {
 }
 
 func TestSendDTMFEmpty(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	if err := m.SendDTMF(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestSendDTMFEmpty(t *testing.T) {
 func TestSendDTMFContextCancelWhileGatePaused(t *testing.T) {
 	// The RTP event write waits on a paused audio-write gate; SendDTMF's ctx
 	// must cut that wait short instead of hanging until the gate releases.
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	release, err := m.PauseAudioWrite()
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestSendDTMFConcurrentSerialized(t *testing.T) {
 	// Two concurrent SendDTMF calls must not interleave digits: the dialog
 	// send gate serializes whole strings, so the wire shows one contiguous
 	// digit run followed by the other.
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	errCh := make(chan error, 2)
 	go func() { errCh <- m.SendDTMF(context.Background(), "1", WithDTMFInterval(time.Millisecond)) }()
 	go func() { errCh <- m.SendDTMF(context.Background(), "2", WithDTMFInterval(time.Millisecond)) }()

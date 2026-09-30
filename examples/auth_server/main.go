@@ -33,7 +33,7 @@ func main() {
 
 func start(ctx context.Context) error {
 	ua, _ := sipgo.NewUA()
-	dg, err := diago.New(ua, diago.WithDefaultTransport())
+	dg, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func start(ctx context.Context) error {
 		Realm:    "example.pbx",
 	}
 
-	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 

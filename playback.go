@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"sync"
@@ -17,9 +18,9 @@ import (
 	"github.com/sjlit/diago/v2/media"
 )
 
-var (
-	PlaybackBufferSize = 3840 // For now largest we support. 48000 sample rate with 2 channels
-)
+// maxPlayoutPayloadSize is the largest playout payload the library supports:
+// 48 kHz stereo 16-bit at 20 ms.
+const maxPlayoutPayloadSize = 3840
 
 // Playback errors. PlaybackStopped and PlaybackReplayed also match io.EOF
 // for backward compatibility with code treating EOF as successful end.
@@ -38,14 +39,20 @@ var (
 var playBufPool = sync.Pool{
 	New: func() any {
 		// Increase this size if there will be support for larger pools
-		return make([]byte, PlaybackBufferSize)
+		return make([]byte, maxPlayoutPayloadSize)
 	},
 }
 
+// AudioPlayback streams PCM/WAV/URL audio into a dialog's audio writer.
 type AudioPlayback struct {
 	writer io.Writer
 	codec  media.Codec
 	onPlay func()
+
+	// httpClient is used by PlayURL/PlayURLContext. Nil falls back to a
+	// default client with a 20s timeout. Set by Media.StartPlayback* from the
+	// dialog's MediaConfig.HTTPClient.
+	httpClient *http.Client
 
 	// Read only values
 	// This will influence playout sampling buffer
@@ -56,7 +63,7 @@ type AudioPlayback struct {
 }
 
 // NewAudioPlayback creates a playback where writer is encoder/streamer to media codec
-// Use dialog.CreatePlayback() instead creating manually playback
+// Use dialog.StartPlayback() instead creating manually playback
 func NewAudioPlayback(writer io.Writer, codec media.Codec) AudioPlayback {
 	return AudioPlayback{
 		writer:      writer,
@@ -66,6 +73,7 @@ func NewAudioPlayback(writer io.Writer, codec media.Codec) AudioPlayback {
 	}
 }
 
+// Codec returns the codec the playback encodes to.
 func (p *AudioPlayback) Codec() media.Codec {
 	return p.codec
 }

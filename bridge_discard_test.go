@@ -20,7 +20,7 @@ import (
 // session plus a sender injecting RTP into its socket. The audio pipeline
 // heads are in-memory buffers so the proxy loop terminates on EOF instead of
 // blocking on the socket, leaving anything queued on the socket observable.
-func newQueuedRTPDialog(t *testing.T) (*DialogServerSession, func(n int)) {
+func newQueuedRTPDialog(t *testing.T) (*InboundCall, func(n int)) {
 	t.Helper()
 
 	msess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
@@ -52,7 +52,7 @@ func newQueuedRTPDialog(t *testing.T) (*DialogServerSession, func(n int)) {
 		}
 	}
 
-	d := &DialogServerSession{
+	d := &InboundCall{
 		DialogServerSession: &sipgo.DialogServerSession{
 			Dialog: sipgo.Dialog{ID: "queued-rtp"},
 		},
@@ -82,8 +82,8 @@ func TestBridgeDiscardQueuedRTPOnStart(t *testing.T) {
 			incoming, sendIncoming := newQueuedRTPDialog(t)
 			outgoing, _ := newQueuedRTPDialog(t)
 
-			require.NoError(t, b.AddDialogSession(incoming))
-			require.NoError(t, b.AddDialogSession(outgoing))
+			require.NoError(t, b.Add(incoming))
+			require.NoError(t, b.Add(outgoing))
 
 			sendIncoming(3)
 
@@ -92,7 +92,7 @@ func TestBridgeDiscardQueuedRTPOnStart(t *testing.T) {
 
 			// Whatever remains queued on the socket was not consumed by the
 			// proxy (it reads the in-memory heads).
-			n, err := incoming.DialogMedia().DiscardQueuedRTP()
+			n, err := incoming.Media().DiscardQueuedRTP()
 			require.NoError(t, err)
 			if discard {
 				assert.Zero(t, n, "bridge must start from live media")

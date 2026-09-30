@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDialogMediaCloseClearsDTMFReaders(t *testing.T) {
-	dm := &DialogMedia{
+func TestMediaCloseClearsDTMFReaders(t *testing.T) {
+	dm := &Media{
 		mediaSession:    &media.MediaSession{},
 		rtpPacketReader: &media.RTPPacketReader{},
 	}
 
-	r, err := dm.CreateDTMFReader()
+	r, err := dm.NewDTMFReader()
 	require.NoError(t, err)
 
 	var calls atomic.Int32
@@ -41,12 +41,12 @@ func TestDialogMediaCloseClearsDTMFReaders(t *testing.T) {
 }
 
 func TestDeliverDTMFAfterCloseNoCallback(t *testing.T) {
-	dm := &DialogMedia{
+	dm := &Media{
 		mediaSession:    &media.MediaSession{},
 		rtpPacketReader: &media.RTPPacketReader{},
 	}
 
-	r, err := dm.CreateDTMFReader()
+	r, err := dm.NewDTMFReader()
 	require.NoError(t, err)
 
 	var calls atomic.Int32
@@ -71,7 +71,7 @@ func TestRingtonePlayBackgroundStopsOnDialogClose(t *testing.T) {
 	enc := &audio.PCMEncoderWriter{}
 	require.NoError(t, enc.Init(media.CodecAudioUlaw, pw))
 
-	dm := &DialogMedia{
+	dm := &Media{
 		mediaSession:    &media.MediaSession{},
 		rtpPacketWriter: &media.RTPPacketWriter{},
 	}

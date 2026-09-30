@@ -35,12 +35,12 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu, err := diago.New(ua, diago.WithDefaultTransport())
+	tu, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}
 
-	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 		ReadDTMF(ctx, inDialog)
@@ -48,7 +48,7 @@ func start(ctx context.Context) error {
 	})
 }
 
-func ReadDTMF(ctx context.Context, inDialog *diago.DialogServerSession) error {
+func ReadDTMF(ctx context.Context, inDialog *diago.InboundCall) error {
 	inDialog.Trying(ctx)  // 100 Trying
 	inDialog.Ringing(ctx) // 180 Ringing
 	if err := inDialog.Answer(ctx); err != nil {
@@ -69,13 +69,13 @@ func ReadDTMF(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		slog.Error("Ringback failed", "error", err)
 	}
 
-	reader, err := inDialog.CreateDTMFReader()
+	reader, err := inDialog.NewDTMFReader()
 	if err != nil {
 		return err
 	}
 	listenCtx, cancel := context.WithTimeout(inDialog.Context(), 10*time.Second)
 	defer cancel()
-	return reader.ListenContext(listenCtx, func(dtmf rune) error {
+	err = reader.ListenContext(listenCtx, func(dtmf rune) error {
 		slog.Info("Received DTMF", "dtmf", string(dtmf))
 		// Relay the digit back as RFC 4733 (inband if the peer lacks
 		// telephone-event) and confirm with a beep tone.
@@ -84,4 +84,10 @@ func ReadDTMF(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		}
 		return inDialog.PlayTone(inDialog.Context(), audio.ToneBusy)
 	})
+	// The call stays alive after the handler returns (v3 semantics); end it
+	// after the DTMF collection window.
+	if herr := inDialog.Hangup(inDialog.Context()); herr != nil {
+		slog.Error("Hangup failed", "error", herr)
+	}
+	return err
 }

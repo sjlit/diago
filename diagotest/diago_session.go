@@ -21,7 +21,7 @@ func NewRequest(method sip.RequestMethod, recipient sip.Uri) (*sip.Request, erro
 	return req, sipgo.ClientRequestBuild(cli, req)
 }
 
-func NewDialogServerSession(inviteReq *sip.Request) (*diago.DialogServerSession, *siptest.ServerTxRecorder, error) {
+func NewInboundCall(inviteReq *sip.Request) (*diago.InboundCall, *siptest.ServerTxRecorder, error) {
 	// TODO
 	// Fake connection
 	ua := sipgo.DialogUA{
@@ -38,7 +38,7 @@ func NewDialogServerSession(inviteReq *sip.Request) (*diago.DialogServerSession,
 		return nil, nil, err
 	}
 
-	d := diago.DialogServerSession{
+	d := diago.InboundCall{
 		DialogServerSession: sess,
 	}
 

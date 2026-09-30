@@ -11,34 +11,37 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
-// DialogHandler handles one inbound dialog (call leg).
+// CallHandler handles one inbound dialog (call leg).
 //
 // Contract:
-//   - ctx is canceled when the serve context is canceled (Shutdown) or the
+//   - ctx is canceled when the serve context is canceled (Close), or the
 //     dialog terminates. Long-running work must honor it.
-//   - Returning nil hands the call back to the framework, which hangs it up
-//     (BYE once confirmed, otherwise a 480 decline) and releases the media.
-//   - Returning an error terminates the call and maps the error to a final
-//     SIP response: ErrDecline -> 480, ErrBusy -> 486, ErrNotFound -> 404,
-//     *ResponseError -> custom, anything else -> 500. A confirmed call is
-//     ended with BYE carrying a matching Reason header instead.
+//   - The handler decides how the call is answered. Returning before a final
+//     response was sent hands the call back to the framework, which declines
+//     the still-pending INVITE (480, or the error mapping below).
+//   - Answering (Answer/AnswerLate/RespondSDP) and then returning keeps the
+//     call alive: the framework owns it until the peer ends it, Close runs
+//     or the handler hangs it up. A handler that wants to control the call
+//     beyond its return can keep using the dialog (or spawn goroutines) until
+//     ctx is canceled / the dialog ends.
+//   - Returning an error terminates the call: before a final response is sent
+//     the error is mapped to a final SIP response — ErrDecline -> 480,
+//     ErrBusy -> 486, ErrNotFound -> 404, *ResponseError -> custom, anything
+//     else -> 500. An answered call is ended with BYE carrying a matching
+//     Reason header instead.
 //   - Wrap ErrResponseSent when the handler already wrote its own final
 //     response (for example DigestAuthServer.AuthorizeDialog); the framework
 //     then only tears the dialog down.
-//
-// A handler that wants the call alive must block until the call ends (or hang
-// up itself before returning); goroutines spawned in the handler must not rely
-// on the dialog afterwards.
-type DialogHandler func(ctx context.Context, d *DialogServerSession) error
+type CallHandler func(ctx context.Context, d *InboundCall) error
 
-// defaultDialogHandler is used when Serve is given a nil handler: it refuses
+// defaultCallHandler is used when Serve is given a nil handler: it refuses
 // calls instead of accepting and immediately hanging them up.
-func defaultDialogHandler(ctx context.Context, d *DialogServerSession) error {
+func defaultCallHandler(ctx context.Context, d *InboundCall) error {
 	return &ResponseError{Code: sip.StatusServiceUnavailable, Reason: "Service Unavailable"}
 }
 
-// handlerErrorResponse maps a DialogHandler error to a final SIP response.
-func handlerErrorResponse(err error) (code int, reason string, headers []sip.Header) {
+// handlerErrorResponse maps a CallHandler error to a final SIP response.
+func handlerErrorResponse(err error) (code int, reason string, headers []Header) {
 	var resErr *ResponseError
 	if errors.As(err, &resErr) {
 		code, reason, headers = resErr.Code, resErr.Reason, resErr.Headers
@@ -82,10 +85,10 @@ func defaultReasonPhrase(code int) string {
 	}
 }
 
-// respondHandlerError terminates the dialog according to a DialogHandler
+// respondHandlerError terminates the dialog according to a CallHandler
 // error. It returns nil when no response is required: the handler already
 // responded, or the call is being torn down (serve/dialog context done).
-func (d *DialogServerSession) respondHandlerError(ctx context.Context, herr error) error {
+func (d *InboundCall) respondHandlerError(ctx context.Context, herr error) error {
 	if errors.Is(herr, ErrResponseSent) {
 		// The handler wrote its own final response (ex. the 401 challenge);
 		// the framework only cleans up.
@@ -93,7 +96,7 @@ func (d *DialogServerSession) respondHandlerError(ctx context.Context, herr erro
 	}
 	if errors.Is(herr, context.Canceled) || errors.Is(herr, context.DeadlineExceeded) {
 		if ctx.Err() != nil {
-			// The call is being torn down (Shutdown / peer BYE / teardown
+			// The call is being torn down (Close / peer BYE / teardown
 			// timeout); a response cannot be delivered anymore.
 			return nil
 		}
@@ -103,9 +106,10 @@ func (d *DialogServerSession) respondHandlerError(ctx context.Context, herr erro
 	}
 
 	code, reason, headers := handlerErrorResponse(herr)
-	if d.LoadState() >= sip.DialogStateConfirmed {
-		// The call was answered; a re-response is no longer possible.
-		opts := []SignalOption{WithHeader("Reason", dialogReasonHeader(code, reason))}
+	if d.LoadState() >= sip.DialogStateEstablished && d.LoadState() != sip.DialogStateEnded {
+		// The 2xx was already sent (possibly still awaiting the ACK): a
+		// re-response is no longer possible, so terminate with BYE.
+		opts := []HangupOption{WithHeaders(sip.NewHeader("Reason", dialogReasonHeader(code, reason)))}
 		for _, h := range headers {
 			if h != nil {
 				opts = append(opts, WithHeaders(h))
@@ -128,8 +132,8 @@ func dialogReasonHeader(code int, reason string) string {
 
 // dialogHandlerContext derives the handler context from the serve context and
 // the dialog lifetime: it is canceled when either the serve is canceled
-// (Shutdown) or the dialog terminates.
-func (dg *Diago) dialogHandlerContext(dialogCtx context.Context) (context.Context, context.CancelFunc) {
+// (Close) or the dialog terminates.
+func (dg *Agent) callHandlerContext(dialogCtx context.Context) (context.Context, context.CancelFunc) {
 	dg.serveMu.Lock()
 	serveCtx := dg.serveCtx
 	dg.serveMu.Unlock()

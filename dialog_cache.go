@@ -12,7 +12,7 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
-type dialogCache[T DialogSession] interface {
+type dialogCache[T Call] interface {
 	store(ctx context.Context, id string, v T) error
 	load(ctx context.Context, id string) (T, error)
 	remove(ctx context.Context, id string) error
@@ -20,7 +20,7 @@ type dialogCache[T DialogSession] interface {
 }
 
 // Non optimized for now
-type dialogCacheMap[T DialogSession] struct{ sync.Map }
+type dialogCacheMap[T Call] struct{ sync.Map }
 
 func (m *dialogCacheMap[T]) store(ctx context.Context, id string, v T) error {
 	m.Store(id, v)
@@ -51,11 +51,11 @@ func (m *dialogCacheMap[T]) rangeDialogs(ctx context.Context, f func(id string, 
 // dialogCachePool is the internal index of live dialogs. Requests are
 // resolved through matchDialog; the pool itself is not part of the public API.
 type dialogCachePool struct {
-	client dialogCache[*DialogClientSession]
-	server dialogCache[*DialogServerSession]
+	client dialogCache[*OutboundCall]
+	server dialogCache[*InboundCall]
 }
 
-func (p *dialogCachePool) matchDialogClient(req *sip.Request) (*DialogClientSession, error) {
+func (p *dialogCachePool) matchDialogClient(req *Request) (*OutboundCall, error) {
 	id, err := sip.DialogIDFromRequestUAC(req)
 	if err != nil {
 		return nil, errors.Join(err, sipgo.ErrDialogOutsideDialog)
@@ -69,7 +69,7 @@ func (p *dialogCachePool) matchDialogClient(req *sip.Request) (*DialogClientSess
 	return val, nil
 }
 
-func (p *dialogCachePool) matchDialogServer(req *sip.Request) (*DialogServerSession, error) {
+func (p *dialogCachePool) matchDialogServer(req *Request) (*InboundCall, error) {
 	id, err := sip.DialogIDFromRequestUAS(req)
 	if err != nil {
 		return nil, errors.Join(err, sipgo.ErrDialogOutsideDialog)
@@ -83,7 +83,7 @@ func (p *dialogCachePool) matchDialogServer(req *sip.Request) (*DialogServerSess
 	return val, nil
 }
 
-func (p *dialogCachePool) matchDialog(req *sip.Request) (*DialogServerSession, *DialogClientSession, error) {
+func (p *dialogCachePool) matchDialog(req *Request) (*InboundCall, *OutboundCall, error) {
 	d, err := p.matchDialogServer(req)
 	if err != nil {
 		if !errors.Is(err, sipgo.ErrDialogDoesNotExists) {

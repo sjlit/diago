@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
@@ -23,20 +24,40 @@ import (
 	"github.com/sjlit/diago/v2/media"
 )
 
-type Diago struct {
-	ua         *sipgo.UserAgent
-	client     *sipgo.Client
-	server     *sipgo.Server
+// Agent is a SIP user agent that acts as both UAS (Serve) and UAC (Dial,
+// Register) on top of a sipgo UserAgent. Construct it with New and shut it
+// down with Close.
+type Agent struct {
+	ua     *UserAgent
+	client *Client
+	server *Server
+
+	// ownedUA reports that New created the UserAgent and Close must close it.
+	ownedUA    bool
+	uaName     string
+	uaHostname string
+
 	transports []Transport
 
-	serveHandler atomic.Pointer[DialogHandler]
+	serveHandler atomic.Pointer[CallHandler]
 
 	mediaConf MediaConfig
+
+	// mediaProfiles holds the named media configurations registered with
+	// WithMediaProfile. Set up during New and read-only afterwards.
+	mediaProfiles map[string]MediaConfig
+
+	// httpClient is the agent-level fallback for MediaConfig.HTTPClient
+	// (WithHTTPClient). Nil means the playback default client.
+	httpClient *http.Client
 
 	log *slog.Logger
 
 	cache            dialogCachePool
-	serverMiddleware func(next sipgo.RequestHandler) sipgo.RequestHandler
+	serverMiddleware func(next RequestHandler) RequestHandler
+	// wrapRequest wraps a method handler with the server middleware and the
+	// error logging path. Set by New; used by Handle.
+	wrapRequest func(f func(req *Request, tx ServerTransaction) error) RequestHandler
 
 	// registerAfter is the timer factory used between REGISTER attempts of
 	// Register/RegisterTransaction. It defaults to time.After and exists as a
@@ -45,7 +66,7 @@ type Diago struct {
 
 	// Serve lifecycle state. serveWG tracks the listener goroutines started
 	// by serve(); serveCancel cancels them. stopped is terminal: once
-	// Shutdown has run, serving is refused.
+	// Close has run, serving is refused.
 	serveMu          sync.Mutex
 	serveCtx         context.Context
 	serveCancel      context.CancelFunc
@@ -57,29 +78,42 @@ type Diago struct {
 
 // We can extend this WithClientOptions, WithServerOptions
 
-type DiagoOption func(dg *Diago)
+// AgentOption configures New. An option error aborts construction.
+type AgentOption func(dg *Agent) error
 
+// Transport describes one SIP signaling listener. See NewTransport and
+// Transport.Validate for the accepted network values.
 type Transport struct {
 	ID string
 
-	// Transport must be udp,tcp or ws, or even forcing v4 like udp4, tcp4
-	Transport string
-	network   string // network will keep original transport value
+	// Network must be udp, tcp or ws, or even forcing v4 like udp4, tcp4.
+	// TLS transports use tls/wss (with TLSConf set).
+	Network string
+	network string // network will keep original transport value
 
-	// BindHost sets IP to bind. If specified (not 0.0.0.0) it will be used same for media IP unless Media.Network.BindIP is set.
+	// BindHost sets IP to bind. If specified (not 0.0.0.0) it supplies the
+	// media bind IP when the selected profile leaves Network.BindIP nil.
 	BindHost string
-	// BindPort sets port to bind. Leaving at 0 will use empheral port and apply on Contact addr
+	// BindPort sets port to bind. Leaving at 0 will use ephemeral port and apply on Contact addr
 	BindPort int
 	bindIP   net.IP
 
 	ExternalHost string // SIP signaling and media external addr
 	ExternalPort int
 
-	// Media overrides the global MediaConfig for dialogs carried over this
-	// transport. Zero fields inherit the global value; a field set here wins.
-	Media TransportMediaConfig
+	// Profile names a MediaConfig registered with WithMediaProfile. Empty
+	// selects the agent default (WithMediaConfig). The profile is a complete
+	// media configuration for dialogs carried over this transport; the
+	// transport-derived bind/advertise addresses fill profile fields left
+	// nil (see mediaConfigForTransport).
+	Profile string
 
 	mediaBindIP net.IP
+
+	// mediaExternalIP is derived from ExternalHost/BindHost at WithTransport
+	// time and applied only when the selected profile leaves
+	// Network.ExternalIP unset.
+	mediaExternalIP net.IP
 
 	// In case TLS protocol
 	TLSConf *tls.Config
@@ -88,7 +122,7 @@ type Transport struct {
 
 	RewriteContact bool
 
-	client *sipgo.Client
+	client *Client
 }
 
 // NewTransport builds a Transport for the given network and validates it.
@@ -96,7 +130,7 @@ type Transport struct {
 // 4 or 6 to force the IP family (udp4, tcp6, ...). Invalid values fail here
 // instead of at serve time.
 func NewTransport(network string) (Transport, error) {
-	t := Transport{Transport: network}
+	t := Transport{Network: network}
 	if err := t.Validate(); err != nil {
 		return Transport{}, err
 	}
@@ -111,7 +145,7 @@ func NewTransport(network string) (Transport, error) {
 func (t Transport) Validate() error {
 	// WithTransport trims the 4/6 suffix from Transport and keeps the raw
 	// value in network, so validate the original spelling when present.
-	raw := strings.TrimSpace(t.Transport)
+	raw := strings.TrimSpace(t.Network)
 	if t.network != "" {
 		raw = t.network
 	}
@@ -164,16 +198,21 @@ func tlsListenNetwork(network string) string {
 // WithDefaultTransport explicitly installs the built-in loopback default
 // (udp on 127.0.0.1:5060). v2 never adds it implicitly: New fails
 // without at least one configured transport.
-func WithDefaultTransport() DiagoOption {
+func WithDefaultTransport() AgentOption {
 	return WithTransport(Transport{
-		Transport: "udp",
-		BindHost:  "127.0.0.1",
-		BindPort:  5060,
+		Network:  "udp",
+		BindHost: "127.0.0.1",
+		BindPort: 5060,
 	})
 }
 
-func WithTransport(t Transport) DiagoOption {
-	return func(dg *Diago) {
+// WithTransport adds a signaling transport to the agent. New requires at
+// least one; see Transport for the accepted networks and fields.
+func WithTransport(t Transport) AgentOption {
+	return func(dg *Agent) error {
+		if strings.TrimSpace(t.Network) == "" {
+			return fmt.Errorf("WithTransport: network is empty")
+		}
 		t.bindIP = net.ParseIP(t.BindHost)
 		t.mediaBindIP = t.bindIP
 		if t.bindIP != nil && t.bindIP.IsUnspecified() {
@@ -211,29 +250,34 @@ func WithTransport(t Transport) DiagoOption {
 			extIp = t.mediaBindIP
 		}
 
-		if t.Media.Network.ExternalIP == nil && (externalExplicit || t.bindIP == nil || !t.bindIP.IsUnspecified()) {
-			// try to use external host as external media IP
+		// Remember the derived media external IP. mediaConfigForTransport
+		// applies it only when the selected profile leaves
+		// Network.ExternalIP unset; an unspecified BindHost does not imply an
+		// external IP.
+		if externalExplicit || t.bindIP == nil || !t.bindIP.IsUnspecified() {
 			if extIp != nil && !extIp.IsUnspecified() {
-				t.Media.Network.ExternalIP = extIp
+				t.mediaExternalIP = extIp
 			}
 		}
 
-		t.Transport = sip.NetworkToLower(strings.TrimSpace(t.Transport))
-		t.network = t.Transport
-		t.Transport = strings.TrimSuffix(t.Transport, "4") // udp4, tcp4
-		t.Transport = strings.TrimSuffix(t.Transport, "6") // udp6, tcp6
+		t.Network = sip.NetworkToLower(strings.TrimSpace(t.Network))
+		t.network = t.Network
+		t.Network = strings.TrimSuffix(t.Network, "4") // udp4, tcp4
+		t.Network = strings.TrimSuffix(t.Network, "6") // udp6, tcp6
 
 		// we want to handle SIP networking better per each transport
-		t.client = dg.createClient(t)
 		dg.transports = append(dg.transports, t)
 
 		dg.log.Debug("Loaded transport", "t", t)
+		return nil
 	}
 }
 
 // SecureRTP selects the SRTP keying mode of a media session.
 type SecureRTP int
 
+// SecureRTPNone disables SRTP; SecureRTPSDES selects SDES keying;
+// SecureRTPDTLS selects DTLS-SRTP.
 const (
 	SecureRTPNone SecureRTP = iota
 	SecureRTPSDES
@@ -248,10 +292,11 @@ type SRTPAlg uint16
 // RTPNATMode selects how RTP behind NAT is handled.
 type RTPNATMode int
 
+// RTPNATDisabled disables RTP source learning; RTPNATLearnSource learns the
+// remote source address from incoming packets (symmetric RTP;
+// media.RTPNATSymetric).
 const (
 	RTPNATDisabled RTPNATMode = iota
-	// RTPNATLearnSource learns the remote source address from incoming
-	// packets (symmetric RTP; media.RTPNATSymetric).
 	RTPNATLearnSource
 )
 
@@ -266,6 +311,10 @@ type SRTPConfig struct {
 	Alg SRTPAlg
 	// DTLS is the DTLS-SRTP configuration.
 	DTLS media.DTLSConfig
+	// SAVPDisable keeps RTP/AVP in the offered SDP profile even when SRTP is
+	// enabled (a=crypto compatibility mode for peers like Asterisk), unless
+	// the remote offer already uses RTP/SAVP.
+	SAVPDisable bool
 }
 
 // NetworkConfig groups the RTP address and port settings.
@@ -296,7 +345,7 @@ type SDPConfig struct {
 	SessionName string
 }
 
-// MediaConfig configures the media sessions created by Diago.
+// MediaConfig configures the media sessions created by Agent.
 type MediaConfig struct {
 	Codecs  []media.Codec
 	SRTP    SRTPConfig
@@ -307,97 +356,229 @@ type MediaConfig struct {
 	// looping it automatically once the hold re-INVITE succeeds. Zero value
 	// (no segments) disables automatic hold music; Hold then behaves as
 	// before. Per-call override: WithMusicOnHold; manual control:
-	// DialogMedia.PlayMusicOnHold/StopMusicOnHold.
+	// Media.StartMusicOnHold/StopMusicOnHold.
 	MusicOnHold audio.Tone
 
 	// Logger receives media-pipeline logs: media package internals (RTP/RTCP,
 	// negotiation, DTLS debug) and dialog-level components (hold music, DTMF
-	// relay, playback). Nil falls back to the Diago logger; when that is also
+	// relay, playback). Nil falls back to the Agent logger; when that is also
 	// unset the media package default (slog.Default) is used.
 	Logger *slog.Logger
+
+	// Debug enables RTP/RTCP packet tracing on the agent's dialogs. When
+	// Tracer is nil packets are logged through Logger. Per-transport override
+	// is not supported: tracing is agent-wide.
+	Debug bool
+	// Tracer receives RTP packets when Debug is enabled, replacing logging.
+	// Implementations must not block (they run on the media path).
+	Tracer media.RTPTracer
+	// HTTPClient is used by URL playback (PlayURL/PlayURLContext). Nil uses a
+	// default client with a 20s timeout.
+	HTTPClient *http.Client
 }
 
-// TransportMediaConfig overrides the transport-scoped parts of MediaConfig
-// (SRTP and Network) for dialogs carried over a specific Transport. Zero
-// fields inherit the global MediaConfig; the precedence for a field is:
-// explicit Transport value, then a value derived from BindHost/ExternalHost,
-// then MediaConfig. Codecs, SDP, MusicOnHold and Logger are global-only.
-type TransportMediaConfig struct {
-	SRTP    SRTPConfig
-	Network NetworkConfig
+// validateMediaConfig checks the parts of a MediaConfig that can be rejected
+// before any session is created.
+func validateMediaConfig(conf MediaConfig) error {
+	if len(conf.Codecs) == 0 {
+		return fmt.Errorf("no codecs configured")
+	}
+	if conf.SRTP.Mode < SecureRTPNone || conf.SRTP.Mode > SecureRTPDTLS {
+		return fmt.Errorf("invalid srtp mode %d", conf.SRTP.Mode)
+	}
+	if conf.Network.RTPPortStart != 0 && conf.Network.RTPPortEnd != 0 && conf.Network.RTPPortEnd < conf.Network.RTPPortStart {
+		return fmt.Errorf("RTP port range %d-%d is inverted", conf.Network.RTPPortStart, conf.Network.RTPPortEnd)
+	}
+	return nil
 }
 
-// WithMediaConfig replaces the global media configuration. It is a whole
-// struct replacement, not a merge: zero fields keep their documented library
-// defaults (see NetworkConfig and SDPConfig). Codecs left nil would fail
-// session creation, so start from the defaults you need.
-func WithMediaConfig(conf MediaConfig) DiagoOption {
-	return func(dg *Diago) {
+// WithMediaConfig replaces the default media configuration (the profile used
+// by transports that do not name one). It is a whole struct replacement, not
+// a merge: zero fields keep their documented library defaults (see
+// NetworkConfig and SDPConfig). At least one codec is required.
+func WithMediaConfig(conf MediaConfig) AgentOption {
+	return func(dg *Agent) error {
+		if err := validateMediaConfig(conf); err != nil {
+			return fmt.Errorf("WithMediaConfig: %w", err)
+		}
 		dg.mediaConf = conf
+		return nil
 	}
 }
 
-// WithServer allows providing custom server handle. Consider still it needs to use same UA as diago
-func WithServer(srv *sipgo.Server) DiagoOption {
-	return func(dg *Diago) {
+// WithMediaProfile registers a named, complete media configuration. A
+// Transport selects one with Transport.Profile (empty selects the
+// WithMediaConfig default). Unlike the removed TransportMediaConfig there is
+// no field-level inheritance between profiles: the selected profile is used
+// as is, and only the transport-derived bind/advertise addresses fill fields
+// the profile leaves nil. Registering the same name twice replaces it.
+func WithMediaProfile(name string, conf MediaConfig) AgentOption {
+	return func(dg *Agent) error {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("WithMediaProfile: name is empty")
+		}
+		if err := validateMediaConfig(conf); err != nil {
+			return fmt.Errorf("WithMediaProfile %q: %w", name, err)
+		}
+		if dg.mediaProfiles == nil {
+			dg.mediaProfiles = map[string]MediaConfig{}
+		}
+		dg.mediaProfiles[name] = conf
+		return nil
+	}
+}
+
+// WithHTTPClient sets the HTTP client used by URL playback
+// (AudioPlayback.PlayURL/PlayURLContext) on the dialogs of this agent. Nil is
+// rejected. The default client has a 20s timeout; set
+// MediaConfig.HTTPClient directly when a whole config is provided.
+func WithHTTPClient(client *http.Client) AgentOption {
+	return func(dg *Agent) error {
+		if client == nil {
+			return fmt.Errorf("WithHTTPClient: client is nil")
+		}
+		dg.httpClient = client
+		return nil
+	}
+}
+
+// WithServer allows providing custom server handle. It must use the same UA
+// as the agent.
+func WithServer(srv *Server) AgentOption {
+	return func(dg *Agent) error {
+		if srv == nil {
+			return fmt.Errorf("WithServer: server is nil")
+		}
 		dg.server = srv
+		return nil
 	}
 }
 
-// WithClient allows providing custom client handle. Consider still it needs to use same UA as diago
-func WithClient(client *sipgo.Client) DiagoOption {
-	return func(dg *Diago) {
+// WithClient allows providing custom client handle. It must use the same UA
+// as the agent.
+func WithClient(client *Client) AgentOption {
+	return func(dg *Agent) error {
+		if client == nil {
+			return fmt.Errorf("WithClient: client is nil")
+		}
 		dg.client = client
+		return nil
 	}
 }
 
-// WithLogger sets the logger for sipgo, the Diago engine, and the media
+// WithUserAgent supplies an externally created sipgo UserAgent. The caller
+// keeps ownership: Close does not close it, so the same UserAgent can be
+// shared between agents. When not set, New creates a private UserAgent and
+// Close closes it.
+func WithUserAgent(ua *UserAgent) AgentOption {
+	return func(dg *Agent) error {
+		if ua == nil {
+			return fmt.Errorf("WithUserAgent: user agent is nil")
+		}
+		dg.ua = ua
+		return nil
+	}
+}
+
+// WithUserAgentName sets the user name of the private UserAgent created by
+// New (default "diago"). It is ignored when WithUserAgent supplies one.
+func WithUserAgentName(name string) AgentOption {
+	return func(dg *Agent) error {
+		if name == "" {
+			return fmt.Errorf("WithUserAgentName: name is empty")
+		}
+		dg.uaName = name
+		return nil
+	}
+}
+
+// WithUserAgentHostname sets the hostname presented in From/Contact of the
+// private UserAgent created by New (default sipgo's "localhost"). It is
+// ignored when WithUserAgent supplies one.
+func WithUserAgentHostname(hostname string) AgentOption {
+	return func(dg *Agent) error {
+		if hostname == "" {
+			return fmt.Errorf("WithUserAgentHostname: hostname is empty")
+		}
+		dg.uaHostname = hostname
+		return nil
+	}
+}
+
+// WithLogger sets the logger for sipgo, the Agent engine, and the media
 // pipeline logs (hold music, DTMF relay, playback and media internals) unless
-// MediaConfig.Logger explicitly overrides it.
-func WithLogger(l *slog.Logger) DiagoOption {
-	return func(dg *Diago) {
+// MediaConfig.Logger explicitly overrides it. Nil is rejected (the default is
+// sip.DefaultLogger()).
+func WithLogger(l *slog.Logger) AgentOption {
+	return func(dg *Agent) error {
+		if l == nil {
+			return fmt.Errorf("WithLogger: logger is nil")
+		}
 		dg.log = l
+		return nil
 	}
 }
 
-func WithServerRequestMiddleware(f func(next sipgo.RequestHandler) sipgo.RequestHandler) DiagoOption {
-	return func(dg *Diago) {
+// WithServerRequestMiddleware wraps every request handler registered by the
+// agent.
+func WithServerRequestMiddleware(f func(next RequestHandler) RequestHandler) AgentOption {
+	return func(dg *Agent) error {
+		if f == nil {
+			return fmt.Errorf("WithServerRequestMiddleware: middleware is nil")
+		}
 		dg.serverMiddleware = f
+		return nil
 	}
 }
 
 // New constructs a b2b user agent that will act as server and client.
-// It fails when no transport is configured (the v1 implicit 127.0.0.1:5060
-// default was removed) or when a configured transport is invalid; use
-// WithTransport or WithDefaultTransport.
-func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
-	dg := &Diago{
-		ua:         ua,
+//
+// The UserAgent is optional: without WithUserAgent, New creates a private one
+// (name "diago", WithUserAgentName/WithUserAgentHostname to customize) and
+// Close closes it. A UserAgent passed with WithUserAgent stays caller-owned
+// and is not closed by Close, so it can be shared between agents.
+//
+// New fails when no transport is configured (the v1 implicit 127.0.0.1:5060
+// default was removed), when a configured transport is invalid or when an
+// option rejects its configuration; use WithTransport or WithDefaultTransport.
+func New(opts ...AgentOption) (*Agent, error) {
+	dg := &Agent{
 		log:        sip.DefaultLogger(),
 		transports: []Transport{},
 		mediaConf: MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 		},
+		mediaProfiles: map[string]MediaConfig{},
 
 		cache: dialogCachePool{
-			client: &dialogCacheMap[*DialogClientSession]{sync.Map{}},
-			server: &dialogCacheMap[*DialogServerSession]{sync.Map{}},
+			client: &dialogCacheMap[*OutboundCall]{sync.Map{}},
+			server: &dialogCacheMap[*InboundCall]{sync.Map{}},
 		},
 
 		registerAfter: time.After,
 	}
 	// Refuse calls until Serve installs a real handler.
-	handler := DialogHandler(defaultDialogHandler)
+	handler := CallHandler(defaultCallHandler)
 	dg.serveHandler.Store(&handler)
 
 	for _, o := range opts {
-		o(dg)
+		if o == nil {
+			continue
+		}
+		if err := o(dg); err != nil {
+			return nil, fmt.Errorf("diago: option: %w", err)
+		}
 	}
 
-	// Media logs follow the Diago logger unless a MediaConfig explicitly
+	// Media logs follow the Agent logger unless a MediaConfig explicitly
 	// carries its own.
 	if dg.mediaConf.Logger == nil {
 		dg.mediaConf.Logger = dg.log
+	}
+	// WithHTTPClient provides the agent-level default for the playback client
+	// unless the MediaConfig already carries one.
+	if dg.mediaConf.HTTPClient == nil {
+		dg.mediaConf.HTTPClient = dg.httpClient
 	}
 
 	if len(dg.transports) == 0 {
@@ -407,10 +588,39 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		if err := dg.transports[i].Validate(); err != nil {
 			return nil, fmt.Errorf("diago: transport %d: %w", i, err)
 		}
+		if p := dg.transports[i].Profile; p != "" {
+			if _, ok := dg.mediaProfiles[p]; !ok {
+				return nil, fmt.Errorf("diago: transport %d: media profile %q is not registered: use WithMediaProfile", i, p)
+			}
+		}
+	}
+
+	// Resolve the UserAgent: an explicit WithUserAgent wins; otherwise create
+	// a private one owned by this agent (Close closes it).
+	if dg.ua == nil {
+		uaName := dg.uaName
+		if uaName == "" {
+			uaName = "diago"
+		}
+		uaOpts := []sipgo.UserAgentOption{sipgo.WithUserAgent(uaName)}
+		if dg.uaHostname != "" {
+			uaOpts = append(uaOpts, sipgo.WithUserAgentHostname(dg.uaHostname))
+		}
+		ua, err := sipgo.NewUA(uaOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("diago: failed to create UserAgent: %w", err)
+		}
+		dg.ua = ua
+		dg.ownedUA = true
+	}
+
+	// Per-transport clients need the resolved UserAgent.
+	for i := range dg.transports {
+		dg.transports[i].client = dg.createClient(dg.transports[i])
 	}
 
 	if dg.server == nil {
-		srv, err := sipgo.NewServer(ua, sipgo.WithServerLogger(dg.log))
+		srv, err := sipgo.NewServer(dg.ua, sipgo.WithServerLogger(dg.log))
 		if err != nil {
 			return nil, fmt.Errorf("diago: failed to create default sip server: %w", err)
 		}
@@ -418,8 +628,8 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	}
 	server := dg.server
 
-	errHandler := func(f func(req *sip.Request, tx sip.ServerTransaction) error) sipgo.RequestHandler {
-		handler := func(req *sip.Request, tx sip.ServerTransaction) {
+	errHandler := func(f func(req *Request, tx ServerTransaction) error) RequestHandler {
+		handler := func(req *Request, tx ServerTransaction) {
 			if err := f(req, tx); err != nil {
 				dg.log.Warn("Failed to handle request", "error", err, "req.method", req.Method.String(), "req.from", req.From().String(), "req.to", req.To().Value())
 				return
@@ -429,15 +639,16 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 
 		// Return handler wrapped with middleware if user supprots
 		if dg.serverMiddleware != nil {
-			return func(req *sip.Request, tx sip.ServerTransaction) {
+			return func(req *Request, tx ServerTransaction) {
 				dg.serverMiddleware(handler)(req, tx)
 			}
 		}
 		return handler
 	}
+	dg.wrapRequest = errHandler
 
-	handleNoDialog := func(req *sip.Request, tx sip.ServerTransaction, err error) error {
-		var response *sip.Response
+	handleNoDialog := func(req *Request, tx ServerTransaction, err error) error {
+		var response *Response
 		if errors.Is(err, sipgo.ErrDialogDoesNotExists) {
 			response = sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call/Transaction Does Not Exist", nil)
 		} else {
@@ -446,7 +657,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		return errors.Join(err, tx.Respond(response))
 	}
 
-	server.OnInvite(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	server.OnInvite(errHandler(func(req *Request, tx ServerTransaction) error {
 		// What if multiple server transports?
 		id, err := sip.DialogIDFromRequestUAS(req)
 		if err == nil {
@@ -467,64 +678,91 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 			return fmt.Errorf("handling new invite failed: %w", err)
 		}
 
-		// Server-side digest auth is opt-in: call DialogServerSession.Authorize
+		// Server-side digest auth is opt-in: call InboundCall.Authorize
 		// (DigestAuthServer.AuthorizeDialog) as the first action of your serve
 		// handler to challenge/validate the INVITE (RFC 2617).
 		mediaConf := dg.mediaConfigForTransport(tran)
-		dWrap := &DialogServerSession{
+		dWrap := &InboundCall{
 			DialogServerSession: dialog,
-			dialogMedia:         DialogMedia{log: mediaConf.Logger},
+			callMedia:           Media{log: mediaConf.Logger, httpClient: mediaConf.HTTPClient},
 			// TODO we may actually just build media session with this conf here
 			mediaConf: mediaConf,
 		}
 
-		defer closeAndLog(dWrap.logger(), dWrap, "closing dialog server returned error")
-
 		if err := dg.cache.server.store(dWrap.Context(), dWrap.DialogServerSession.ID, dWrap); err != nil {
 			return fmt.Errorf("failed to store server dialog: %w", err)
 		}
+
+		hctx, hcancel := dg.callHandlerContext(dialog.Context())
 		defer func() {
+			// The dialog (not the handler) owns the lifetime: when it ends —
+			// peer BYE/CANCEL, a decline written below, Close or serve
+			// context cancellation — the cache entry is evicted, the media is
+			// closed and the handler context is canceled. An answered call
+			// therefore stays alive after the handler returns.
+			<-hctx.Done()
+			hcancel()
+
+			if dWrap.LoadState() != sip.DialogStateEnded {
+				// The serve context ended while the dialog was still up
+				// (plain Serve ctx cancellation, not Close). Tear the call
+				// down so media and transaction state do not leak.
+				tctx, tcancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if err := dWrap.Hangup(tctx); err != nil {
+					dg.log.Warn("Hangup on dialog teardown failed", "error", err, "dialog", dWrap.ID())
+				}
+				tcancel()
+			}
+
 			// TODO: have better context
 			if err := dg.cache.server.remove(context.Background(), dWrap.DialogServerSession.ID); err != nil {
 				dg.log.Error("Failed to delete server dialog", "error", err)
 			}
+			closeAndLog(dWrap.logger(), dWrap, "closing dialog server returned error")
 		}()
 
-		hctx, hcancel := dg.dialogHandlerContext(dialog.Context())
 		herr := dg.handler()(hctx, dWrap)
-		hcancel()
 
 		// Check is dialog closed
 		dialogCtx := dialog.Context()
-		// Always try hanguping call
+		// Teardown context for the response we may still owe the peer.
 		ctx, cancel := context.WithTimeout(dialogCtx, 10*time.Second)
 		defer cancel()
 
-		if herr != nil {
+		switch state := dWrap.LoadState(); {
+		case state == sip.DialogStateEnded:
+			// The dialog already ended (CANCEL/BYE) while the handler ran.
+			return nil
+		case herr != nil:
 			if err := dWrap.respondHandlerError(ctx, herr); err != nil {
 				return fmt.Errorf("handler error handling failed: %w", err)
 			}
-			return nil
-		}
+		case state < sip.DialogStateEstablished:
+			// The handler returned without answering or otherwise sending a
+			// final response: decline the still-pending INVITE.
+			if err := dWrap.Hangup(ctx); err != nil {
+				if errors.Is(ctx.Err(), context.Canceled) {
+					// Already hangup
+					return nil
+				}
 
-		if err := dWrap.Hangup(ctx); err != nil {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				// Already hangup
-				return nil
+				return fmt.Errorf("hanguping call failed: %w", err)
 			}
-
-			return fmt.Errorf("hanguping call failed: %w", err)
+		default:
+			// The call was answered: it stays alive until the peer, the
+			// framework or the owner ends it. The deferred watcher above
+			// performs the cleanup when that happens.
 		}
 		return nil
 	}))
 
-	server.OnCancel(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	server.OnCancel(errHandler(func(req *Request, tx ServerTransaction) error {
 		// INVITE transaction should be terminated by transaction layer and 200 response will be sent
 		// In case of stateless proxy this we would need to forward
 		return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusCallTransactionDoesNotExists, "Call/Transaction Does Not Exist", nil))
 	}))
 
-	server.OnAck(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	server.OnAck(errHandler(func(req *Request, tx ServerTransaction) error {
 		// d, err := dg.cache.matchDialogServer(req)
 		// if err != nil {
 		// 	// Normally ACK will be received if some out of dialog request is received or we responded negatively
@@ -554,7 +792,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		return sd.readAck(req, tx)
 	}))
 
-	server.OnBye(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	server.OnBye(errHandler(func(req *Request, tx ServerTransaction) error {
 		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			return handleNoDialog(req, tx, err)
@@ -564,16 +802,16 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		// Terminate our media processing
 		// As user may stuck in playing or reading media, this unblocks that goroutine
 		if cd != nil {
-			defer closeAndLog(cd.logger(), &cd.dialogMedia, "failed to close client media")
+			defer closeAndLog(cd.logger(), &cd.callMedia, "failed to close client media")
 
 			return cd.ReadBye(req, tx)
 		}
 
-		defer closeAndLog(sd.logger(), &sd.dialogMedia, "failed to close server media")
+		defer closeAndLog(sd.logger(), &sd.callMedia, "failed to close server media")
 		return sd.ReadBye(req, tx)
 	}))
 
-	server.OnInfo(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	server.OnInfo(errHandler(func(req *Request, tx ServerTransaction) error {
 		// Handle DTMF out of band
 		ct := req.ContentType()
 		if ct == nil || ct.Value() != "application/dtmf-relay" {
@@ -610,7 +848,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 
 	// TODO deal with OPTIONS more correctly
 	// For now leave it for keep alive
-	dg.server.OnOptions(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	dg.server.OnOptions(errHandler(func(req *Request, tx ServerTransaction) error {
 		methods := dg.server.RegisteredMethods()
 		res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 		res.AppendHeader(sip.NewHeader("Allow", strings.Join(methods, ", ")))
@@ -619,7 +857,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		return tx.Respond(res)
 	}))
 
-	dg.server.OnRefer(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	dg.server.OnRefer(errHandler(func(req *Request, tx ServerTransaction) error {
 		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
 			return handleNoDialog(req, tx, err)
@@ -634,7 +872,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		return nil
 	}))
 
-	dg.server.OnNotify(errHandler(func(req *sip.Request, tx sip.ServerTransaction) error {
+	dg.server.OnNotify(errHandler(func(req *Request, tx ServerTransaction) error {
 		// THIS should match now subscribtion instead dialog
 		sd, cd, err := dg.cache.matchDialog(req)
 		if err != nil {
@@ -648,7 +886,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 		sd.handleReferNotify(req, tx)
 		return nil
 	}))
-	// server.OnRefer(func(req *sip.Request, tx sip.ServerTransaction) {
+	// server.OnRefer(func(req *Request, tx ServerTransaction) {
 	// 	d, err := matchDialogServer(req)
 	// 	if err != nil {
 	// 		// Security? When to answer this?
@@ -660,7 +898,7 @@ func New(ua *sipgo.UserAgent, opts ...DiagoOption) (*Diago, error) {
 	return dg, nil
 }
 
-func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id string) error {
+func (dg *Agent) handleReInvite(req *Request, tx ServerTransaction, id string) error {
 	// Cache lookups are in-memory and context-free today; Background only
 	// satisfies the interface.
 	ctx := context.Background()
@@ -685,37 +923,85 @@ func (dg *Diago) handleReInvite(req *sip.Request, tx sip.ServerTransaction, id s
 	return s.handleReInvite(req, tx)
 }
 
+// MethodHandler handles one out-of-dialog SIP request method registered with
+// Agent.Handle. Returning an error is logged; no SIP response is generated by
+// the framework (the handler is expected to respond itself).
+type MethodHandler func(req *Request, tx ServerTransaction) error
+
+// Handle registers a handler for a SIP method diago does not own (MESSAGE,
+// SUBSCRIBE, PUBLISH, ...). The handler is wrapped by the middleware given to
+// WithServerRequestMiddleware.
+//
+// Handle must be called before Serve/ServeBackground: the sipgo method to
+// handler map is not safe to mutate while the server is dispatching, so
+// registering while serving returns an error.
+func (dg *Agent) Handle(method RequestMethod, handler MethodHandler) error {
+	if handler == nil {
+		return fmt.Errorf("diago: Handle: handler is nil")
+	}
+	// Methods owned by the agent carry dialog and media handling; replacing
+	// them would silently bypass it.
+	switch method {
+	case sip.INVITE, sip.ACK, sip.CANCEL, sip.BYE, sip.INFO, sip.OPTIONS, sip.REFER, sip.NOTIFY:
+		return fmt.Errorf("diago: Handle: method %s is managed by the agent", method)
+	}
+	if dg.serving.Load() || dg.stopped.Load() {
+		return fmt.Errorf("diago: Handle must be called before Serve")
+	}
+	dg.server.OnRequest(method, dg.wrapRequest(handler))
+	return nil
+}
+
+// UA returns the sipgo UserAgent backing this agent. It is never nil after
+// New; it is caller-owned when WithUserAgent was used, otherwise the agent
+// closes it in Close.
+func (dg *Agent) UA() *UserAgent {
+	return dg.ua
+}
+
+// Server returns the sipgo SIP server used for incoming requests. It is the
+// escape hatch for sipgo features diago does not expose; prefer Handle for
+// registering additional methods and WithServer for a fully custom server.
+func (dg *Agent) Server() *Server {
+	return dg.server
+}
+
+// Client returns the shared sipgo client provided with WithClient, or nil
+// when each transport uses its own client.
+func (dg *Agent) Client() *Client {
+	return dg.client
+}
+
 // Serve starts 'Server' handle for SIP.
 // Should be called for UAS but can be skipped for UAC behavior
 //
-// Handler contract: when the DialogHandler returns,
-// the framework tears the call down — a nil error hangs up the dialog (BYE
-// once confirmed, otherwise a 480 decline) with a 10s timeout, then closes
-// the dialog and its media. A non-nil error is mapped to a final response
-// (or a BYE Reason header when already answered), see DialogHandler. A
-// handler that wants the call alive must block until the call ends (or hang
-// up itself before returning); goroutines spawned in the handler must not
-// rely on the dialog afterwards.
+// Handler contract: the CallHandler decides how the call is answered.
+// Returning before a final response was sent declines the pending INVITE
+// (nil -> 480 decline, non-nil -> mapped response, see CallHandler).
+// Returning after answering keeps the call alive: the dialog is owned by the
+// framework until the peer ends it, Close runs or the handler hangs it up.
+// Teardown of an answered call is always a BYE; the media and cache entry are
+// released when the dialog ends.
 //
 // Listener contract: Serve returns the first listener error joined with the
 // errors of the remaining listeners, and it only returns after every listener
 // has stopped — a non-nil return means nothing is serving. This also applies
 // to ServeBackground, which reports the same error while Serve is tearing the
 // remaining listeners down.
-func (dg *Diago) Serve(ctx context.Context, h DialogHandler) error {
+func (dg *Agent) Serve(ctx context.Context, h CallHandler) error {
 	return dg.serve(ctx, h, func() {})
 }
 
-// handler returns the installed DialogHandler. Serve swaps it atomically, so
+// handler returns the installed CallHandler. Serve swaps it atomically, so
 // request goroutines never race with a serve (re)start.
-func (dg *Diago) handler() DialogHandler {
+func (dg *Agent) handler() CallHandler {
 	if p := dg.serveHandler.Load(); p != nil {
 		return *p
 	}
-	return defaultDialogHandler
+	return defaultCallHandler
 }
 
-func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) error {
+func (dg *Agent) serve(ctx context.Context, h CallHandler, readyCh func()) error {
 	if dg.stopped.Load() {
 		return fmt.Errorf("diago is shut down and cannot serve again")
 	}
@@ -723,16 +1009,16 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 		return fmt.Errorf("diago is already serving")
 	}
 	// Reset serving on every exit path from here on, including the
-	// concurrent-Shutdown refusal below.
+	// concurrent-Close refusal below.
 	defer dg.serving.Store(false)
 
 	if h == nil {
-		h = defaultDialogHandler
+		h = defaultCallHandler
 	}
 	handler := h
 	dg.serveHandler.Store(&handler)
 
-	// Derived ctx so Shutdown can stop the listeners even when Serve was
+	// Derived ctx so Close can stop the listeners even when Serve was
 	// called with a caller-owned context.
 	serveCtx, cancel := context.WithCancel(ctx)
 
@@ -751,7 +1037,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 
 	dg.serveMu.Lock()
 	if dg.stopped.Load() {
-		// Shutdown ran concurrently with this serve startup: refuse instead
+		// Close ran concurrently with this serve startup: refuse instead
 		// of leaking listeners it could no longer stop.
 		dg.serveMu.Unlock()
 		cancel()
@@ -763,7 +1049,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 	dg.serveMu.Unlock()
 
 	// Listeners get a diago-private context. The cancel signals of serveCtx
-	// (caller ctx and Shutdown) are forwarded only after every listener
+	// (caller ctx and Close) are forwarded only after every listener
 	// settled: a cancel delivered during sipgo's startup window is dropped by
 	// its ctx-watcher (no socket to close yet) and would leak the listener.
 	listenerCtx, listenerCancel := context.WithCancel(context.Background())
@@ -789,7 +1075,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 			// Update transport
 			//nolint:staticcheck // sipgo exposes ListenReadyCtxKey as an untyped string key.
 			ctx := context.WithValue(listenerCtx, sipgo.ListenReadyCtxKey, sipgo.ListenReadyFuncCtxValue(func(network, addr string) {
-				// This now fixes port for empheral binding
+				// This now fixes port for ephemeral binding
 				// Alternative to use is tp.GetListenPort but it squashes networks
 				_, port, _ := sip.ParseAddr(addr)
 				if tran.BindPort == 0 {
@@ -804,7 +1090,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 				dg.log.Info("Listening on transport", "addr", addr, "protocol", tran.network)
 			}))
 
-			if tran.Transport == "tls" || tran.Transport == "wss" {
+			if tran.Network == "tls" || tran.Network == "wss" {
 				errCh <- server.ListenAndServeTLS(ctx, tlsListenNetwork(tran.network), hostport, tran.TLSConf)
 				return
 			}
@@ -830,7 +1116,7 @@ func (dg *Diago) serve(ctx context.Context, h DialogHandler, readyCh func()) err
 
 // ServeBackground starts serving in background, but waits server listener to be started before returning
 // Checkout more info on Serve()
-func (dg *Diago) ServeBackground(ctx context.Context, h DialogHandler) error {
+func (dg *Agent) ServeBackground(ctx context.Context, h CallHandler) error {
 	readyCh := make(chan struct{}, len(dg.transports))
 	ready := func() {
 		readyCh <- struct{}{}
@@ -852,12 +1138,12 @@ func (dg *Diago) ServeBackground(ctx context.Context, h DialogHandler) error {
 	return nil
 }
 
-// shutdownDialogHangupTimeout bounds the per-dialog Hangup during Shutdown.
+// shutdownDialogHangupTimeout bounds the per-dialog Hangup during Close.
 // context.WithTimeout takes the earlier deadline when the passed ctx already
 // has one.
 const shutdownDialogHangupTimeout = 3 * time.Second
 
-// Shutdown gracefully stops the Diago instance:
+// Close gracefully stops the Agent instance:
 //
 //  1. It hangs up and closes every dialog tracked in the dialog caches
 //     (server dialogs are tracked from the incoming INVITE, client dialogs
@@ -865,20 +1151,22 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //     entries are evicted.
 //  2. It stops the SIP listeners started by Serve/ServeBackground and waits
 //     for them to exit.
+//  3. It closes the private UserAgent created by New. A UserAgent passed with
+//     WithUserAgent is caller-owned and is NOT closed, so it can be shared
+//     between agents; call ua.Close() yourself when done.
 //
 // Ownership boundaries:
-//   - The UserAgent is NOT closed: it is caller-owned and may be shared by
-//     multiple Diago instances. Call ua.Close() yourself when done.
 //   - Outgoing dialogs that never reached an answer are not in the cache;
 //     cancel their Invite contexts instead (which sends CANCEL).
-//   - Register transactions are caller-owned goroutines: cancel their
-//     context (which triggers Unregister/loop exit) around Shutdown.
+//   - Registration handles are caller-owned: call Registration.Close (which
+//     unregisters the contact and stops the loop) or cancel their context
+//     around Close.
 //
 // In-flight serve handlers keep running concurrently with phase 1; their own
 // Hangup/Close on an already-torn-down dialog is a tolerated no-op path.
-// Shutdown is idempotent. After Shutdown, Serve/ServeBackground return an
-// error. Register transaction loops must be cancelled by their owner.
-func (dg *Diago) Shutdown(ctx context.Context) error {
+// Close is idempotent. After Close, Serve/ServeBackground return an
+// error.
+func (dg *Agent) Close(ctx context.Context) error {
 	dg.stopped.Store(true)
 
 	var errs []error
@@ -913,24 +1201,32 @@ func (dg *Diago) Shutdown(ctx context.Context) error {
 	select {
 	case <-done:
 		// serve()'s own defer clears this too, but do it here so callers
-		// observe a consistent state right after Shutdown returns.
+		// observe a consistent state right after Close returns.
 		dg.serving.Store(false)
 	case <-ctx.Done():
 		errs = append(errs, fmt.Errorf("shutdown timed out waiting for listeners: %w", ctx.Err()))
 	}
 
+	// Phase 3: close the private UserAgent. A caller-owned one (WithUserAgent)
+	// is intentionally left open.
+	if dg.ownedUA && dg.ua != nil {
+		if err := dg.ua.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close user agent: %w", err))
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
-func (dg *Diago) shutdownDialogs(ctx context.Context) []error {
+func (dg *Agent) shutdownDialogs(ctx context.Context) []error {
 	var errs []error
-	if err := dg.cache.server.rangeDialogs(ctx, func(id string, d *DialogServerSession) bool {
+	if err := dg.cache.server.rangeDialogs(ctx, func(id string, d *InboundCall) bool {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
 	}); err != nil {
 		errs = append(errs, err)
 	}
-	if err := dg.cache.client.rangeDialogs(ctx, func(id string, d *DialogClientSession) bool {
+	if err := dg.cache.client.rangeDialogs(ctx, func(id string, d *OutboundCall) bool {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
 	}); err != nil {
@@ -939,7 +1235,7 @@ func (dg *Diago) shutdownDialogs(ctx context.Context) []error {
 	return errs
 }
 
-func shutdownDialog(ctx context.Context, id string, d DialogSession) []error {
+func shutdownDialog(ctx context.Context, id string, d Call) []error {
 	var errs []error
 	hctx, cancel := context.WithTimeout(ctx, shutdownDialogHangupTimeout)
 	defer cancel()
@@ -953,20 +1249,32 @@ func shutdownDialog(ctx context.Context, id string, d DialogSession) []error {
 }
 
 // Dial makes outgoing call leg and waits for answer.
-// It is helper that calls
-// - NewDialog
-// - dialog.Invite
+// target is a SIP URI string ("sip:bob@example.com",
+// "sip:alice@host:5060;transport=tcp"). Use DialURI when you already parsed
+// a URI.
 //
+// It is a helper that calls NewCall and Invite for you.
 // Options allow full call customization, checkout SignalOption.
 // Each SignalOption func is executed exactly once for the whole call setup.
 // The final ACK is sent without options; call Ack directly if you need ACK headers.
-// Scope: everything DialogClientSession.Invite accepts, plus
+// Scope: everything OutboundCall.Invite accepts, plus
 // WithDialogTransport and WithDialogTransportID.
 //
 // For better control more details use above functions instead.
 // If you want to bridge call then use helper DialBridge
-func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
-	params, err := newSignalParams(opts, "Dial", scopeDial)
+func (dg *Agent) Dial(ctx context.Context, target string, opts ...DialOption) (*OutboundCall, error) {
+	uri, err := parseTargetURI(target)
+	if err != nil {
+		return nil, err
+	}
+	return dg.DialURI(ctx, uri, opts...)
+}
+
+// DialURI is Dial for an already parsed SIP URI. The URI is copied, so the
+// caller's value is never mutated (unlike v2, the "transport" URI parameter
+// is consumed from the copy only).
+func (dg *Agent) DialURI(ctx context.Context, recipient URI, opts ...DialOption) (d *OutboundCall, err error) {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -987,7 +1295,34 @@ func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOpti
 	return d, nil
 }
 
+// parseTargetURI parses a dial target string into a private URI copy.
+// Failing parse or an empty target returns ErrInvalidTarget.
+func parseTargetURI(target string) (URI, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return URI{}, fmt.Errorf("empty SIP target: %w", ErrInvalidTarget)
+	}
+	var uri URI
+	if err := sip.ParseUri(target, &uri); err != nil {
+		return URI{}, fmt.Errorf("%w: %q: %w", ErrInvalidTarget, target, err)
+	}
+	if strings.TrimSpace(uri.Host) == "" {
+		return URI{}, fmt.Errorf("%w: %q has no host", ErrInvalidTarget, target)
+	}
+	return cloneURI(uri), nil
+}
+
+// cloneURI copies the URI and its parameter slices so library code can
+// consume them (for example the "transport" parameter) without mutating the
+// caller's value. URI is passed by value but its params are slices.
+func cloneURI(uri URI) URI {
+	uri.UriParams = uri.UriParams.Clone()
+	uri.Headers = uri.Headers.Clone()
+	return uri
+}
+
 // DialBridge makes outgoing call leg and does bridging.
+// target is a SIP URI string; use DialBridgeURI for a parsed URI.
 // Outgoing session will be added into bridge on answer
 // If bridge is a *Bridge with Originator (first participant) it will be used
 // for creating outgoing call leg as in B2BUA.
@@ -995,11 +1330,20 @@ func (dg *Diago) Dial(ctx context.Context, recipient sip.Uri, opts ...SignalOpti
 // already present in bridge.
 // Scope: same as Dial; for a *Bridge, Originator defaults to the bridge
 // originator when not set. Options execute exactly once.
-func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridger, opts ...SignalOption) (d *DialogClientSession, err error) {
+func (dg *Agent) DialBridge(ctx context.Context, target string, bridge Bridger, opts ...DialOption) (*OutboundCall, error) {
+	uri, err := parseTargetURI(target)
+	if err != nil {
+		return nil, err
+	}
+	return dg.DialBridgeURI(ctx, uri, bridge, opts...)
+}
+
+// DialBridgeURI is DialBridge for an already parsed SIP URI.
+func (dg *Agent) DialBridgeURI(ctx context.Context, recipient URI, bridge Bridger, opts ...DialOption) (d *OutboundCall, err error) {
 	if isNilBridger(bridge) {
 		return nil, fmt.Errorf("dial bridge: bridge is nil")
 	}
-	params, err := newSignalParams(opts, "DialBridge", scopeDial)
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1024,7 +1368,7 @@ func (dg *Diago) DialBridge(ctx context.Context, recipient sip.Uri, bridge Bridg
 	}
 
 	// Do bridging now
-	if err := bridge.AddDialogSession(d); err != nil {
+	if err := bridge.Add(d); err != nil {
 		return nil, errors.Join(err, d.Close())
 	}
 
@@ -1051,14 +1395,15 @@ func isNilBridger(bridge Bridger) bool {
 	}
 }
 
-// NewDialog creates a new client dialog session after you can perform dialog Invite
-// - You call Invite(...) after this call followed with ACK
+// NewCall creates a new outbound call for manual control: call Invite(...)
+// and then Ack(...) yourself. For the common case use Dial, which performs
+// Invite and the final ACK for you.
 // Options allow selecting transport (WithDialogTransport, WithDialogTransportID)
 // and overriding Contact.
 // Scope: WithDialogTransport, WithDialogTransportID, WithContact.
 // Pass the remaining options to the later Invite call; this method rejects them.
-func (dg *Diago) NewDialog(recipient sip.Uri, opts ...SignalOption) (d *DialogClientSession, err error) {
-	params, err := newSignalParams(opts, "NewDialog", scopeNewDialog)
+func (dg *Agent) NewCall(recipient URI, opts ...NewCallOption) (d *OutboundCall, err error) {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1068,10 +1413,12 @@ func (dg *Diago) NewDialog(recipient sip.Uri, opts ...SignalOption) (d *DialogCl
 // newDialogWithParams creates a client dialog session from pre-computed params.
 // It exists so helpers (Dial, DialBridge) can execute user-supplied
 // SignalOption funcs a single time across dialog creation and Invite.
-func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *signalParams) (d *DialogClientSession, err error) {
+func (dg *Agent) newDialogWithParams(recipient URI, params *signalParams) (d *OutboundCall, err error) {
+	// Never mutate the caller's URI params (they share the backing slice).
+	recipient = cloneURI(recipient)
 	transport := ""
 	transportID := ""
-	var contact *sip.ContactHeader
+	var contact *ContactHeader
 	if params != nil {
 		transport = params.Dialog.Transport
 		transportID = params.Dialog.TransportID
@@ -1087,50 +1434,45 @@ func (dg *Diago) newDialogWithParams(recipient sip.Uri, params *signalParams) (d
 	}
 	tran, exists := dg.findTransport(transport, transportID)
 	if !exists {
+		if transport == "" {
+			return nil, fmt.Errorf("transport %q does not exist: no default UDP transport configured", "udp")
+		}
 		return nil, fmt.Errorf("transport %q does not exist", transport)
 	}
 
 	return dg.newSIPDialog(recipient, tran, contact)
 }
 
-// mediaConfigForTransport builds the per-dialog media config by overlaying
-// the transport media overrides on the global media config. The rule is
-// "zero inherits global" per field; a BindHost that pins a concrete IP also
-// pins the media bind IP unless overridden explicitly. A configured DTLS
+// mediaConfigForTransport selects the media config for dialogs carried over
+// the transport: the profile named by Transport.Profile, or the default
+// (WithMediaConfig) when no profile is selected. The selected profile is used
+// as is; only the transport-derived bind/advertise addresses fill fields the
+// profile leaves nil (a concrete BindHost supplies the media bind IP, an
+// explicit ExternalHost supplies the advertised IP). A configured DTLS
 // profile implies DTLS-SRTP unless an explicit SRTP mode was chosen.
-func (dg *Diago) mediaConfigForTransport(tran *Transport) MediaConfig {
+func (dg *Agent) mediaConfigForTransport(tran *Transport) MediaConfig {
 	conf := dg.mediaConf
-	ov := tran.Media
+	if tran.Profile != "" {
+		if p, ok := dg.mediaProfiles[tran.Profile]; ok {
+			conf = p
+		} else {
+			// New validates transport profiles; this is a defensive fallback
+			// for Transport values built by hand/tests.
+			dg.log.Warn("Media profile not registered, using default", "profile", tran.Profile)
+		}
+	}
 
-	if ov.SRTP.Mode != SecureRTPNone {
-		conf.SRTP.Mode = ov.SRTP.Mode
+	if conf.Network.BindIP == nil {
+		if bindIP := tran.bindIP; bindIP != nil && !bindIP.IsUnspecified() {
+			conf.Network.BindIP = bindIP
+		} else if bindIP := net.ParseIP(tran.BindHost); bindIP != nil && !bindIP.IsUnspecified() {
+			// A Transport built as a literal (not through WithTransport) still
+			// pins a concrete BindHost.
+			conf.Network.BindIP = bindIP
+		}
 	}
-	if ov.SRTP.Alg != 0 {
-		conf.SRTP.Alg = ov.SRTP.Alg
-	}
-	if !dtlsConfIsZero(ov.SRTP.DTLS) {
-		conf.SRTP.DTLS = ov.SRTP.DTLS
-	}
-	if ov.Network.BindIP != nil {
-		conf.Network.BindIP = ov.Network.BindIP
-	} else if bindIP := tran.bindIP; bindIP != nil && !bindIP.IsUnspecified() {
-		conf.Network.BindIP = bindIP
-	} else if bindIP := net.ParseIP(tran.BindHost); bindIP != nil && !bindIP.IsUnspecified() {
-		// A Transport built as a literal (not through WithTransport) still
-		// pins a concrete BindHost.
-		conf.Network.BindIP = bindIP
-	}
-	if ov.Network.ExternalIP != nil {
-		conf.Network.ExternalIP = ov.Network.ExternalIP
-	}
-	if ov.Network.RTPNAT != RTPNATDisabled {
-		conf.Network.RTPNAT = ov.Network.RTPNAT
-	}
-	if ov.Network.RTPPortStart != 0 {
-		conf.Network.RTPPortStart = ov.Network.RTPPortStart
-	}
-	if ov.Network.RTPPortEnd != 0 {
-		conf.Network.RTPPortEnd = ov.Network.RTPPortEnd
+	if conf.Network.ExternalIP == nil && tran.mediaExternalIP != nil {
+		conf.Network.ExternalIP = tran.mediaExternalIP
 	}
 
 	if conf.SRTP.Mode == SecureRTPNone && !dtlsConfIsZero(conf.SRTP.DTLS) {
@@ -1151,8 +1493,8 @@ func dtlsConfIsZero(conf media.DTLSConfig) bool {
 		len(conf.EllipticCurves) == 0
 }
 
-func (dg *Diago) newSIPDialog(recipient sip.Uri, tran *Transport, contact *sip.ContactHeader) (d *DialogClientSession, err error) {
-	transport := tran.Transport
+func (dg *Agent) newSIPDialog(recipient URI, tran *Transport, contact *ContactHeader) (d *OutboundCall, err error) {
+	transport := tran.Network
 
 	// TODO: remove this alloc of UA each time
 	client := dg.getClient(tran)
@@ -1169,10 +1511,10 @@ func (dg *Diago) newSIPDialog(recipient sip.Uri, tran *Transport, contact *sip.C
 	inviteReq := sip.NewRequest(sip.INVITE, recipient)
 	inviteReq.SetTransport(sip.NetworkToUpper(transport))
 
-	d = &DialogClientSession{
+	d = &OutboundCall{
 		DialogClientSession: &sipgo.DialogClientSession{
 			UA: &dialogUA,
-			Dialog: sipgo.Dialog{
+			Dialog: Dialog{
 				InviteRequest: inviteReq,
 			},
 		},
@@ -1183,7 +1525,8 @@ func (dg *Diago) newSIPDialog(recipient sip.Uri, tran *Transport, contact *sip.C
 	// overlaid, so it carries all fields (codecs, RTPNAT, SRTP alg, port
 	// range, codec order).
 	d.mediaConfig = dg.mediaConfigForTransport(tran)
-	d.dialogMedia.log = d.mediaConfig.Logger
+	d.callMedia.log = d.mediaConfig.Logger
+	d.callMedia.httpClient = d.mediaConfig.HTTPClient
 
 	// This should be run on ACK
 	d.OnState(func(s sip.DialogState) {
@@ -1203,7 +1546,7 @@ func (dg *Diago) newSIPDialog(recipient sip.Uri, tran *Transport, contact *sip.C
 	return d, nil
 }
 
-func (dg *Diago) contactHDRFromTransport(tran *Transport, contact *sip.ContactHeader) {
+func (dg *Agent) contactHDRFromTransport(tran *Transport, contact *ContactHeader) {
 	// Find contact hdr matching transport
 	scheme := "sip"
 	if tran.TLSConf != nil && !tran.TLSURINoSIPS {
@@ -1211,7 +1554,7 @@ func (dg *Diago) contactHDRFromTransport(tran *Transport, contact *sip.ContactHe
 	}
 
 	contact.DisplayName = "" //TODO
-	contact.Address = sip.Uri{
+	contact.Address = URI{
 		Scheme:    scheme,
 		User:      dg.ua.Name(),
 		Host:      tran.ExternalHost,
@@ -1223,11 +1566,11 @@ func (dg *Diago) contactHDRFromTransport(tran *Transport, contact *sip.ContactHe
 	// Set this only if we are using same as bind host, as external network could be different
 	// Example TLS termination. External is TLS and this is TCP
 	if tran.ExternalHost == tran.BindHost {
-		contact.Address.UriParams.Add("transport", tran.Transport)
+		contact.Address.UriParams.Add("transport", tran.Network)
 	}
 }
 
-func (dg *Diago) getClient(tran *Transport) *sipgo.Client {
+func (dg *Agent) getClient(tran *Transport) *Client {
 	if dg.client != nil {
 		// Use global one if exists
 		return dg.client
@@ -1236,19 +1579,19 @@ func (dg *Diago) getClient(tran *Transport) *sipgo.Client {
 	return tran.client
 }
 
-func (dg *Diago) getTransport(transport string) (*Transport, bool) {
+func (dg *Agent) getTransport(transport string) (*Transport, bool) {
 	if transport == "" {
 		return &dg.transports[0], true
 	}
 	for _, t := range dg.transports {
-		if sip.NetworkToLower(transport) == t.Transport {
+		if sip.NetworkToLower(transport) == t.Network {
 			return &t, true
 		}
 	}
 	return nil, false
 }
 
-func (dg *Diago) findTransport(transport string, id string) (*Transport, bool) {
+func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 	if id != "" {
 		for _, t := range dg.transports {
 			if id == t.ID {
@@ -1265,17 +1608,25 @@ func (dg *Diago) findTransport(transport string, id string) (*Transport, bool) {
 	return dg.getTransport("udp")
 }
 
-// Register will create register transaction and keep registration ongoing until error is hit.
-// For more granular control over registrations use RegisterTransaction.
+// Register starts a REGISTER transaction that keeps the registration ongoing
+// in the background and returns a handle to it. target is a SIP URI string
+// ("sip:alice@example.com"); use RegisterURI for a parsed URI. The initial
+// REGISTER is sent asynchronously; use Registration.WaitReady to wait for the
+// first success. For granular one-shot control use RegisterTransaction.
+//
+// The returned handle owns the loop: Registration.Close stops it and
+// unregisters the contact; Registration.Wait reports the terminal error.
+// Cancel the passed ctx to stop the loop without unregistering explicitly
+// (Close is still recommended to wait for the exit).
 //
 // Retry semantics: a terminal REGISTER response (401/407, other 4xx, 3xx, 6xx)
-// ends the loop and is returned. 423 Interval Too Brief is retried once with
-// the server's Min-Expires (RFC 3261 §10.2.8); 408/491 and 5xx (except
-// 501/505) are retried honoring Retry-After. Failures without a final
+// ends the loop and is reported by Err/Wait. 423 Interval Too Brief is retried
+// once with the server's Min-Expires (RFC 3261 §10.2.8); 408/491 and 5xx
+// (except 501/505) are retried honoring Retry-After. Failures without a final
 // response (transport/DNS errors, unusable digest challenges) are retried
-// indefinitely with a 5s floor: the only way to stop the loop is canceling
-// ctx (the error is then returned) or Shutdown, so callers that need an
-// upper bound must pass a bounded/cancelable ctx.
+// indefinitely with a 5s floor: the only way to stop the loop is canceling ctx
+// or Close, so callers that need an upper bound must pass a
+// bounded/cancelable ctx.
 //
 // Options configure the transaction (WithRegisterExpiry,
 // WithRegisterRetryInterval, WithRegisterProxyHost, WithRegisterAllowHeaders,
@@ -1284,83 +1635,31 @@ func (dg *Diago) findTransport(transport string, id string) (*Transport, bool) {
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials,
 // WithRegisterExpiry, WithRegisterRetryInterval, WithRegisterAllowHeaders,
 // WithRegisterProxyHost, WithOnRegistered.
-func (dg *Diago) Register(ctx context.Context, recipient sip.Uri, opts ...SignalOption) error {
-	t, err := dg.RegisterTransaction(ctx, recipient, opts...)
+func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOption) (*Registration, error) {
+	uri, err := parseTargetURI(target)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	if err := t.Register(ctx); err != nil {
-		return err
-	}
-
-	// Unregister
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		err := t.Unregister(ctx)
-		if err != nil {
-			dg.log.Error("Failed to unregister", "error", err)
-			return
-		}
-		dg.log.Debug("Unregister successfull")
-	}()
-
-	for i := 0; ; i++ {
-		dg.log.Debug("Qualify sent", "n", i)
-		err := t.QualifyLoop(ctx)
-
-		retryAfter := 5 * time.Second
-		var rr *RegisterResponseError
-		if errors.As(err, &rr) {
-			resCode := rr.RegisterRes.StatusCode
-			switch {
-			case resCode == statusIntervalTooBrief:
-				// RFC 3261 §10.2.8: retry with an Expires of at least
-				// Min-Expires instead of treating the response as terminal.
-				minExpires, ok := minExpiresDelay(rr.RegisterRes)
-				if !ok {
-					return err
-				}
-				if t.register.Expiry >= minExpires {
-					// We already advertise at least Min-Expires, so another
-					// attempt cannot satisfy the server; repeated 423 must not
-					// become a 1s retry loop.
-					return err
-				}
-				t.setExpiry(minExpires)
-				retryAfter = time.Second
-			case shouldRetryRegister(resCode):
-				// Retry-After is honored below.
-			default:
-				return err
-			}
-
-			if h := rr.RegisterRes.GetHeader("Retry-After"); h != nil {
-				ra, _ := strconv.Atoi(h.Value())
-				if ra > 0 {
-					retryAfter = time.Duration(ra) * time.Second
-				}
-			}
-		}
-
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
-
-		// Retry pacing: explicit RetryInterval > Retry-After value > the
-		// default computed from the negotiated expiry (see calcRetry).
-		t.retryAfter = retryAfter
-	}
+	return dg.RegisterURI(ctx, uri, opts...)
 }
 
-// Register transaction creates register transaction object that can be used for Register Unregister requests
+// RegisterURI is Register for an already parsed SIP URI.
+func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...RegisterOption) (*Registration, error) {
+	t, err := dg.RegisterTransaction(ctx, recipient, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return newRegistration(ctx, dg.log, t), nil
+}
+
+// RegisterTransaction creates the REGISTER transaction object used for
+// Register and Unregister requests.
 // Options configure the transaction (see Register) and every REGISTER
 // attempt. Scope: WithHeaders, WithContact, WithRequestMutator,
 // WithAuthCredentials, WithRegisterExpiry, WithRegisterRetryInterval,
 // WithRegisterAllowHeaders, WithRegisterProxyHost, WithOnRegistered.
-func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opts ...SignalOption) (*RegisterTransaction, error) {
-	params, err := newSignalParams(opts, "RegisterTransaction", scopeRegisterTx)
+func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ...RegisterOption) (*RegisterTransaction, error) {
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1374,7 +1673,7 @@ func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opt
 		return nil, fmt.Errorf("transport=%q does not exist", transport)
 	}
 
-	contactHDR := sip.ContactHeader{}
+	contactHDR := ContactHeader{}
 	dg.contactHDRFromTransport(tran, &contactHDR)
 
 	// client, err := sipgo.NewClient(dg.ua,
@@ -1393,7 +1692,7 @@ func (dg *Diago) RegisterTransaction(ctx context.Context, recipient sip.Uri, opt
 	return newRegisterTransaction(client, recipient, contactHDR, dg.log, params, after), nil
 }
 
-func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {
+func (dg *Agent) createClient(tran Transport) (client *Client) {
 	ua := dg.ua
 	// When transport is not binding to specific IP
 
@@ -1405,7 +1704,7 @@ func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {
 	// UDP is good to be reused
 	// 1. Prefer resolved IP when sending out, as sending as unspecifed makes issue in receiving responses
 	// 2. Use bind port if IP is specified. ISSUE: if ip is unspecified and SIP starts listen on 0.0.0.0:5060, SIPGO will try to use 192.168.1.1:5060 and therefore fail
-	if tran.Transport == "udp" {
+	if tran.Network == "udp" {
 		resolvedIP := tran.bindIP
 		bindPort := tran.BindPort
 		if resolvedIP != nil {
@@ -1439,13 +1738,13 @@ func (dg *Diago) createClient(tran Transport) (client *sipgo.Client) {
 	return cli
 }
 
-// MatchDialog resolves an in-dialog SIP request to the dialog tracked by
+// FindCall resolves an in-dialog SIP request to the dialog tracked by
 // this engine. It mirrors internal routing order: server (UAS) role via
 // DialogIDFromRequestUAS first, then client (UAC) via DialogIDFromRequestUAC.
 // ok is false for out-of-dialog, missing headers, or unknown dialogs. When ok,
-// the returned DialogSession is the live *DialogServerSession or
-// *DialogClientSession (type-assert if role matters).
-func (dg *Diago) MatchDialog(req *sip.Request) (DialogSession, bool) {
+// the returned Call is the live *InboundCall or
+// *OutboundCall (type-assert if role matters).
+func (dg *Agent) FindCall(req *Request) (Call, bool) {
 	if dg == nil || req == nil {
 		return nil, false
 	}

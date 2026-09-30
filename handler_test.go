@@ -79,34 +79,34 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		handler  DialogHandler
+		handler  CallHandler
 		wantCode int
 	}{
 		{
 			name:     "decline",
-			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrDecline },
+			handler:  func(ctx context.Context, d *InboundCall) error { return ErrDecline },
 			wantCode: sip.StatusTemporarilyUnavailable,
 		},
 		{
 			name:     "busy",
-			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrBusy },
+			handler:  func(ctx context.Context, d *InboundCall) error { return ErrBusy },
 			wantCode: sip.StatusBusyHere,
 		},
 		{
 			name:     "not found",
-			handler:  func(ctx context.Context, d *DialogServerSession) error { return ErrNotFound },
+			handler:  func(ctx context.Context, d *InboundCall) error { return ErrNotFound },
 			wantCode: sip.StatusNotFound,
 		},
 		{
 			name: "custom response",
-			handler: func(ctx context.Context, d *DialogServerSession) error {
+			handler: func(ctx context.Context, d *InboundCall) error {
 				return &ResponseError{Code: 402, Reason: "Payment Required"}
 			},
 			wantCode: 402,
 		},
 		{
 			name: "generic error",
-			handler: func(ctx context.Context, d *DialogServerSession) error {
+			handler: func(ctx context.Context, d *InboundCall) error {
 				return errors.New("internal boom")
 			},
 			wantCode: sip.StatusInternalServerError,
@@ -115,8 +115,15 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			// A handler context error while the dialog is alive must not
 			// leave the INVITE unanswered.
 			name:     "handler context error",
-			handler:  func(ctx context.Context, d *DialogServerSession) error { return context.DeadlineExceeded },
+			handler:  func(ctx context.Context, d *InboundCall) error { return context.DeadlineExceeded },
 			wantCode: sip.StatusInternalServerError,
+		},
+		{
+			// A handler that returns without answering declines the pending
+			// INVITE: the call must not silently hang.
+			name:     "nil return unanswered declines",
+			handler:  func(ctx context.Context, d *InboundCall) error { return nil },
+			wantCode: sip.StatusTemporarilyUnavailable,
 		},
 		{
 			name:     "nil handler",
@@ -136,8 +143,8 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			uaSrv, err := sipgo.NewUA(sipgo.WithUserAgent("server"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaSrv.Close() })
-			dgSrv, err := New(uaSrv, WithTransport(Transport{
-				Transport: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
+			dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
+				Network: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
 			}))
 			require.NoError(t, err)
 			require.NoError(t, dgSrv.ServeBackground(ctx, tc.handler))
@@ -145,12 +152,12 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaCli.Close() })
-			dgCli, err := New(uaCli, WithTransport(Transport{
-				Transport: "udp", BindHost: "127.0.0.1", BindPort: cliPort,
+			dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
+				Network: "udp", BindHost: "127.0.0.1", BindPort: cliPort,
 			}))
 			require.NoError(t, err)
 
-			_, err = dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
+			_, err = dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 			require.Error(t, err)
 
 			res := requireDialogResponseError(t, err)
@@ -170,11 +177,11 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	t.Cleanup(func() { uaSrv.Close() })
 
 	handlerCtxErr := make(chan error, 1)
-	dgSrv, err := New(uaSrv, WithTransport(Transport{
-		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15230,
+	dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
+		Network: "udp", BindHost: "127.0.0.1", BindPort: 15230,
 	}))
 	require.NoError(t, err)
-	require.NoError(t, dgSrv.ServeBackground(ctx, func(hctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, dgSrv.ServeBackground(ctx, func(hctx context.Context, d *InboundCall) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
 		}
@@ -186,12 +193,12 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := New(uaCli, WithTransport(Transport{
-		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15231,
+	dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
+		Network: "udp", BindHost: "127.0.0.1", BindPort: 15231,
 	}))
 	require.NoError(t, err)
 
-	dlg, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15230})
+	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15230})
 	require.NoError(t, err)
 	defer dlg.Close()
 
@@ -215,11 +222,11 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaSrv.Close() })
 
-	dgSrv, err := New(uaSrv, WithTransport(Transport{
-		Transport: "udp", BindHost: "127.0.0.1", BindPort: 15240,
+	dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
+		Network: "udp", BindHost: "127.0.0.1", BindPort: 15240,
 	}))
 	require.NoError(t, err)
-	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
 		}
@@ -232,8 +239,8 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := New(uaCli,
-		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15241}),
+	dgCli, err := New(WithUserAgent(uaCli),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 15241}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				if req.Method == sip.BYE {
@@ -248,7 +255,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, dgCli.ServeBackground(ctx, nil))
 
-	dlg, err := dgCli.Dial(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15240})
+	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15240})
 	require.NoError(t, err)
 	defer dlg.Close()
 
@@ -279,7 +286,101 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	}
 }
 
-func TestHangupAndCloseClient(t *testing.T) {
+// TestIntegrationHandlerAnswerReturnKeepsCallAlive locks the v3 handler
+// semantics: a handler that answers and returns must NOT end the call. The
+// call stays up until the peer hangs up, and the teardown is a BYE.
+func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
+	skipShort(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	uaSrv, err := sipgo.NewUA(sipgo.WithUserAgent("server"))
+	require.NoError(t, err)
+	t.Cleanup(func() { uaSrv.Close() })
+
+	handlerReturned := make(chan struct{})
+	var serverBye atomic.Int32
+	dgSrv, err := New(WithUserAgent(uaSrv),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+			return func(req *sip.Request, tx sip.ServerTransaction) {
+				if req.Method == sip.BYE {
+					serverBye.Add(1)
+				}
+				next(req, tx)
+			}
+		}),
+	)
+	require.NoError(t, err)
+	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		if err := d.Answer(ctx); err != nil {
+			return err
+		}
+		close(handlerReturned)
+		// Returning must keep the call alive.
+		return nil
+	}))
+	srvPort := dgSrv.transports[0].BindPort
+
+	var clientBye atomic.Int32
+	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
+	require.NoError(t, err)
+	t.Cleanup(func() { uaCli.Close() })
+	dgCli, err := New(WithUserAgent(uaCli),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+			return func(req *sip.Request, tx sip.ServerTransaction) {
+				if req.Method == sip.BYE {
+					clientBye.Add(1)
+				}
+				next(req, tx)
+			}
+		}),
+	)
+	require.NoError(t, err)
+	require.NoError(t, dgCli.ServeBackground(ctx, nil))
+
+	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
+	require.NoError(t, err)
+
+	select {
+	case <-handlerReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not return")
+	}
+
+	// The server handler returned: the call must still be alive.
+	select {
+	case <-dlg.Context().Done():
+		t.Fatal("call ended after the handler returned; it must stay alive")
+	case <-time.After(500 * time.Millisecond):
+	}
+	assert.EqualValues(t, 0, clientBye.Load(), "framework must not send BYE when the handler returns")
+	assert.EqualValues(t, 0, serverBye.Load(), "peer has not hung up yet")
+
+	// The owner ends the call; the client leg observes the BYE.
+	require.NoError(t, dlg.Hangup(ctx))
+	select {
+	case <-dlg.Context().Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("client dialog did not end after Hangup")
+	}
+	require.Eventually(t, func() bool { return serverBye.Load() == 1 }, 5*time.Second, 10*time.Millisecond,
+		"server must receive the client's BYE")
+
+	// The framework closes the server dialog when it ends.
+	require.Eventually(t, func() bool {
+		n := 0
+		dgSrv.cache.server.rangeDialogs(ctx, func(id string, d *InboundCall) bool {
+			n++
+			return true
+		})
+		return n == 0
+	}, 5*time.Second, 20*time.Millisecond, "server dialog must be evicted when the call ends")
+}
+
+func TestHangupCloseClient(t *testing.T) {
 	var byeCount atomic.Int32
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		if req.Method == sip.BYE {
@@ -291,14 +392,16 @@ func TestHangupAndCloseClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.Equal(t, 1, cacheCountClientDialogs(dg))
 
-	require.NoError(t, d.HangupAndClose(ctx))
-	assert.EqualValues(t, 1, byeCount.Load(), "HangupAndClose must send BYE")
-	assert.Equal(t, 0, cacheCountClientDialogs(dg), "HangupAndClose must evict the dialog")
+	require.NoError(t, d.Hangup(ctx))
+	assert.EqualValues(t, 1, byeCount.Load(), "Hangup must send BYE")
+	require.NoError(t, d.Close())
+	assert.Equal(t, 0, cacheCountClientDialogs(dg), "Close must evict the dialog")
 
-	// Close is idempotent.
-	require.NoError(t, d.HangupAndClose(ctx))
+	// Both are idempotent.
+	require.NoError(t, d.Hangup(ctx))
+	require.NoError(t, d.Close())
 }

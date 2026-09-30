@@ -302,8 +302,8 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 	// Drain written RTP, so playback is not blocked
 	go io.Copy(io.Discard, injector)
 
-	dialog := &DialogServerSession{
-		dialogMedia: DialogMedia{
+	dialog := &InboundCall{
+		callMedia: Media{
 			mediaSession:    sess,
 			audioWriter:     media.NewRTPPacketWriter(sess, media.CodecAudioUlaw),
 			rtpPacketReader: media.NewRTPPacketReader(sess, media.CodecAudioUlaw),
@@ -311,7 +311,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 		},
 	}
 
-	pb, err := dialog.CreatePlaybackDTMF(WithReplayKeys("*"))
+	pb, err := dialog.StartPlaybackDTMF(WithReplayKeys("*"))
 	require.NoError(t, err)
 	defer pb.Close()
 

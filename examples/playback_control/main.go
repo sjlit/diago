@@ -34,12 +34,12 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	tu, err := diago.New(ua, diago.WithDefaultTransport())
+	tu, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}
 
-	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return tu.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		slog.Info("New dialog request", "id", inDialog.ID())
 		defer slog.Info("Dialog finished", "id", inDialog.ID())
 
@@ -50,7 +50,7 @@ func start(ctx context.Context) error {
 	})
 }
 
-func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
+func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 	inDialog.Trying(ctx)  // 100 Trying
 	inDialog.Ringing(ctx) // 180 Ringing
 
@@ -63,7 +63,7 @@ func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
 		return err
 	}
 
-	pb, err := inDialog.CreatePlaybackControl()
+	pb, err := inDialog.StartPlaybackControl()
 	if err != nil {
 		return err
 	}
@@ -90,6 +90,11 @@ func Playback(ctx context.Context, inDialog *diago.DialogServerSession) error {
 			slog.Info("Audio stopped")
 		case err := <-playFinished:
 			slog.Info("Play finished", "error", err)
+			// The call stays alive after the handler returns (v3
+			// semantics); end it after playback.
+			if herr := inDialog.Hangup(ctx); herr != nil {
+				slog.Error("Hangup failed", "error", herr)
+			}
 			return nil
 		case <-inDialog.Context().Done():
 			slog.Info("Call hanguped", "error", inDialog.Context().Err())

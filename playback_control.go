@@ -18,6 +18,8 @@ import (
 // PlaybackState represents current playback state of AudioPlaybackControl
 type PlaybackState uint32
 
+// PlaybackStateIdle, PlaybackStatePlaying, PlaybackStatePaused and
+// PlaybackStateStopped are the states reported by AudioPlaybackControl.State.
 const (
 	PlaybackStateIdle PlaybackState = iota
 	PlaybackStatePlaying
@@ -59,6 +61,8 @@ func (replaySignal) Is(target error) bool {
 	return target == io.EOF || target == ErrPlaybackReplayed
 }
 
+// AudioPlaybackControl is playback with mute, stop, pause, resume and
+// replay controls.
 type AudioPlaybackControl struct {
 	AudioPlayback
 
@@ -75,6 +79,8 @@ func newAudioControl(writer io.Writer) *audioControl {
 	}
 }
 
+// NewAudioPlaybackControl wraps a playback with controls. Prefer
+// Media.StartPlaybackControl on a dialog.
 func NewAudioPlaybackControl(a AudioPlayback) AudioPlaybackControl {
 	// Replace audio playback writer with control
 	writer := a.writer
@@ -83,6 +89,7 @@ func NewAudioPlaybackControl(a AudioPlayback) AudioPlaybackControl {
 	return AudioPlaybackControl{AudioPlayback: a, control: control}
 }
 
+// Mute mutes or unmutes the outgoing audio without stopping playout.
 func (p *AudioPlaybackControl) Mute(mute bool) {
 	p.control.Mute(mute)
 }

@@ -17,7 +17,7 @@ import (
 
 // ctxSender returns a function delivering one PCMU RTP packet (n bytes
 // payload) to the dialog media session.
-func ctxSender(t *testing.T, d *DialogMedia) func(n int) {
+func ctxSender(t *testing.T, d *Media) func(n int) {
 	t.Helper()
 	ms := d.MediaSession()
 	require.NotNil(t, ms)
@@ -46,7 +46,7 @@ func ctxSender(t *testing.T, d *DialogMedia) func(n int) {
 	}
 }
 
-func readOnePacket(t *testing.T, d *DialogMedia, timeout time.Duration) error {
+func readOnePacket(t *testing.T, d *Media, timeout time.Duration) error {
 	t.Helper()
 	audioReader, err := d.AudioReader()
 	require.NoError(t, err)
@@ -64,10 +64,10 @@ func readOnePacket(t *testing.T, d *DialogMedia, timeout time.Duration) error {
 	}
 }
 
-// TestDialogMediaPauseRefcount is the core anti-fight property: a pause is
+// TestMediaPauseRefcount is the core anti-fight property: a pause is
 // refcounted, so one component releasing can not resume another's pause.
-func TestDialogMediaPauseRefcount(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaPauseRefcount(t *testing.T) {
+	d := newTestMedia(t)
 	send := ctxSender(t, d)
 
 	rel1, err := d.PauseAudioRead()
@@ -103,12 +103,12 @@ func TestDialogMediaPauseRefcount(t *testing.T) {
 	}
 }
 
-// TestDialogMediaListenBackgroundStopContention is a regression test for the
+// TestMediaListenBackgroundStopContention is a regression test for the
 // deadline-fight defect class: stopping ListenBackground while another
 // component holds a read pause must not resume that pause, and the reader
 // must stay usable after the stop.
-func TestDialogMediaListenBackgroundStopContention(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaListenBackgroundStopContention(t *testing.T) {
+	d := newTestMedia(t)
 	send := ctxSender(t, d)
 
 	stop, err := d.ListenBackground()
@@ -142,8 +142,8 @@ func TestDialogMediaListenBackgroundStopContention(t *testing.T) {
 	}
 }
 
-func TestDialogMediaListenContextCancel(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaListenContextCancel(t *testing.T) {
+	d := newTestMedia(t)
 	send := ctxSender(t, d)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -179,8 +179,8 @@ func TestDialogMediaListenContextCancel(t *testing.T) {
 	}
 }
 
-func TestDialogMediaEchoContextCancel(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaEchoContextCancel(t *testing.T) {
+	d := newTestMedia(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -199,10 +199,10 @@ func TestDialogMediaEchoContextCancel(t *testing.T) {
 	}
 }
 
-// TestDialogMediaCtxAPIsGuards covers the lifecycle sentinels of the ctx
+// TestMediaCtxAPIsGuards covers the lifecycle sentinels of the ctx
 // and pause APIs.
-func TestDialogMediaCtxAPIsGuards(t *testing.T) {
-	unanswered := &DialogMedia{}
+func TestMediaCtxAPIsGuards(t *testing.T) {
+	unanswered := &Media{}
 	_, err := unanswered.PauseAudioRead()
 	assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	_, err = unanswered.PauseAudioWrite()
@@ -211,7 +211,7 @@ func TestDialogMediaCtxAPIsGuards(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	assert.ErrorIs(t, unanswered.EchoContext(context.Background()), ErrDialogNotAnswered)
 
-	closed := newTestDialogMedia(t)
+	closed := newTestMedia(t)
 	require.NoError(t, closed.Close())
 	_, err = closed.PauseAudioRead()
 	assert.ErrorIs(t, err, ErrDialogClosed)
@@ -223,10 +223,10 @@ func TestDialogMediaCtxAPIsGuards(t *testing.T) {
 // playback interrupts its read loop through the gate and leaves the dialog
 // reader usable - no recurring conn deadlines involved anymore.
 func TestPlaybackDTMFCloseStopsReadLoopWithoutDeadlines(t *testing.T) {
-	d := newTestDialogMedia(t)
+	d := newTestMedia(t)
 	send := ctxSender(t, d)
 
-	pb, err := d.CreatePlaybackDTMF()
+	pb, err := d.StartPlaybackDTMF()
 	require.NoError(t, err)
 
 	data := make([]byte, 6400)

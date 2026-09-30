@@ -18,6 +18,9 @@ import (
 // peer has no telephone-event.
 type DTMFMethod uint8
 
+// DTMFMethodAuto picks RFC 4733 when telephone-event was negotiated and falls
+// back to inband tones. DTMFMethodRTP and DTMFMethodInband force the
+// respective method.
 const (
 	DTMFMethodAuto DTMFMethod = iota
 	DTMFMethodRTP
@@ -37,7 +40,7 @@ type dtmfSendConfig struct {
 	isVolumeSet bool
 }
 
-// DTMFSendOption tunes DialogMedia.SendDTMF.
+// DTMFSendOption tunes Media.SendDTMF.
 type DTMFSendOption func(*dtmfSendConfig) error
 
 // WithDTMFMethod selects the delivery method. Default DTMFMethodAuto:
@@ -105,7 +108,7 @@ func WithDTMFVolume(v uint8) DTMFSendOption {
 // Explicit DTMFMethodRTP without negotiation returns ErrDTMFUnsupported.
 //
 // SIP INFO DTMF is NOT yet supported as a method.
-func (m *DialogMedia) SendDTMF(ctx context.Context, digits string, opts ...DTMFSendOption) error {
+func (m *Media) SendDTMF(ctx context.Context, digits string, opts ...DTMFSendOption) error {
 	cfg := dtmfSendConfig{
 		method:   DTMFMethodAuto,
 		interval: defaultDTMFInterval,
@@ -191,7 +194,7 @@ func (m *DialogMedia) SendDTMF(ctx context.Context, digits string, opts ...DTMFS
 
 // dtmfNegotiated reports whether the current media session carries a
 // telephone-event codec.
-func (m *DialogMedia) dtmfNegotiated() (bool, error) {
+func (m *Media) dtmfNegotiated() (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {
@@ -212,7 +215,7 @@ func (m *DialogMedia) dtmfNegotiated() (bool, error) {
 // internals via UpdateRTPSession rather than replacing the pointer — so
 // capturing it and writing after unlock is safe; it serializes on its own
 // internal lock against any concurrent write path.
-func (m *DialogMedia) sendDTMFRTP(ctx context.Context, digit rune, cfg dtmfSendConfig) error {
+func (m *Media) sendDTMFRTP(ctx context.Context, digit rune, cfg dtmfSendConfig) error {
 	w, err := m.dtmfWriterForDigit()
 	if err != nil {
 		return err
@@ -227,7 +230,7 @@ func (m *DialogMedia) sendDTMFRTP(ctx context.Context, digit rune, cfg dtmfSendC
 // dtmfWriterForDigit snapshots the current DTMF write path under the dialog
 // lock. It returns a writer whose packet handle stays valid after unlock; the
 // passthrough writer is unused by the event path, so it is not captured.
-func (m *DialogMedia) dtmfWriterForDigit() (*media.RTPDTMFWriter, error) {
+func (m *Media) dtmfWriterForDigit() (*media.RTPDTMFWriter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {

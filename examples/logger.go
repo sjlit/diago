@@ -7,18 +7,17 @@ import (
 	"os"
 
 	"github.com/emiago/sipgo/sip"
-	"github.com/sjlit/diago/v2/media"
 )
 
+// SetupLogger configures process-wide generic debug switches for the
+// examples. Per-dialog media tracing is configured with
+// diago.MediaConfig{Debug: true} (or MediaConfig.Tracer) instead of a global.
 func SetupLogger() {
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL"))); err != nil {
 		lvl = slog.LevelInfo
 	}
 	slog.SetLogLoggerLevel(lvl)
-	media.RTPDebug.Store(os.Getenv("RTP_DEBUG") == "true")
-	media.RTCPDebug.Store(os.Getenv("RTCP_DEBUG") == "true")
 	sip.SIPDebug = os.Getenv("SIP_DEBUG") == "true"
 	sip.TransactionFSMDebug = os.Getenv("SIP_TRANSACTION_DEBUG") == "true"
-	media.DTLSDebug.Store(os.Getenv("DTLS_DEBUG") == "true")
 }

@@ -16,8 +16,8 @@ import (
 )
 
 // MusicOnHold is a handle to a running hold-music loop on one dialog. Create
-// it with DialogMedia.PlayMusicOnHold and stop it with Stop (or
-// DialogMedia.StopMusicOnHold). The handle is safe for concurrent use.
+// it with Media.StartMusicOnHold and stop it with Stop (or
+// Media.StopMusicOnHold). The handle is safe for concurrent use.
 //
 // The loop re-resolves the dialog writer and negotiated codec every frame,
 // so it survives re-INVITEs and re-renders the tone at
@@ -70,7 +70,7 @@ type mohConfig struct {
 	tone audio.Tone
 }
 
-// MoHOption tunes DialogMedia.PlayMusicOnHold.
+// MoHOption tunes Media.StartMusicOnHold.
 type MoHOption func(*mohConfig) error
 
 // WithMoHTone sets the hold music source, overriding the dialog-level
@@ -82,7 +82,7 @@ func WithMoHTone(tone audio.Tone) MoHOption {
 	}
 }
 
-// PlayMusicOnHold starts looping hold music on the dialog and returns
+// StartMusicOnHold starts looping hold music on the dialog and returns
 // immediately. The tone source is the WithMoHTone option, falling back to the
 // dialog-level MediaConfig.MusicOnHold; with neither configured it returns
 // ErrMusicOnHoldNoTone. A dialog runs at most one hold-music loop: starting a
@@ -94,7 +94,7 @@ func WithMoHTone(tone audio.Tone) MoHOption {
 // peer holds us (negotiated recvonly/inactive) the RTP direction gate drops
 // the audio — a warning is logged and the loop keeps running so an Unhold
 // on either side resumes audibly.
-func (d *DialogMedia) PlayMusicOnHold(ctx context.Context, opts ...MoHOption) (*MusicOnHold, error) {
+func (d *Media) StartMusicOnHold(ctx context.Context, opts ...MoHOption) (*MusicOnHold, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -121,7 +121,7 @@ func (d *DialogMedia) PlayMusicOnHold(ctx context.Context, opts ...MoHOption) (*
 
 // StopMusicOnHold stops the running hold-music loop, if any, and waits for it
 // to exit. It is a no-op returning nil when nothing is playing.
-func (d *DialogMedia) StopMusicOnHold() error {
+func (d *Media) StopMusicOnHold() error {
 	d.mu.Lock()
 	m := d.moh
 	d.mu.Unlock()
@@ -133,7 +133,7 @@ func (d *DialogMedia) StopMusicOnHold() error {
 
 // playMusicOnHold installs the handle and spawns the loop. tone must carry at
 // least one segment.
-func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto bool) (*MusicOnHold, error) {
+func (d *Media) playMusicOnHold(ctx context.Context, tone audio.Tone, auto bool) (*MusicOnHold, error) {
 	// Synchronous render validation: resolve the writer now so setup mistakes
 	// surface as a return value instead of a loop that dies instantly.
 	props := MediaProps{}
@@ -191,8 +191,8 @@ func (d *DialogMedia) playMusicOnHold(ctx context.Context, tone audio.Tone, auto
 // The loop lifetime is detached from the Hold call's context: Hold's ctx
 // typically carries the re-INVITE timeout, so the music derives from
 // context.WithoutCancel(ctx) and runs until Unhold, Stop/StopMusicOnHold,
-// or dialog Close. Manual PlayMusicOnHold loops keep their caller ctx.
-func (d *DialogMedia) mohAutoStart(ctx context.Context, toneOverride *audio.Tone) {
+// or dialog Close. Manual StartMusicOnHold loops keep their caller ctx.
+func (d *Media) mohAutoStart(ctx context.Context, toneOverride *audio.Tone) {
 	tone := audio.Tone{}
 	if toneOverride != nil {
 		tone = *toneOverride
@@ -214,7 +214,7 @@ func (d *DialogMedia) mohAutoStart(ctx context.Context, toneOverride *audio.Tone
 
 // mohAutoStop stops the loop a Hold started automatically; manually started
 // music is left running and stays under the caller's Stop/ctx control.
-func (d *DialogMedia) mohAutoStop() {
+func (d *Media) mohAutoStop() {
 	d.mu.Lock()
 	m := d.moh
 	d.mu.Unlock()
@@ -234,8 +234,8 @@ func (d *DialogMedia) mohAutoStop() {
 // preserved across sample-rate changes); the glitch is one cadence at most.
 //
 // Lock order: the loop takes d.mu per frame via audioWriterProps. Nothing may
-// hold d.mu while waiting on this loop; DialogMedia.Close only cancels.
-func (d *DialogMedia) mohLoop(ctx context.Context, m *MusicOnHold, tone audio.Tone) {
+// hold d.mu while waiting on this loop; Media.Close only cancels.
+func (d *Media) mohLoop(ctx context.Context, m *MusicOnHold, tone audio.Tone) {
 	defer func() {
 		d.mu.Lock()
 		if d.moh == m {

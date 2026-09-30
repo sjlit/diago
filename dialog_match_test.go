@@ -34,16 +34,16 @@ func newDialogRequest(callID, fromTag, toTag string) *sip.Request {
 
 func TestDiagoMatchDialog_NilAndOutOfDialog(t *testing.T) {
 	ua, _ := sipgo.NewUA()
-	dg, err := New(ua, WithDefaultTransport())
+	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
 	// nil guards
-	_, ok := dg.MatchDialog(nil)
+	_, ok := dg.FindCall(nil)
 	assert.False(t, ok, "nil request must not match")
 
-	var nilDG *Diago
-	_, ok = nilDG.MatchDialog(newDialogRequest("c1", "f1", "t1"))
+	var nilDG *Agent
+	_, ok = nilDG.FindCall(newDialogRequest("c1", "f1", "t1"))
 	assert.False(t, ok, "nil engine must not match")
 
 	// out-of-dialog: INVITE without To tag
@@ -61,18 +61,18 @@ func TestDiagoMatchDialog_NilAndOutOfDialog(t *testing.T) {
 		Address: sip.Uri{User: "bob", Host: "example.com"},
 		Params:  sip.NewParams(),
 	})
-	_, ok = dg.MatchDialog(req)
+	_, ok = dg.FindCall(req)
 	assert.False(t, ok, "request without To tag is out-of-dialog")
 
 	// unknown dialog (tags present but not in cache)
 	req2 := newDialogRequest("unknown-call", "f1", "t1")
-	_, ok = dg.MatchDialog(req2)
+	_, ok = dg.FindCall(req2)
 	assert.False(t, ok)
 }
 
 func TestDiagoMatchDialog_ServerAndClient(t *testing.T) {
 	ua, _ := sipgo.NewUA()
-	dg, err := New(ua, WithDefaultTransport())
+	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
@@ -82,38 +82,38 @@ func TestDiagoMatchDialog_ServerAndClient(t *testing.T) {
 	reqSrv := newDialogRequest("call-srv", "from-srv", "to-srv")
 	idSrv, err := sip.DialogIDFromRequestUAS(reqSrv)
 	require.NoError(t, err)
-	sd := &DialogServerSession{}
+	sd := &InboundCall{}
 	require.NoError(t, dg.cache.server.store(ctx, idSrv, sd))
 
 	// Seed client dialog under its UAC id
 	reqCli := newDialogRequest("call-cli", "from-cli", "to-cli")
 	idCli, err := sip.DialogIDFromRequestUAC(reqCli)
 	require.NoError(t, err)
-	cd := &DialogClientSession{}
+	cd := &OutboundCall{}
 	require.NoError(t, dg.cache.client.store(ctx, idCli, cd))
 
 	// UAS request must match server
-	got, ok := dg.MatchDialog(reqSrv)
+	got, ok := dg.FindCall(reqSrv)
 	require.True(t, ok)
-	assert.Equal(t, DialogSession(sd), got, "UAS request should resolve to server dialog")
+	assert.Equal(t, Call(sd), got, "UAS request should resolve to server dialog")
 
 	// UAC request (same headers but lookup via second try) must match client.
 	// Build a request where UAS lookup misses but UAC hits: reuse reqCli which is not in server cache.
-	got, ok = dg.MatchDialog(reqCli)
+	got, ok = dg.FindCall(reqCli)
 	require.True(t, ok)
 	// reqCli's UAS id is Make(call-cli, to-cli, from-cli) which is not stored; UAC id is Make(call-cli, from-cli, to-cli) which is stored.
-	assert.Equal(t, DialogSession(cd), got, "UAC request should resolve to client dialog after server miss")
+	assert.Equal(t, Call(cd), got, "UAC request should resolve to client dialog after server miss")
 }
 
 func TestDiagoMatchDialog_ServerPriority(t *testing.T) {
 	ua, _ := sipgo.NewUA()
-	dg, err := New(ua, WithDefaultTransport())
+	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
 	ctx := context.Background()
 
-	// Same request matches both caches: server should win (mirrors internal MatchDialog order).
+	// Same request matches both caches: server should win (mirrors internal FindCall order).
 	req := newDialogRequest("call-both", "from-both", "to-both")
 	idUAS, err := sip.DialogIDFromRequestUAS(req)
 	require.NoError(t, err)
@@ -121,14 +121,14 @@ func TestDiagoMatchDialog_ServerPriority(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, idUAS, idUAC, "UAS and UAC ids must differ when tags differ")
 
-	sd := &DialogServerSession{}
-	cd := &DialogClientSession{}
+	sd := &InboundCall{}
+	cd := &OutboundCall{}
 	require.NoError(t, dg.cache.server.store(ctx, idUAS, sd))
 	require.NoError(t, dg.cache.client.store(ctx, idUAC, cd))
 
-	got, ok := dg.MatchDialog(req)
+	got, ok := dg.FindCall(req)
 	require.True(t, ok)
-	assert.Equal(t, DialogSession(sd), got, "server must win over client for same request")
+	assert.Equal(t, Call(sd), got, "server must win over client for same request")
 }
 
 func TestDiagoMatchDialog_RealClientDialog(t *testing.T) {
@@ -138,7 +138,7 @@ func TestDiagoMatchDialog_RealClientDialog(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	d, err := dg.Dial(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
 
@@ -175,7 +175,7 @@ func TestDiagoMatchDialog_RealClientDialog(t *testing.T) {
 		Params:  toParams2,
 	})
 
-	got, ok := dg.MatchDialog(req)
+	got, ok := dg.FindCall(req)
 	require.True(t, ok, "in-dialog request for confirmed client dialog must be found")
-	assert.Equal(t, DialogSession(d), got)
+	assert.Equal(t, Call(d), got)
 }

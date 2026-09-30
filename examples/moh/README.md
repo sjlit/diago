@@ -17,11 +17,11 @@ Dial `sip:alice@127.0.0.1`. Once the call is up:
 Manual control (start a goroutine anywhere after `Answer`):
 
 ```go
-inDialog.PlayMusicOnHold(ctx, diago.WithMoHTone(customTone))
+inDialog.Media().StartMusicOnHold(ctx, diago.WithMoHTone(customTone))
 // ...
-inDialog.StopMusicOnHold()
+inDialog.Media().StopMusicOnHold()
 ```
 
-`PlayMusicOnHold`/`StopMusicOnHold` can also be driven by an out-of-band
+`StartMusicOnHold`/`StopMusicOnHold` can also be driven by an out-of-band
 trigger (DTMF event, web hook, etc.). The dialog holds at most one music
 loop — a second start returns `ErrMusicOnHoldActive`.

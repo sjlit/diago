@@ -17,7 +17,7 @@ import (
 
 type fakeBridgeDialog struct {
 	id string
-	dm *DialogMedia
+	dm *Media
 }
 
 func (f *fakeBridgeDialog) ID() string               { return f.id }
@@ -25,21 +25,18 @@ func (f *fakeBridgeDialog) Context() context.Context { return context.Background
 func (f *fakeBridgeDialog) FromUser() string         { return "fake-from" }
 func (f *fakeBridgeDialog) ToUser() string           { return "fake-to" }
 func (f *fakeBridgeDialog) Transport() string        { return "UDP" }
-func (f *fakeBridgeDialog) Hangup(ctx context.Context, opts ...SignalOption) error {
+func (f *fakeBridgeDialog) Hangup(ctx context.Context, opts ...HangupOption) error {
 	return nil
 }
-func (f *fakeBridgeDialog) HangupAndClose(ctx context.Context, opts ...SignalOption) error {
-	return f.Close()
-}
-func (f *fakeBridgeDialog) DialogMedia() *DialogMedia { return f.dm }
-func (f *fakeBridgeDialog) DialogSIP() *sipgo.Dialog  { return nil }
-func (f *fakeBridgeDialog) Close() error              { return nil }
+func (f *fakeBridgeDialog) Media() *Media      { return f.dm }
+func (f *fakeBridgeDialog) SIP() *sipgo.Dialog { return nil }
+func (f *fakeBridgeDialog) Close() error       { return nil }
 func (f *fakeBridgeDialog) Do(ctx context.Context, req *sip.Request) (*sip.Response, error) {
 	return nil, nil
 }
 
-func newBridgeTestDialog(id string) DialogSession {
-	dm := &DialogMedia{
+func newBridgeTestDialog(id string) Call {
+	dm := &Media{
 		mediaSession: &media.MediaSession{
 			Codecs: []media.Codec{media.CodecAudioAlaw},
 		},
@@ -53,7 +50,7 @@ func newBridgeTestDialog(id string) DialogSession {
 
 // bridgeDialogs snapshots the bridge dialog list for assertions. GetDialogs
 // was removed from the public API in v2 P5; tests stay white-box.
-func bridgeDialogs(b *Bridge) []DialogSession {
+func bridgeDialogs(b *Bridge) []Call {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Clone(b.dialogs)
@@ -64,27 +61,27 @@ func TestBridgeLifecycle_RemoveClose(t *testing.T) {
 	b.WaitDialogsNum = 99 // no auto proxy
 	d1 := newBridgeTestDialog("a")
 	d2 := newBridgeTestDialog("b")
-	require.NoError(t, b.AddDialogSession(d1))
-	require.NoError(t, b.AddDialogSession(d2))
+	require.NoError(t, b.Add(d1))
+	require.NoError(t, b.Add(d2))
 	require.Len(t, bridgeDialogs(b), 2)
 
 	// Third add rejected atomically (no stale append).
 	d3 := newBridgeTestDialog("c")
-	require.Error(t, b.AddDialogSession(d3))
+	require.Error(t, b.Add(d3))
 	require.Len(t, bridgeDialogs(b), 2)
 
 	// Remove one; originator falls back to remaining.
-	require.NoError(t, b.RemoveDialogSession(d1))
+	require.NoError(t, b.Remove(d1))
 	require.Len(t, bridgeDialogs(b), 1)
 	require.Equal(t, "b", b.Originator.ID())
 	// Missing ID is no-op.
-	require.NoError(t, b.RemoveDialogSession(d1))
+	require.NoError(t, b.Remove(d1))
 
 	// Close idempotent; Add after Close rejected.
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Close())
 	require.Empty(t, bridgeDialogs(b))
-	require.ErrorIs(t, b.AddDialogSession(newBridgeTestDialog("d")), ErrBridgeClosed)
+	require.ErrorIs(t, b.Add(newBridgeTestDialog("d")), ErrBridgeClosed)
 }
 
 // endlessReader produces PCM forever so the proxy loop keeps running until its
@@ -101,7 +98,7 @@ func (endlessReader) Read(p []byte) (int, error) {
 // newBridgePausableDialog builds a dialog whose proxy writer is the real
 // pause-aware RTP writer handle (no fake audioWriter), so bridge Close/Remove can
 // interrupt the copy loop through the write gate.
-func newBridgePausableDialog(t *testing.T, id string) DialogSession {
+func newBridgePausableDialog(t *testing.T, id string) Call {
 	t.Helper()
 
 	msess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
@@ -112,7 +109,7 @@ func newBridgePausableDialog(t *testing.T, id string) DialogSession {
 	writer := media.NewRTPPacketWriterSession(media.NewRTPSession(msess))
 	_ = writer.Close() // no 20ms pacing: the test only needs the pause gate
 
-	dm := &DialogMedia{
+	dm := &Media{
 		mediaSession:    msess,
 		audioReader:     endlessReader{},
 		rtpPacketWriter: writer,
@@ -127,8 +124,8 @@ func newBridgePausableDialog(t *testing.T, id string) DialogSession {
 func TestBridgeProxyMediaControlClaimAndClose(t *testing.T) {
 	b := NewBridge()
 	b.WaitDialogsNum = 99 // no auto proxy
-	require.NoError(t, b.AddDialogSession(newBridgePausableDialog(t, "a")))
-	require.NoError(t, b.AddDialogSession(newBridgePausableDialog(t, "b")))
+	require.NoError(t, b.Add(newBridgePausableDialog(t, "a")))
+	require.NoError(t, b.Add(newBridgePausableDialog(t, "b")))
 
 	_, err := b.ProxyMediaControl()
 	require.NoError(t, err)
@@ -176,12 +173,12 @@ func TestBridgeZeroValueUsable(t *testing.T) {
 	require.NotNil(t, b.proxyDone)
 	require.Equal(t, 2, b.WaitDialogsNum)
 
-	require.Error(t, b.AddDialogSession(nil))
-	require.Error(t, b.RemoveDialogSession(nil))
+	require.Error(t, b.Add(nil))
+	require.Error(t, b.Remove(nil))
 
 	// A single dialog must not start the proxy (WaitDialogsNum defaults to 2).
-	d := &fakeBridgeDialog{id: "zero-value", dm: &DialogMedia{}}
-	require.NoError(t, b.AddDialogSession(d))
+	d := &fakeBridgeDialog{id: "zero-value", dm: &Media{}}
+	require.NoError(t, b.Add(d))
 
 	require.NoError(t, b.Close())
 }
@@ -191,7 +188,7 @@ func TestBridgeMixZeroValueUsable(t *testing.T) {
 	b := &BridgeMix{}
 	require.NotPanics(t, func() { _ = b.String() })
 	require.NotNil(t, b.log)
-	require.Error(t, b.AddDialogSession(nil))
-	require.Error(t, b.RemoveDialogSession(nil))
+	require.Error(t, b.Add(nil))
+	require.Error(t, b.Remove(nil))
 	require.NoError(t, b.mixStart())
 }

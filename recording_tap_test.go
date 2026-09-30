@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// tapTestDialog returns a DialogMedia that looks like a just-answered dialog
+// tapTestDialog returns a Media that looks like a just-answered dialog
 // with fake IO in place of live RTP, so the tap can be exercised without a
 // network. probeR/probeW are the pre-existing pipeline heads; identity of
 // these after Close tells us whether the tap uninstalled itself.
-func tapTestDialog() (*DialogMedia, *bytes.Buffer, *bytes.Buffer) {
+func tapTestDialog() (*Media, *bytes.Buffer, *bytes.Buffer) {
 	fakePCM := bytes.Repeat([]byte("0123456789"), 32)
 	alawFrame := make([]byte, 160)
 	_, _ = audio.EncodeAlawTo(alawFrame, fakePCM)
@@ -27,7 +27,7 @@ func tapTestDialog() (*DialogMedia, *bytes.Buffer, *bytes.Buffer) {
 
 	probeR := bytes.NewBuffer(encoded)
 	probeW := &bytes.Buffer{}
-	d := &DialogMedia{
+	d := &Media{
 		mediaSession: &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
 		audioReader:  probeR,
 		audioWriter:  probeW,
@@ -35,20 +35,20 @@ func tapTestDialog() (*DialogMedia, *bytes.Buffer, *bytes.Buffer) {
 	return d, probeR, probeW
 }
 
-func chainReader(d *DialogMedia) io.Reader {
+func chainReader(d *Media) io.Reader {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.audioReader
 }
 
-func chainWriter(d *DialogMedia) io.Writer {
+func chainWriter(d *Media) io.Writer {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.audioWriter
 }
 
 func TestStartStereoRecordingNotAnswered(t *testing.T) {
-	d := &DialogMedia{}
+	d := &Media{}
 	f, err := os.CreateTemp(t.TempDir(), "rec-*.wav")
 	require.NoError(t, err)
 	defer f.Close()
@@ -140,7 +140,7 @@ func TestStereoRecordingWritesWav(t *testing.T) {
 	require.NoError(t, err)
 	encoded := bytes.Repeat(alawFrame, 4)
 
-	d := &DialogMedia{
+	d := &Media{
 		mediaSession: &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
 		audioReader:  bytes.NewBuffer(encoded),
 		audioWriter:  bytes.NewBuffer([]byte{}),

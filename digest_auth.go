@@ -16,6 +16,8 @@ import (
 	"github.com/icholy/digest"
 )
 
+// DigestAuth is the credential and challenge profile for SIP digest
+// authentication (RFC 2617 / RFC 8760).
 type DigestAuth struct {
 	Username string
 	Password string
@@ -55,11 +57,13 @@ type digestChallengeEntry struct {
 	expireTimer *time.Timer
 }
 
+// DigestAuthServer issues and validates SIP digest challenges for dialogs.
 type DigestAuthServer struct {
 	mu    sync.Mutex
 	cache map[string]*digestChallengeEntry
 }
 
+// NewDigestServer creates a digest auth server with its own nonce cache.
 func NewDigestServer() *DigestAuthServer {
 	t := &DigestAuthServer{
 		cache: make(map[string]*digestChallengeEntry),
@@ -67,6 +71,7 @@ func NewDigestServer() *DigestAuthServer {
 	return t
 }
 
+// Close stops the nonce expiry timers. The server can not be reused.
 func (s *DigestAuthServer) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -76,12 +81,16 @@ func (s *DigestAuthServer) Close() {
 }
 
 var (
+	// ErrDigestAuthNoChallenge is returned when the presented nonce is unknown
+	// or expired; a fresh challenge is written.
 	ErrDigestAuthNoChallenge = errors.New("no challenge")
-	ErrDigestAuthBadCreds    = errors.New("bad credentials")
+	// ErrDigestAuthBadCreds is returned when the digest response does not
+	// match the credentials; a fresh challenge is written.
+	ErrDigestAuthBadCreds = errors.New("bad credentials")
 )
 
 // AuthorizeRequest authorizes request. Returns SIP response that can be passed with error
-func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (res *sip.Response, err error) {
+func (s *DigestAuthServer) AuthorizeRequest(req *Request, auth DigestAuth) (res *Response, err error) {
 	if auth.Realm == "" {
 		auth.Realm = "sipgo"
 	}
@@ -141,7 +150,7 @@ func (s *DigestAuthServer) AuthorizeRequest(req *sip.Request, auth DigestAuth) (
 
 // challenge issues a fresh nonce per advertised algorithm and builds a 401
 // carrying one WWW-Authenticate challenge per algorithm (RFC 8760)
-func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Response {
+func (s *DigestAuthServer) challenge(req *Request, auth DigestAuth) *Response {
 	res := sip.NewResponseFromRequest(req, sip.StatusUnauthorized, "Unauthorized", nil)
 
 	for _, alg := range auth.algorithms() {
@@ -182,7 +191,9 @@ func (s *DigestAuthServer) challenge(req *sip.Request, auth DigestAuth) *sip.Res
 	return res
 }
 
-func (s *DigestAuthServer) AuthorizeDialog(d *DialogServerSession, auth DigestAuth) error {
+// AuthorizeDialog challenges or validates the dialog's INVITE; see
+// InboundCall.Authorize.
+func (s *DigestAuthServer) AuthorizeDialog(d *InboundCall, auth DigestAuth) error {
 	// https://www.rfc-editor.org/rfc/rfc2617#page-6
 	req := d.InviteRequest
 	res, err := s.AuthorizeRequest(req, auth)

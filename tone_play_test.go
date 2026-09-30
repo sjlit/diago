@@ -35,13 +35,13 @@ func (c *capturedRTPWriter) count() int {
 	return len(c.packets)
 }
 
-// newFakeDialogMedia builds a DialogMedia with an in-memory write path.
-func newFakeDialogMedia(t *testing.T, codecs []media.Codec) (*DialogMedia, *capturedRTPWriter) {
+// newFakeMedia builds a Media with an in-memory write path.
+func newFakeMedia(t *testing.T, codecs []media.Codec) (*Media, *capturedRTPWriter) {
 	t.Helper()
 	sink := &capturedRTPWriter{}
 	sess := &media.MediaSession{Codecs: codecs}
 	pw := media.NewRTPPacketWriter(sink, media.CodecAudioUlaw)
-	m := &DialogMedia{}
+	m := &Media{}
 	m.initMediaSessionUnsafe(sess, nil, pw)
 	return m, sink
 }
@@ -51,7 +51,7 @@ func ulawCodecs() []media.Codec {
 }
 
 func TestPlayToneFinite(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 
 	tone := audio.Tone{Segments: []audio.ToneSegment{{Freqs: []float64{450}, On: 100 * time.Millisecond}}}
 	if err := m.PlayTone(context.Background(), tone); err != nil {
@@ -69,7 +69,7 @@ func TestPlayToneFinite(t *testing.T) {
 }
 
 func TestPlayToneLoopUntilCancel(t *testing.T) {
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -92,7 +92,7 @@ func TestPlayToneWaitsWritePause(t *testing.T) {
 	// A concurrent PauseAudioWrite (refcounted gate owned by another
 	// component) must not kill the tone: PlayTone waits for the release and
 	// replays the gated frame, losing no samples.
-	m, sink := newFakeDialogMedia(t, ulawCodecs())
+	m, sink := newFakeMedia(t, ulawCodecs())
 	release, err := m.PauseAudioWrite()
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestPlayToneWaitsWritePause(t *testing.T) {
 }
 
 func TestPlayToneClosedDialog(t *testing.T) {
-	m, _ := newFakeDialogMedia(t, ulawCodecs())
+	m, _ := newFakeMedia(t, ulawCodecs())
 	m.closed = true
 	err := m.PlayTone(context.Background(), audio.ToneDial)
 	if !errors.Is(err, ErrDialogClosed) {

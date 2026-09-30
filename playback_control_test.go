@@ -319,9 +319,9 @@ func TestPlaybackControlReplayNotReplayable(t *testing.T) {
 }
 
 func TestPlaybackControlReplayFile(t *testing.T) {
-	dialog := func() *DialogServerSession {
-		return &DialogServerSession{
-			dialogMedia: DialogMedia{
+	dialog := func() *InboundCall {
+		return &InboundCall{
+			callMedia: Media{
 				mediaSession:    &media.MediaSession{Codecs: []media.Codec{media.CodecAudioUlaw}},
 				audioWriter:     &countWriter{delay: time.Millisecond},
 				rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
@@ -330,14 +330,14 @@ func TestPlaybackControlReplayFile(t *testing.T) {
 	}
 
 	// Measure single pass first
-	single, err := dialog().CreatePlaybackControl()
+	single, err := dialog().StartPlaybackControl()
 	require.NoError(t, err)
 	singleWritten, err := single.PlayFile("testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	require.Greater(t, singleWritten, int64(10000))
 
 	// Replay once, so at least double amount should be written
-	playback, err := dialog().CreatePlaybackControl()
+	playback, err := dialog().StartPlaybackControl()
 	require.NoError(t, err)
 
 	done := make(chan error, 1)

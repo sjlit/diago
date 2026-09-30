@@ -23,27 +23,24 @@ func main() {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := diago.New(ua,
-		diago.WithTransport(
-			diago.Transport{
-				ID:        "tcp",
-				Transport: "tcp",
-				BindHost:  "127.0.0.1",
-				BindPort:  16443,
-				Media: diago.TransportMediaConfig{
-					SRTP: diago.SRTPConfig{ // This enables SRTP DTLS
-						Mode: diago.SecureRTPDTLS,
-						DTLS: media.DTLSConfig{
-							Certificates:     []tls.Certificate{testdata.ServerCertificate()},
-							ServerClientAuth: media.ServerClientAuthRequireCert,
-						},
-					},
+	dg, err := diago.New(diago.WithUserAgent(ua),
+		diago.WithMediaProfile("dtls", diago.MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+			SRTP: diago.SRTPConfig{ // This enables SRTP DTLS
+				Mode: diago.SecureRTPDTLS,
+				DTLS: media.DTLSConfig{
+					Certificates:     []tls.Certificate{testdata.ServerCertificate()},
+					ServerClientAuth: media.ServerClientAuthRequireCert,
 				},
 			},
-		),
-		diago.WithMediaConfig(
-			diago.MediaConfig{
-				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+		}),
+		diago.WithTransport(
+			diago.Transport{
+				ID:       "tcp",
+				Network:  "tcp",
+				BindHost: "127.0.0.1",
+				BindPort: 16443,
+				Profile:  "dtls",
 			},
 		))
 	if err != nil {
@@ -51,7 +48,7 @@ func main() {
 		return
 	}
 
-	err = dg.Serve(ctx, func(ctx context.Context, d *diago.DialogServerSession) error {
+	err = dg.Serve(ctx, func(ctx context.Context, d *diago.InboundCall) error {
 		d.Trying(ctx)
 		if err := d.Answer(ctx); err != nil {
 			panic(err)

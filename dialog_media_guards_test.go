@@ -26,7 +26,7 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dg, err := New(ua, WithDefaultTransport(), WithLogger(logger))
+	dg, err := New(WithUserAgent(ua), WithDefaultTransport(), WithLogger(logger))
 	require.NoError(t, err)
 	require.Same(t, logger, dg.mediaConf.Logger)
 
@@ -35,7 +35,7 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	require.Same(t, logger, dg.mediaConfigForTransport(tran).Logger)
 
 	custom := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dg2, err := New(ua, WithDefaultTransport(), WithLogger(logger), WithMediaConfig(MediaConfig{
+	dg2, err := New(WithUserAgent(ua), WithDefaultTransport(), WithLogger(logger), WithMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		Logger: custom,
 	}))
@@ -43,10 +43,10 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	require.Same(t, custom, dg2.mediaConf.Logger, "an explicit MediaConfig.Logger wins")
 }
 
-// newTestDialogMedia returns a DialogMedia with a real (loopback) media
+// newTestMedia returns a Media with a real (loopback) media
 // session, RTP session and stable reader/writer handles, mimicking a dialog
 // right after Answer. The caller is responsible for closing it.
-func newTestDialogMedia(t *testing.T) *DialogMedia {
+func newTestMedia(t *testing.T) *Media {
 	t.Helper()
 
 	sess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
@@ -55,7 +55,7 @@ func newTestDialogMedia(t *testing.T) *DialogMedia {
 		sess.Close()
 	})
 
-	d := &DialogMedia{}
+	d := &Media{}
 	rtpSess := media.NewRTPSession(sess)
 	d.mu.Lock()
 	err = d.initRTPSessionUnsafe(sess, rtpSess)
@@ -64,9 +64,9 @@ func newTestDialogMedia(t *testing.T) *DialogMedia {
 	return d
 }
 
-func TestDialogMediaGuardsNotAnswered(t *testing.T) {
+func TestMediaGuardsNotAnswered(t *testing.T) {
 	// Zero-value media: no session ever created (dialog was never answered).
-	d := &DialogMedia{}
+	d := &Media{}
 
 	t.Run("audio reader", func(t *testing.T) {
 		_, err := d.AudioReader()
@@ -87,27 +87,27 @@ func TestDialogMediaGuardsNotAnswered(t *testing.T) {
 		assert.ErrorIs(t, d.ListenContext(context.Background()), ErrDialogNotAnswered)
 	})
 	t.Run("create playback", func(t *testing.T) {
-		_, err := d.CreatePlayback()
+		_, err := d.StartPlayback()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create playback control", func(t *testing.T) {
-		_, err := d.CreatePlaybackControl()
+		_, err := d.StartPlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create playback dtmf", func(t *testing.T) {
-		_, err := d.CreatePlaybackDTMF()
+		_, err := d.StartPlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create ringtone playback", func(t *testing.T) {
-		_, err := d.CreateRingtonePlayback()
+		_, err := d.StartRingtone()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create dtmf reader", func(t *testing.T) {
-		_, err := d.CreateDTMFReader()
+		_, err := d.NewDTMFReader()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create dtmf writer", func(t *testing.T) {
-		_, err := d.CreateDTMFWriter()
+		_, err := d.NewDTMFWriter()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("discard queued rtp", func(t *testing.T) {
@@ -116,8 +116,8 @@ func TestDialogMediaGuardsNotAnswered(t *testing.T) {
 	})
 }
 
-func TestDialogMediaGuardsClosed(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaGuardsClosed(t *testing.T) {
+	d := newTestMedia(t)
 	require.NoError(t, d.Close())
 
 	t.Run("audio reader", func(t *testing.T) {
@@ -139,27 +139,27 @@ func TestDialogMediaGuardsClosed(t *testing.T) {
 		assert.ErrorIs(t, d.ListenContext(context.Background()), ErrDialogClosed)
 	})
 	t.Run("create playback", func(t *testing.T) {
-		_, err := d.CreatePlayback()
+		_, err := d.StartPlayback()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create playback control", func(t *testing.T) {
-		_, err := d.CreatePlaybackControl()
+		_, err := d.StartPlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create playback dtmf", func(t *testing.T) {
-		_, err := d.CreatePlaybackDTMF()
+		_, err := d.StartPlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create ringtone playback", func(t *testing.T) {
-		_, err := d.CreateRingtonePlayback()
+		_, err := d.StartRingtone()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create dtmf reader", func(t *testing.T) {
-		_, err := d.CreateDTMFReader()
+		_, err := d.NewDTMFReader()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create dtmf writer", func(t *testing.T) {
-		_, err := d.CreateDTMFWriter()
+		_, err := d.NewDTMFWriter()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("discard queued rtp", func(t *testing.T) {
@@ -172,7 +172,7 @@ func TestDialogMediaGuardsClosed(t *testing.T) {
 }
 
 func TestDialogClientGuardsNotAnswered(t *testing.T) {
-	d := &DialogClientSession{DialogClientSession: &sipgo.DialogClientSession{}}
+	d := &OutboundCall{DialogClientSession: &sipgo.DialogClientSession{}}
 
 	t.Run("hold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Hold(context.Background()), ErrDialogNotAnswered)
@@ -191,7 +191,7 @@ func TestDialogClientGuardsNotAnswered(t *testing.T) {
 }
 
 func TestDialogServerGuardsNotAnswered(t *testing.T) {
-	d := &DialogServerSession{DialogServerSession: &sipgo.DialogServerSession{}}
+	d := &InboundCall{DialogServerSession: &sipgo.DialogServerSession{}}
 
 	t.Run("hold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Hold(context.Background()), ErrDialogNotAnswered)
@@ -204,15 +204,15 @@ func TestDialogServerGuardsNotAnswered(t *testing.T) {
 	})
 }
 
-// TestDialogMediaGuardSetupWindow ensures the reader/writer nil window during
+// TestMediaGuardSetupWindow ensures the reader/writer nil window during
 // setup (mediaSession set via initMediaSessionFromConf, handles not yet
 // created) also surfaces as ErrDialogNotAnswered instead of a typed-nil panic.
-func TestDialogMediaGuardSetupWindow(t *testing.T) {
+func TestMediaGuardSetupWindow(t *testing.T) {
 	sess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
 	require.NoError(t, err)
 	defer sess.Close()
 
-	d := &DialogMedia{}
+	d := &Media{}
 	require.NoError(t, d.initMediaSessionFromConf(MediaConfig{Codecs: sess.Codecs}))
 
 	_, err = d.AudioReader()
@@ -225,12 +225,12 @@ func TestDialogMediaGuardSetupWindow(t *testing.T) {
 // same setup window. Its guard used interface nil checks on typed-nil
 // getAudioReader/getAudioWriter results, so it installed a recording tap whose
 // first read panicked with a nil pointer dereference.
-func TestDialogMediaStartStereoRecordingSetupWindow(t *testing.T) {
+func TestMediaStartStereoRecordingSetupWindow(t *testing.T) {
 	sess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
 	require.NoError(t, err)
 	defer sess.Close()
 
-	d := &DialogMedia{}
+	d := &Media{}
 	require.NoError(t, d.initMediaSessionFromConf(MediaConfig{Codecs: sess.Codecs}))
 
 	f, err := os.CreateTemp(t.TempDir(), "rec-*.wav")
@@ -242,49 +242,49 @@ func TestDialogMediaStartStereoRecordingSetupWindow(t *testing.T) {
 	require.Nil(t, rec)
 }
 
-// TestDialogMediaPlaybackTimestampResetHook verifies that playback factories
+// TestMediaPlaybackTimestampResetHook verifies that playback factories
 // arm the stable writer handle's ResetTimestamp hook, including the control
 // variant (replay must advance the RTP timeline like a fresh play).
-func TestDialogMediaPlaybackTimestampResetHook(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaPlaybackTimestampResetHook(t *testing.T) {
+	d := newTestMedia(t)
 
-	pb, err := d.CreatePlayback()
+	pb, err := d.StartPlayback()
 	require.NoError(t, err)
 	require.NotNil(t, pb.onPlay)
 
-	pbc, err := d.CreatePlaybackControl()
+	pbc, err := d.StartPlaybackControl()
 	require.NoError(t, err)
 	require.NotNil(t, pbc.AudioPlayback.onPlay)
 }
 
-// TestDialogMediaPlaybackWithoutRTPWriterHandle locks the custom-IO pipeline
+// TestMediaPlaybackWithoutRTPWriterHandle locks the custom-IO pipeline
 // behavior: without a stable RTP writer handle there is no timestamp reset to
 // arm, and the playback factories must not panic on the nil handle.
-func TestDialogMediaPlaybackWithoutRTPWriterHandle(t *testing.T) {
+func TestMediaPlaybackWithoutRTPWriterHandle(t *testing.T) {
 	sess, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
 	require.NoError(t, err)
 	defer sess.Close()
 
-	d := &DialogMedia{}
+	d := &Media{}
 	d.mu.Lock()
 	d.mediaSession = sess
 	d.audioWriter = io.Discard
 	d.mu.Unlock()
 
-	pb, err := d.CreatePlayback()
+	pb, err := d.StartPlayback()
 	require.NoError(t, err)
 	require.Nil(t, pb.onPlay)
 
-	pbc, err := d.CreatePlaybackControl()
+	pbc, err := d.StartPlaybackControl()
 	require.NoError(t, err)
 	require.Nil(t, pbc.AudioPlayback.onPlay)
 }
 
-// TestDialogMediaClosedRejectsInstall locks the teardown contract: once the
+// TestMediaClosedRejectsInstall locks the teardown contract: once the
 // dialog media is closed, setup paths must refuse to create/install media
 // again instead of leaving orphaned sockets and monitors behind.
-func TestDialogMediaClosedRejectsInstall(t *testing.T) {
-	d := &DialogMedia{}
+func TestMediaClosedRejectsInstall(t *testing.T) {
+	d := &Media{}
 	require.NoError(t, d.Close())
 
 	// No listeners may be created after close.
@@ -305,7 +305,7 @@ func TestDialogMediaClosedRejectsInstall(t *testing.T) {
 	assert.Nil(t, d.rtpPacketWriter)
 
 	// A late media update must not replace sessions after close either.
-	d2 := newTestDialogMedia(t)
+	d2 := newTestMedia(t)
 	require.NoError(t, d2.Close())
 	replacement, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
 	require.NoError(t, err)

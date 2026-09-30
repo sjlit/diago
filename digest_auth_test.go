@@ -254,7 +254,7 @@ func TestDigestAuthorizeDialogSends401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &DialogServerSession{DialogServerSession: sess}
+	d := &InboundCall{DialogServerSession: sess}
 
 	srv := NewDigestServer()
 	defer srv.Close()
@@ -299,7 +299,7 @@ func TestDigestAuthorizeDialogBadCredsWrites401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &DialogServerSession{DialogServerSession: sess}
+	d := &InboundCall{DialogServerSession: sess}
 
 	srv := NewDigestServer()
 	defer srv.Close()

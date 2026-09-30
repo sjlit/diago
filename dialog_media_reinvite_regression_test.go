@@ -14,15 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDialogMediaSessionReplacementDTMF is the regression test for the
+// TestMediaSessionReplacementDTMF is the regression test for the
 // snapshot-vs-replace design defect: a DTMF reader created before a media
 // update (re-INVITE) must keep working after the update. The reader resolves
 // the current media session at use time and the stable
 // reader/writer handles are hot-swapped, never replaced.
-func TestDialogMediaSessionReplacementDTMF(t *testing.T) {
-	d := newTestDialogMedia(t)
+func TestMediaSessionReplacementDTMF(t *testing.T) {
+	d := newTestMedia(t)
 
-	r, err := d.CreateDTMFReader()
+	r, err := d.NewDTMFReader()
 	require.NoError(t, err)
 
 	oldSess := d.currentMediaSession()

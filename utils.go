@@ -6,12 +6,9 @@ package diago
 import (
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httputil"
 	"strings"
 	"sync"
 
-	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2/media"
 )
 
@@ -34,25 +31,7 @@ func closeAndLog(log *slog.Logger, closer io.Closer, msg string) {
 	}
 }
 
-type loggingTransport struct{}
-
-func (s *loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	reqBytes, _ := httputil.DumpRequestOut(r, false)
-
-	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err != nil {
-		slog.Debug("HTTP Debug", "request", string(reqBytes), "error", err)
-		return nil, err
-	}
-
-	respBytes, _ := httputil.DumpResponse(resp, false)
-
-	slog.Debug("HTTP Debug", "request", string(reqBytes), "response", string(respBytes))
-
-	return resp, nil
-}
-
-func uri2Header(uri sip.Uri) string {
+func uri2Header(uri URI) string {
 	buf := &strings.Builder{}
 	buf.WriteString("<")
 	uri.StringWrite(buf)

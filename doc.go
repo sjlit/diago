@@ -18,31 +18,48 @@
 //
 // # Dialog model
 //
-// Server dialogs are delivered to a DialogHandler:
-//   - Returning nil hangs up the call (BYE once confirmed, otherwise a 480
-//     decline).
-//   - Returning an error maps it to a final response (ErrDecline/ErrBusy/
-//     ErrNotFound/*ResponseError); wrap ErrResponseSent when the handler
-//     already wrote the final response.
+// Server dialogs are delivered to a CallHandler:
+//   - Returning before a final response was sent declines the pending INVITE
+//     (nil -> 480, or the mapped final response for an error:
+//     ErrDecline/ErrBusy/ErrNotFound/*ResponseError); wrap ErrResponseSent
+//     when the handler already wrote the final response.
+//   - Answering and returning keeps the call alive: the framework owns the
+//     dialog until the peer ends it, Close runs or the handler hangs it
+//     up. Once a 2xx was sent, teardown is always by BYE.
 //
-// A handler that wants the call alive must block until it ends.
-//
-// Client dialogs start with NewDialog+Invite or the Dial/DialBridge helpers.
-// HangupAndClose is the safe one-call teardown for owners.
+// Inbound dialogs are delivered to a CallHandler as *InboundCall; outbound
+// calls are created with Dial("sip:user@host") (or NewCall+Invite for full
+// control) and are *OutboundCall. Hangup ends the signaling; Close releases
+// local resources. The framework closes a dialog when it ends.
 //
 // # Media model
 //
-// DialogMedia is the single owner of the active media session. Components
-// resolve the session, reader or writer at use time through DialogMedia (or
+// Media is the single owner of the active media session. Components
+// resolve the session, reader or writer at use time through Media (or
 // its stable RTPPacketReader/RTPPacketWriter handles) instead of capturing
 // pointers: a re-INVITE hot-swaps the internals without replacing the
 // handles. PauseAudioRead/PauseAudioWrite are refcounted gates used to stop
 // or throttle a component without disturbing others.
 //
 // Construction-time media settings live in MediaConfig: codecs, SRTP/DTLS,
-// RTP bind/advertise addresses, port range, SDP name and the optional Logger.
-// MediaConfig.Logger (defaulting to the WithLogger logger) receives
-// media-pipeline and dialog-component logs.
+// RTP bind/advertise addresses, port range, SDP name, the optional Logger
+// (media-pipeline and dialog-component logs) and the playback HTTPClient.
+// MediaConfig.Debug (optionally with MediaConfig.Tracer) enables per-dialog
+// RTP/RTCP tracing; DTLS handshake logging is media.DTLSConfig.Debug. There
+// is no process-wide mutable media configuration.
+//
+// Transports can carry a different, complete configuration: register one with
+// WithMediaProfile and select it with Transport.Profile. Profiles never merge
+// field-by-field; only the transport-derived bind/advertise addresses fill
+// fields a profile leaves nil.
+//
+// # Options
+//
+// Per-call behavior is configured with the With* option constructors. Every
+// API takes the option interface for its operation (ResponseOption,
+// AnswerOption, HangupOption, InviteOption, DialOption, RegisterOption, ...)
+// and each constructor implements only the interfaces it is valid for:
+// passing an option an API does not consume is a compile error.
 //
 // # Concurrency and contexts
 //
@@ -50,16 +67,27 @@
 // otherwise. Media entry points return ErrDialogNotAnswered/ErrDialogClosed
 // before media exists or after teardown.
 //
-// Most signaling methods honor ctx while sending, but the 2xx ACK wait of
-// Answer, AnswerLate and RespondSDP cannot be interrupted: the response is
-// retransmitted until the ACK arrives or 64*T1 elapses (RFC 3261 §13.3.1.4).
+// Most signaling methods honor ctx while sending. Answer, AnswerLate and
+// RespondSDP return once the 2xx was handed to the transaction layer;
+// retransmission until the ACK and the ACK wait continue in the background
+// (RFC 3261 §13.3.1.4). Call InboundCall.WaitAck to wait for the ACK
+// to be processed (media finalized), with AckReceived/AckErr for the raw
+// outcome.
 //
 // # Lifecycle
 //
-// Diago takes the sipgo UserAgent, Server and Client by reference; the UserAgent
-// stays caller-owned and is not closed by Shutdown. Shutdown hangs up and
-// closes every tracked dialog, then stops the listeners started by Serve.
-// In-flight handlers keep running concurrently with the dialog teardown.
-// Register loops are caller-owned goroutines: cancel their context around
-// Shutdown.
+// The UserAgent is optional: without WithUserAgent, New creates a private one
+// and Close closes it. A UserAgent, Server or Client supplied by the caller
+// (WithUserAgent/WithServer/WithClient) stays caller-owned and is not closed.
+// Close hangs up and closes every tracked dialog, stops the listeners started
+// by Serve and then closes the private UserAgent. In-flight handlers keep
+// running concurrently with the dialog teardown (the framework closes each
+// dialog when it ends). Registration handles are caller-owned: stop them with
+// Registration.Close (or cancel their context) around Close.
+//
+// The sipgo types in public signatures are aliased in aliases.go (URI, Header,
+// Request, Response, ...), so applications can build on diago without
+// importing sipgo; escape hatches stay explicit (Agent.Server, Agent.UA,
+// call.SIP, WithUserAgent, WithServer, WithClient). API conventions are
+// documented in API.md.
 package diago

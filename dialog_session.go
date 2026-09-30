@@ -16,7 +16,11 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
-type DialogSession interface {
+// Call is the common contract of inbound and outbound dialogs
+// (*InboundCall and *OutboundCall). Cross-cutting APIs (Bridge, DialBridge,
+// FindCall, WithOriginator) accept it; type-assert to the concrete direction
+// when direction-specific methods are needed.
+type Call interface {
 	ID() string
 	Context() context.Context
 	// FromUser returns the user part of the From header (the caller).
@@ -27,31 +31,27 @@ type DialogSession interface {
 	Transport() string
 	// Hangup terminates the dialog. Options allow customizing headers of the
 	// outgoing BYE / decline response (ex. Reason header)
-	Hangup(ctx context.Context, opts ...SignalOption) error
-	// HangupAndClose terminates the dialog (as Hangup) and releases local
-	// resources (as Close). It is the safe one-call teardown for owners of a
-	// dialog.
-	HangupAndClose(ctx context.Context, opts ...SignalOption) error
-	// DialogMedia returns the media half of the dialog. It is never nil and
+	Hangup(ctx context.Context, opts ...HangupOption) error
+	// Media returns the media half of the dialog. It is never nil and
 	// stays valid for the dialog's lifetime.
-	DialogMedia() *DialogMedia
-	DialogSIP() *sipgo.Dialog
-	Do(ctx context.Context, req *sip.Request) (*sip.Response, error)
+	Media() *Media
+	SIP() *Dialog
+	Do(ctx context.Context, req *Request) (*Response, error)
 	Close() error
 }
 
 var (
-	_ DialogSession = (*DialogClientSession)(nil)
-	_ DialogSession = (*DialogServerSession)(nil)
+	_ Call = (*OutboundCall)(nil)
+	_ Call = (*InboundCall)(nil)
 )
 
 //
 // Here are many common functions built for dialog
 //
 
-func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referTo sip.Uri, refferedBy sip.Uri, params *signalParams) error {
-	if d.DialogSIP().LoadState() != sip.DialogStateConfirmed {
-		return fmt.Errorf("can only be called on answered dialog")
+func dialogRefer(ctx context.Context, d Call, recipient URI, referTo URI, refferedBy URI, params *signalParams) error {
+	if d.SIP().LoadState() != sip.DialogStateConfirmed {
+		return fmt.Errorf("refer: %w", ErrDialogNotAnswered)
 	}
 
 	req := sip.NewRequest(sip.REFER, recipient)
@@ -96,7 +96,7 @@ func dialogRefer(ctx context.Context, d DialogSession, recipient sip.Uri, referT
 	return nil
 }
 
-func dialogHandleReferNotify(d DialogSession, req *sip.Request, tx sip.ServerTransaction) {
+func dialogHandleReferNotify(d Call, req *Request, tx ServerTransaction) {
 	// TODO how to know this is refer
 	contentTypeHeader := req.ContentType()
 	if contentTypeHeader == nil {
@@ -120,7 +120,7 @@ func dialogHandleReferNotify(d DialogSession, req *sip.Request, tx sip.ServerTra
 
 	// TODO: We need find better way to store this on refer.
 	// best case this would be dialogSIP
-	med := d.DialogMedia()
+	med := d.Media()
 	med.mu.Lock()
 	onNot := med.onReferNotify
 	med.mu.Unlock()
@@ -145,7 +145,7 @@ func dialogHandleReferNotify(d DialogSession, req *sip.Request, tx sip.ServerTra
 	}
 }
 
-func dialogHandleRefer(d DialogSession, dg *Diago, req *sip.Request, tx sip.ServerTransaction, onReferDialog OnReferDialogFunc) error {
+func dialogHandleRefer(d Call, dg *Agent, req *Request, tx ServerTransaction, onReferDialog OnReferFunc) error {
 	// https://datatracker.ietf.org/doc/html/rfc3515#section-2.4.2
 	// 	An agent responding to a REFER method MUST return a 400 (Bad Request)
 	//    if the request contained zero or more than one Refer-To header field
@@ -157,7 +157,7 @@ func dialogHandleRefer(d DialogSession, dg *Diago, req *sip.Request, tx sip.Serv
 		return tx.Respond(sip.NewResponseFromRequest(req, 400, "Bad Request", nil))
 	}
 
-	referToUri := sip.Uri{}
+	referToUri := URI{}
 	headerParams := sip.NewParams()
 
 	_, err := sip.ParseAddressValue(referTo.Value(), &referToUri, &headerParams)
@@ -182,7 +182,7 @@ func dialogHandleRefer(d DialogSession, dg *Diago, req *sip.Request, tx sip.Serv
 	return dialogReferInvite(d, dg, referToUri, contact.Address, onReferDialog, req)
 }
 
-func dialogReferInvite(d DialogSession, dg *Diago, referToUri sip.Uri, remoteTarget sip.Uri, onReferDialog OnReferDialogFunc, referReq *sip.Request) error {
+func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onReferDialog OnReferFunc, referReq *Request) error {
 
 	// TODO after this we could get BYE immediately, but caller would not be able
 	// to take control over refer dialog
@@ -260,7 +260,7 @@ func dialogReferInvite(d DialogSession, dg *Diago, referToUri sip.Uri, remoteTar
 	// 	opts.Headers = append(opts.Headers, sip.HeaderClone(referredBy))
 	// }
 
-	referDialog, err := dg.NewDialog(referToUri)
+	referDialog, err := dg.NewCall(referToUri)
 	if err != nil {
 		return err
 	}
@@ -321,12 +321,12 @@ func dialogReferInvite(d DialogSession, dg *Diago, referToUri sip.Uri, remoteTar
 }
 
 // reInviteExchangeTransport abstracts the dialog operations needed by the
-// shared re-INVITE exchange driver. Both DialogClientSession and
-// DialogServerSession satisfy it.
+// shared re-INVITE exchange driver. Both OutboundCall and
+// InboundCall satisfy it.
 type reInviteExchangeTransport interface {
-	Do(ctx context.Context, req *sip.Request) (*sip.Response, error)
-	RemoteContact() *sip.ContactHeader
-	writeReInviteACK(ctx context.Context, target sip.Uri) error
+	Do(ctx context.Context, req *Request) (*Response, error)
+	RemoteContact() *ContactHeader
+	writeReInviteACK(ctx context.Context, target URI) error
 }
 
 // reInviteExchange sends a re-INVITE request and drives the exchange to
@@ -337,7 +337,7 @@ type reInviteExchangeTransport interface {
 //
 // Each side keeps its own ACK sender (client WriteAck, server WriteRequest):
 // the observable behavior — one ACK, no options — is the same.
-func reInviteExchange(ctx context.Context, t reInviteExchangeTransport, req *sip.Request) (*sip.Response, error) {
+func reInviteExchange(ctx context.Context, t reInviteExchangeTransport, req *Request) (*Response, error) {
 	for {
 		res, err := t.Do(ctx, req.Clone())
 		if err != nil {

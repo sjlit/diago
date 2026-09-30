@@ -74,7 +74,7 @@ type AudioPlaybackDTMF struct {
 	dtmfReader *DTMFReader
 	// dm resolves the stable read handle at use time so the read loop
 	// survives media updates (re-INVITE)
-	dm *DialogMedia
+	dm *Media
 
 	// readCtx is canceled by Close to interrupt the read loop through the
 	// reader gate (no conn deadlines involved).
@@ -96,11 +96,11 @@ func (p *AudioPlaybackDTMF) logger() *slog.Logger {
 	return media.DefaultLogger()
 }
 
-// CreatePlaybackDTMF creates playback controlled with in-band RTP DTMF.
+// StartPlaybackDTMF creates playback controlled with in-band RTP DTMF.
 //
 // By default any DTMF key interrupts playback. Use options to customize:
 //
-//	pb, _ := dialog.CreatePlaybackDTMF(
+//	pb, _ := dialog.StartPlaybackDTMF(
 //	    WithInterruptKeys("1234567890"), // only number keys interrupt
 //	    WithReplayKeys("*"),             // star key replays prompt
 //	)
@@ -109,15 +109,15 @@ func (p *AudioPlaybackDTMF) logger() *slog.Logger {
 //	pb.Close()
 //
 // While playback is active DTMF keys are detected by reading audio RTP in
-// background. Other audio reading (CreateDTMFReader, EchoContext, recording)
+// background. Other audio reading (NewDTMFReader, EchoContext, recording)
 // MUST NOT be used until Close is called.
-func (d *DialogMedia) CreatePlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
-	pb, err := d.CreatePlaybackControl()
+func (d *Media) StartPlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
+	pb, err := d.StartPlaybackControl()
 	if err != nil {
 		return nil, err
 	}
 
-	dtmfReader, err := d.CreateDTMFReader()
+	dtmfReader, err := d.NewDTMFReader()
 	if err != nil {
 		return nil, err
 	}

@@ -18,12 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// scopeTestAll accepts every option so the factory tests can assert on field
-// application without restating per-API scopes.
-const scopeTestAll optionScope = ^optionScope(0)
-
 func newTestParams(opts []SignalOption) (*signalParams, error) {
-	return newSignalParams(opts, "Test", scopeTestAll)
+	return newSignalParams(opts...)
 }
 
 func TestSignalMediaConfigOverlay(t *testing.T) {
@@ -125,8 +121,8 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 	defer uaSrv.Close()
 
-	dgSrv, err := New(uaSrv,
-		WithTransport(Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 15091}),
+	dgSrv, err := New(WithUserAgent(uaSrv),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 15091}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				switch req.Method {
@@ -145,12 +141,12 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		if err := d.Trying(ctx); err != nil {
 			t.Error(err)
 			return nil
 		}
-		if err := d.Ringing(ctx, WithHeader("Alert-Info", "<ring>")); err != nil {
+		if err := d.Ringing(ctx, WithHeaders(sip.NewHeader("Alert-Info", "<ring>"))); err != nil {
 			t.Error(err)
 			return nil
 		}
@@ -178,12 +174,12 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	defer uaCli.Close()
 
 	dgCli := newDialer(t, uaCli)
-	err = dgCli.ServeBackground(ctx, func(ctx context.Context, d *DialogServerSession) error {
+	err = dgCli.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
 
-	dialog, err := dgCli.NewDialog(sip.Uri{User: "server", Host: "127.0.0.1", Port: 15091})
+	dialog, err := dgCli.NewCall(sip.Uri{User: "server", Host: "127.0.0.1", Port: 15091})
 	require.NoError(t, err)
 	defer dialog.Close()
 
@@ -197,7 +193,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	err = dialog.Invite(ctx,
 		WithContact(customContact),
 		WithMediaExternalIP(net.IPv4(7, 7, 7, 7)),
-		WithHeader("X-Custom-Header", "hello"),
+		WithHeaders(sip.NewHeader("X-Custom-Header", "hello")),
 		WithOnResponse(func(res *sip.Response) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -227,7 +223,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	// even though the call was answered.
 	require.Eventually(t, func() bool {
 		confirmed := false
-		dgSrv.cache.server.rangeDialogs(ctx, func(id string, dd *DialogServerSession) bool {
+		dgSrv.cache.server.rangeDialogs(ctx, func(id string, dd *InboundCall) bool {
 			confirmed = dd.LoadState() == sip.DialogStateConfirmed
 			return false
 		})
@@ -271,7 +267,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	t.Run("hangup headers", func(t *testing.T) {
 		hctx, hcancel := context.WithTimeout(ctx, 10*time.Second)
 		defer hcancel()
-		err = dialog.Hangup(hctx, WithHeader("Reason", "Q.850;cause=16"))
+		err = dialog.Hangup(hctx, WithHeaders(sip.NewHeader("Reason", "Q.850;cause=16")))
 		require.NoError(t, err)
 
 		mu.Lock()
@@ -376,8 +372,8 @@ func TestSignalOptionsFieldCoverage(t *testing.T) {
 	})
 
 	t.Run("with on media update / with on refer / with on response", func(t *testing.T) {
-		onMU := func(d *DialogMedia) {}
-		onRef := func(d *DialogClientSession) error { return nil }
+		onMU := func(d *Media) {}
+		onRef := func(d *OutboundCall) error { return nil }
 		onRes := func(res *sip.Response) error { return nil }
 		p, err := newTestParams([]SignalOption{
 			WithOnMediaUpdate(onMU),

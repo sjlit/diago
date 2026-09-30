@@ -44,12 +44,6 @@ func u32Saturate(v uint64) uint32 {
 // - Multiple RTCP Recever Blocks
 
 var (
-	DefaultOnReadRTCP  func(pkt rtcp.Packet, rtpStats RTPReadStats)  = nil
-	DefaultOnWriteRTCP func(pkt rtcp.Packet, rtpStats RTPWriteStats) = nil
-
-	// RTPSourceLock enables source locking after IP changes
-	RTPSourceLock bool
-
 	errRTPSessionClosed = errors.New("rtp session is closed")
 
 	// ErrRTPSessionClosed is the exported counterpart of errRTPSessionClosed.
@@ -76,7 +70,9 @@ type RTPSession struct {
 	readStats    RTPReadStats
 	writeStats   RTPWriteStats
 
-	// Reading and Writing RTCP can be intercept. For global use DefaultOnReadRTCP, DefaultOnWriteRTCP
+	// Reading and Writing RTCP can be intercepted per session with
+	// OnReadRTCP/OnWriteRTCP (installed from MediaSession.OnReadRTCP /
+	// OnWriteRTCP at creation).
 	// Must be set before RTP is read or writen
 	onReadRTCP  func(pkt rtcp.Packet, rtpStats RTPReadStats)
 	onWriteRTCP func(pkt rtcp.Packet, rtpStats RTPWriteStats)
@@ -183,9 +179,9 @@ func NewRTPSession(sess *MediaSession) *RTPSession {
 		log:            sess.logger(),
 		rtcpTicker:     time.NewTicker(5 * time.Second),
 		rtcpClosed:     make(chan struct{}),
-		onReadRTCP:     DefaultOnReadRTCP,
-		onWriteRTCP:    DefaultOnWriteRTCP,
-		isSourceLocked: RTPSourceLock,
+		onReadRTCP:     sess.OnReadRTCP,
+		onWriteRTCP:    sess.OnWriteRTCP,
+		isSourceLocked: sess.SourceLock,
 	}
 }
 

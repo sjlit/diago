@@ -27,7 +27,7 @@ func freeUDPPort(t *testing.T) int {
 
 // Regression: canceling the caller context during the listener startup window
 // used to be swallowed by sipgo's ctx-watcher (no socket to close yet). Serve
-// then never returned, Shutdown timed out, and the UDP port stayed bound for
+// then never returned, Close timed out, and the UDP port stayed bound for
 // the process lifetime.
 func TestServeCallerContextCancelDuringStartup(t *testing.T) {
 	port := freeUDPPort(t)
@@ -36,10 +36,10 @@ func TestServeCallerContextCancelDuringStartup(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := New(ua, WithTransport(Transport{
-		Transport: "udp",
-		BindHost:  "127.0.0.1",
-		BindPort:  port,
+	dg, err := New(WithUserAgent(ua), WithTransport(Transport{
+		Network:  "udp",
+		BindHost: "127.0.0.1",
+		BindPort: port,
 	}))
 	require.NoError(t, err)
 
@@ -58,7 +58,7 @@ func TestServeCallerContextCancelDuringStartup(t *testing.T) {
 
 	sctx, sc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer sc()
-	require.NoError(t, dg.Shutdown(sctx))
+	require.NoError(t, dg.Close(sctx))
 
 	conn, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	require.NoError(t, err, "listener socket must be released after cancel and shutdown")

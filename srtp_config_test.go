@@ -16,7 +16,7 @@ import (
 
 func TestTransportSecureRTPValidation(t *testing.T) {
 	t.Run("invalid mode rejected", func(t *testing.T) {
-		dm := &DialogMedia{}
+		dm := &Media{}
 		err := dm.initMediaSessionFromConf(MediaConfig{SRTP: SRTPConfig{Mode: 99}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid srtp mode")
@@ -24,7 +24,7 @@ func TestTransportSecureRTPValidation(t *testing.T) {
 
 	t.Run("valid modes accepted", func(t *testing.T) {
 		for _, mode := range []SecureRTP{SecureRTPNone, SecureRTPSDES, SecureRTPDTLS} {
-			dm := &DialogMedia{}
+			dm := &Media{}
 			err := dm.initMediaSessionFromConf(MediaConfig{
 				SRTP:   SRTPConfig{Mode: mode},
 				Codecs: []media.Codec{media.CodecAudioUlaw},
@@ -41,25 +41,26 @@ func TestMediaConfigDTLSAutoEnable(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	dtlsConf := media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}}
-	dg, err := New(ua, WithDefaultTransport())
+	dg, err := New(WithUserAgent(ua),
+		WithMediaProfile("dtls", MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw},
+			SRTP:   SRTPConfig{DTLS: dtlsConf},
+		}),
+		WithMediaProfile("sdes+dtls", MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw},
+			SRTP:   SRTPConfig{Mode: SecureRTPSDES, DTLS: dtlsConf},
+		}),
+		WithDefaultTransport(),
+	)
 	require.NoError(t, err)
 
-	conf := dg.mediaConfigForTransport(&Transport{
-		Transport: "udp",
-		Media:     TransportMediaConfig{SRTP: SRTPConfig{DTLS: dtlsConf}},
-	})
+	conf := dg.mediaConfigForTransport(&Transport{Network: "udp", Profile: "dtls"})
 	assert.Equal(t, SecureRTPDTLS, conf.SRTP.Mode, "DTLS config must auto-enable DTLS-SRTP")
 
-	plain := dg.mediaConfigForTransport(&Transport{Transport: "udp"})
+	plain := dg.mediaConfigForTransport(&Transport{Network: "udp"})
 	assert.Equal(t, SecureRTPNone, plain.SRTP.Mode)
 
-	explicitSDES := dg.mediaConfigForTransport(&Transport{
-		Transport: "udp",
-		Media: TransportMediaConfig{SRTP: SRTPConfig{
-			Mode: SecureRTPSDES,
-			DTLS: dtlsConf,
-		}},
-	})
+	explicitSDES := dg.mediaConfigForTransport(&Transport{Network: "udp", Profile: "sdes+dtls"})
 	assert.Equal(t, SecureRTPSDES, explicitSDES.SRTP.Mode, "explicit mode must win over auto-DTLS")
 }
 
@@ -73,7 +74,7 @@ func TestWithMediaDTLSOptionEnablesDTLS(t *testing.T) {
 	require.NoError(t, err)
 
 	conf := signalMediaConfig(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}}, p)
-	dm := &DialogMedia{}
+	dm := &Media{}
 	require.NoError(t, dm.initMediaSessionFromConf(conf))
 	defer dm.Close()
 
@@ -86,7 +87,7 @@ func TestWithMediaDTLSOptionEnablesDTLS(t *testing.T) {
 // transport merge. Regression: WithMediaDTLS on Answer stored the DTLS config
 // but media stayed plain RTP.
 func TestMediaConfigDTLSAutoEnableOnSession(t *testing.T) {
-	dm := &DialogMedia{}
+	dm := &Media{}
 	require.NoError(t, dm.initMediaSessionFromConf(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		SRTP: SRTPConfig{
@@ -103,7 +104,7 @@ func TestMediaConfigDTLSAutoEnableOnSession(t *testing.T) {
 // a real offer/answer exchange (no handshake): both sides must advertise
 // UDP/TLS/RTP/SAVP with fingerprints.
 func TestIntegrationDTLSAutoNegotiation(t *testing.T) {
-	offerer := &DialogMedia{}
+	offerer := &Media{}
 	require.NoError(t, offerer.initMediaSessionFromConf(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		SRTP: SRTPConfig{
@@ -113,7 +114,7 @@ func TestIntegrationDTLSAutoNegotiation(t *testing.T) {
 	}))
 	defer offerer.Close()
 
-	answerer := &DialogMedia{}
+	answerer := &Media{}
 	require.NoError(t, answerer.initMediaSessionFromConf(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		SRTP: SRTPConfig{

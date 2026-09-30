@@ -49,16 +49,16 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 	})
 
 	tran := Transport{
-		Transport: "udp",
-		BindHost:  "127.1.1.100",
-		BindPort:  5060,
+		Network:  "udp",
+		BindHost: "127.1.1.100",
+		BindPort: 5060,
 	}
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	srv, err := New(ua, WithTransport(tran))
+	srv, err := New(WithUserAgent(ua), WithTransport(tran))
 	require.NoError(t, err)
 
-	err = srv.ServeBackground(ctx, func(_ context.Context, d *DialogServerSession) error {
+	err = srv.ServeBackground(ctx, func(_ context.Context, d *InboundCall) error {
 		wg.Add(1)
 		defer wg.Done()
 
@@ -70,7 +70,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 			return nil
 		}
 
-		pb, err := d.CreatePlayback()
+		pb, err := d.StartPlayback()
 		if err != nil {
 			t.Log(err.Error())
 			return nil
@@ -123,7 +123,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 				defer ua.Close()
 				// client, err := sipgo.NewClient(ua)
 				// require.NoError(t, err)
-				phone, err := New(ua, WithDefaultTransport())
+				phone, err := New(WithUserAgent(ua), WithDefaultTransport())
 				require.NoError(t, err)
 				id, _ := rand.Int(rand.Reader, big.NewInt(int64(runtime.GOMAXPROCS(0))))
 				for p.Next() {
@@ -133,7 +133,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 						maxInvitesPerSec <- struct{}{}
 					}
 					dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					dialog, err := phone.Dial(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"})
+					dialog, err := phone.DialURI(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"})
 					cancel()
 
 					require.NoError(t, err)

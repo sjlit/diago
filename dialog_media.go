@@ -22,31 +22,23 @@ import (
 	"github.com/sjlit/diago/v2/media/sdp"
 )
 
-var (
-	HTTPDebug = os.Getenv("HTTP_DEBUG") == "true"
-
-	DefaultPlaybackHTTPClient = http.Client{
-		Timeout: 20 * time.Second,
-	}
-)
-
-// DialogMedia is the media half shared by server and client dialog sessions.
+// Media is the media half shared by server and client dialog sessions.
 //
-// Ownership contract: DialogMedia is the sole owner of
+// Ownership contract: Media is the sole owner of
 // the active *media.MediaSession and *media.RTPSession. It owns exactly one of
 // each at a time; re-INVITEs and media updates replace them under mu, while
 // the RTPPacketReader and RTPPacketWriter accessors expose stable handles
 // whose internals are hot-swapped on every update. Code that needs
 // media-session services (deadlines, codecs) must resolve them through
-// DialogMedia at use time and never capture a *media.MediaSession pointer.
+// Media at use time and never capture a *media.MediaSession pointer.
 //
 // Concurrency contract: all mutable media state is
 // guarded by mu; accessor methods (MediaSession, RTPSession, AudioReader,
-// AudioWriter, RemoteContact) are safe from any goroutine. Option functions
+// AudioWriter) are safe from any goroutine. Option functions
 // passed to AudioReader/AudioWriter run under mu and must not block or call
-// back into locking DialogMedia methods. The setup phase of a dialog
+// back into locking Media methods. The setup phase of a dialog
 // (Invite/Answer/ProgressMedia) is single-threaded by contract.
-type DialogMedia struct {
+type Media struct {
 	mu sync.Mutex
 
 	// media session is RTP local and remote
@@ -77,7 +69,7 @@ type DialogMedia struct {
 
 	// remoteContactTarget is actual target changed caused by incomign or outgoing REINVITE
 	// We do not use sipgo as this needs mutex but also keeping original invite
-	remoteContactTarget *sip.ContactHeader
+	remoteContactTarget *ContactHeader
 
 	// dtmfSendMu serializes SendDTMF callers: per-digit writers are separate
 	// RTPDTMFWriter instances whose internal locks do not serialize against
@@ -94,12 +86,16 @@ type DialogMedia struct {
 	onReferNotify func(statusCode int)
 
 	onClose       func() error
-	onMediaUpdate func(*DialogMedia)
+	onMediaUpdate func(*Media)
 
 	// log is the dialog-level logger copied from MediaConfig at construction
 	// (write-once before the dialog is shared). Nil falls back to the media
 	// package default. See logger().
 	log *slog.Logger
+
+	// httpClient is used by URL playback and copied from MediaConfig at
+	// dialog construction. Nil falls back to the 20s-timeout default client.
+	httpClient *http.Client
 
 	// moh is the single active hold-music loop (nil when none); mohTone is
 	// the dialog-level default source from MediaConfig.MusicOnHold. See moh.go.
@@ -115,14 +111,14 @@ type DialogMedia struct {
 	closed bool
 }
 
-// dialogMedia aliases DialogMedia for embedding in the dialog session types.
+// dialogMedia aliases Media for embedding in the dialog session types.
 // The unexported alias gives the embedded field a name that does not collide
-// with the DialogMedia() accessor required by the DialogSession interface.
-type dialogMedia = DialogMedia
+// with the Media() accessor required by the Call interface.
+type callMedia = Media
 
 // logger returns the dialog-level logger, falling back to the media package
 // default when no MediaConfig.Logger was configured.
-func (d *DialogMedia) logger() *slog.Logger {
+func (d *Media) logger() *slog.Logger {
 	if d.log != nil {
 		return d.log
 	}
@@ -133,7 +129,7 @@ func (d *DialogMedia) logger() *slog.Logger {
 // on the first media init and never replaced; its internals are hot-swapped on
 // media updates, so code that needs the handle should resolve it per use.
 // Safe from any goroutine.
-func (d *DialogMedia) RTPPacketReader() *media.RTPPacketReader {
+func (d *Media) RTPPacketReader() *media.RTPPacketReader {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.rtpPacketReader
@@ -143,7 +139,7 @@ func (d *DialogMedia) RTPPacketReader() *media.RTPPacketReader {
 // on the first media init and never replaced; its internals are hot-swapped on
 // media updates, so code that needs the handle should resolve it per use.
 // Safe from any goroutine.
-func (d *DialogMedia) RTPPacketWriter() *media.RTPPacketWriter {
+func (d *Media) RTPPacketWriter() *media.RTPPacketWriter {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.rtpPacketWriter
@@ -152,7 +148,7 @@ func (d *DialogMedia) RTPPacketWriter() *media.RTPPacketWriter {
 // currentMediaSession returns the currently active media session or nil.
 // Safe from any goroutine; components must resolve the session at use time
 // instead of capturing it.
-func (d *DialogMedia) currentMediaSession() *media.MediaSession {
+func (d *Media) currentMediaSession() *media.MediaSession {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.mediaSession
@@ -160,7 +156,7 @@ func (d *DialogMedia) currentMediaSession() *media.MediaSession {
 
 // mediaGuard is the precondition check for media entry points. It must be
 // called with d.mu held or during the single-threaded setup phase.
-func (d *DialogMedia) mediaGuard() error {
+func (d *Media) mediaGuard() error {
 	if d.closed {
 		return ErrDialogClosed
 	}
@@ -171,13 +167,15 @@ func (d *DialogMedia) mediaGuard() error {
 }
 
 // checkMediaUsable is mediaGuard safe to call without holding d.mu.
-func (d *DialogMedia) checkMediaUsable() error {
+func (d *Media) checkMediaUsable() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.mediaGuard()
 }
 
-func (d *DialogMedia) Close() error {
+// Close releases the dialog media: monitors, RTP/RTCP sockets, packet
+// handles and the active media session. It is idempotent.
+func (d *Media) Close() error {
 	// Any hook attached
 	// Prevent double exec
 	d.mu.Lock()
@@ -239,7 +237,8 @@ func (d *DialogMedia) Close() error {
 	return errors.Join(e1, e2, e3, e4)
 }
 
-func (d *DialogMedia) OnClose(f func() error) {
+// OnClose registers a hook invoked when the dialog media closes.
+func (d *Media) OnClose(f func() error) {
 	if f == nil {
 		return
 	}
@@ -257,7 +256,7 @@ func (d *DialogMedia) OnClose(f func() error) {
 	d.mu.Unlock()
 }
 
-func (d *DialogMedia) onCloseUnsafe(f func() error) {
+func (d *Media) onCloseUnsafe(f func() error) {
 	if d.onClose != nil {
 		prev := d.onClose
 		d.onClose = func() error {
@@ -268,13 +267,13 @@ func (d *DialogMedia) onCloseUnsafe(f func() error) {
 	d.onClose = f
 }
 
-func (d *DialogMedia) initMediaSessionUnsafe(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
+func (d *Media) initMediaSessionUnsafe(m *media.MediaSession, r *media.RTPPacketReader, w *media.RTPPacketWriter) {
 	d.mediaSession = m
 	d.rtpPacketReader = r
 	d.rtpPacketWriter = w
 }
 
-func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media.RTPSession) error {
+func (d *Media) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media.RTPSession) error {
 	if d.closed {
 		// The dialog media was torn down (BYE/Close) while this setup was in
 		// flight. Refuse the install so the freshly created sessions are not
@@ -314,7 +313,7 @@ func (d *DialogMedia) initRTPSessionUnsafe(m *media.MediaSession, rtpSess *media
 // sendonly/sendrecv, so they never trip the flag; a peer answering our
 // sendrecv offer with sendonly negotiates to recvonly here and correctly
 // marks us held.
-func (d *DialogMedia) updateRemoteHeldUnsafe() {
+func (d *Media) updateRemoteHeldUnsafe() {
 	if d.mediaSession == nil {
 		d.isRemoteHeld = false
 		return
@@ -327,7 +326,7 @@ func (d *DialogMedia) updateRemoteHeldUnsafe() {
 // ACK and refreshes the remote-held flag, like the other offer/answer install
 // paths do. Caller must hold d.mu. Returns the session to Finalize, or nil
 // when there is nothing to apply.
-func (d *DialogMedia) applyLateOfferAnswerUnsafe(body []byte) (*media.MediaSession, error) {
+func (d *Media) applyLateOfferAnswerUnsafe(body []byte) (*media.MediaSession, error) {
 	sess := d.mediaSession
 	if sess == nil {
 		return nil, nil
@@ -340,7 +339,7 @@ func (d *DialogMedia) applyLateOfferAnswerUnsafe(body []byte) (*media.MediaSessi
 	return sess, nil
 }
 
-func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
+func (d *Media) initMediaSessionFromConf(conf MediaConfig) error {
 	// Callers run in the single-threaded setup phase and must not hold d.mu,
 	// but ProgressMedia/Answer can race with a concurrent BYE closing media.
 	d.mu.Lock()
@@ -398,6 +397,10 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 		SDPCodecPreferLocalOrder: conf.SDP.CodecPreferLocalOrder,
 		SDPSessionName:           conf.SDP.SessionName,
 		Logger:                   conf.Logger,
+		RTPDebug:                 conf.Debug,
+		RTCPDebug:                conf.Debug,
+		Tracer:                   conf.Tracer,
+		SAVPDisable:              conf.SRTP.SAVPDisable,
 	}
 
 	if err := sess.Init(); err != nil {
@@ -411,7 +414,7 @@ func (d *DialogMedia) initMediaSessionFromConf(conf MediaConfig) error {
 // initMediaSessionFromConf. Precreated sessions (WithMediaSession) skip that
 // function, so their setup paths call this to honor WithMusicOnHold and
 // MediaConfig.MusicOnHold too.
-func (d *DialogMedia) setMohTone(t audio.Tone) {
+func (d *Media) setMohTone(t audio.Tone) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.mohTone = t
@@ -419,19 +422,20 @@ func (d *DialogMedia) setMohTone(t audio.Tone) {
 
 // RTPSession returns underhood rtp session
 // NOTE: this can be nil
-func (d *DialogMedia) RTPSession() *media.RTPSession {
+func (d *Media) RTPSession() *media.RTPSession {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.rtpSession
 }
 
-func (d *DialogMedia) MediaSession() *media.MediaSession {
+// MediaSession returns the current media session, or nil before negotiation.
+func (d *Media) MediaSession() *media.MediaSession {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.mediaSession
 }
 
-func (d *DialogMedia) handleMediaUpdate(req *sip.Request, tx sip.ServerTransaction, contactHDR sip.Header) error {
+func (d *Media) handleMediaUpdate(req *Request, tx ServerTransaction, contactHDR Header) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.remoteContactTarget = req.Contact().Clone()
@@ -459,7 +463,7 @@ func (d *DialogMedia) handleMediaUpdate(req *sip.Request, tx sip.ServerTransacti
 }
 
 // Must be protected with lock
-func (d *DialogMedia) sdpReInviteUnsafe(sdp []byte) error {
+func (d *Media) sdpReInviteUnsafe(sdp []byte) error {
 	if d.mediaSession == nil {
 		return fmt.Errorf("no media session present: %w", ErrMediaSessionMissing)
 	}
@@ -470,7 +474,7 @@ func (d *DialogMedia) sdpReInviteUnsafe(sdp []byte) error {
 	return nil
 }
 
-func (d *DialogMedia) checkEarlyMedia(remoteSDP []byte) error {
+func (d *Media) checkEarlyMedia(remoteSDP []byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// RTP Session is only created when negotiation is finished. We use this to detect existing media
@@ -480,7 +484,7 @@ func (d *DialogMedia) checkEarlyMedia(remoteSDP []byte) error {
 	return d.sdpUpdateUnsafe(remoteSDP)
 }
 
-func (d *DialogMedia) sdpUpdateUnsafe(remoteSDP []byte) error {
+func (d *Media) sdpUpdateUnsafe(remoteSDP []byte) error {
 	msess := d.mediaSession.Fork()
 	if err := msess.RemoteSDP(remoteSDP); err != nil {
 		return fmt.Errorf("sdp update media remote sdp applying failed: %w", err)
@@ -497,7 +501,7 @@ func (d *DialogMedia) sdpUpdateUnsafe(remoteSDP []byte) error {
 	return nil
 }
 
-func (d *DialogMedia) mediaUpdateUnsafe(msess *media.MediaSession) error {
+func (d *Media) mediaUpdateUnsafe(msess *media.MediaSession) error {
 	if err := d.replaceRTPSessionUnsafe(msess); err != nil {
 		return err
 	}
@@ -512,7 +516,7 @@ func (d *DialogMedia) mediaUpdateUnsafe(msess *media.MediaSession) error {
 // replaceRTPSessionUnsafe replaces the RTP session after the old monitor has
 // fully stopped. A fork preserves statistics and shared connections; a new
 // session is used when media connections were recreated.
-func (d *DialogMedia) replaceRTPSessionUnsafe(msess *media.MediaSession) error {
+func (d *Media) replaceRTPSessionUnsafe(msess *media.MediaSession) error {
 	if d.closed {
 		// A late re-INVITE/ACK after teardown must not install a new monitor
 		// over closed connections.
@@ -542,18 +546,21 @@ func (d *DialogMedia) replaceRTPSessionUnsafe(msess *media.MediaSession) error {
 	return nil
 }
 
-type AudioReaderOption func(d *DialogMedia) error
+// ReaderOption configures the reader pipeline in AudioReader,
+// ReaderWithProps and related methods.
+type ReaderOption func(d *Media) error
 
+// MediaProps are the negotiated media properties of one direction.
 type MediaProps struct {
 	Codec media.Codec
 	Laddr string
 	Raddr string
 }
 
-// WithAudioReaderJitterBuffer inserts an RTP jitter buffer before the payload reader.
+// WithReaderJitterBuffer inserts an RTP jitter buffer before the payload reader.
 // Packet duration is derived from the negotiated audio codec.
-func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderOption {
-	return func(d *DialogMedia) error {
+func WithReaderJitterBuffer(opts media.RTPJitterBufferOptions) ReaderOption {
+	return func(d *Media) error {
 		if d.mediaSession == nil || d.rtpPacketReader == nil {
 			return fmt.Errorf("no media setup")
 		}
@@ -589,9 +596,9 @@ func WithAudioReaderJitterBuffer(opts media.RTPJitterBufferOptions) AudioReaderO
 	}
 }
 
-// WithAudioReaderRTPStats creates RTP Statistics interceptor on audio reader
-func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
-	return func(d *DialogMedia) error {
+// WithReaderRTPStats creates RTP Statistics interceptor on audio reader
+func WithReaderRTPStats(hook media.OnRTPReadStats) ReaderOption {
+	return func(d *Media) error {
 		r := &media.RTPStatsReader{
 			Reader:         d.getAudioReader(),
 			RTPSession:     d.rtpSession,
@@ -606,15 +613,15 @@ func WithAudioReaderRTPStats(hook media.OnRTPReadStats) AudioReaderOption {
 // rtpSessionHandle resolves the current RTP session at use time. Long-lived
 // pipeline components (ex. RTP stats interceptors) install it so a re-INVITE
 // session swap does not freeze them on a stale session.
-func (d *DialogMedia) rtpSessionHandle() *media.RTPSession {
+func (d *Media) rtpSessionHandle() *media.RTPSession {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.rtpSession
 }
 
-// WithAudioReaderDTMF creates DTMF interceptor
-func WithAudioReaderDTMF(r *DTMFReader) AudioReaderOption {
-	return func(d *DialogMedia) error {
+// WithReaderDTMF creates DTMF interceptor
+func WithReaderDTMF(r *DTMFReader) ReaderOption {
+	return func(d *Media) error {
 		if d.rtpPacketReader == nil {
 			// RTP DTMF decoding inspects RTP packet headers; without the
 			// stable packet reader handle there is nothing to decode and the
@@ -632,8 +639,9 @@ func WithAudioReaderDTMF(r *DTMFReader) AudioReaderOption {
 	}
 }
 
-func WithAudioReaderPCMMonitor(mon *audio.MonitorPCMReader, w io.Writer) AudioReaderOption {
-	return func(d *DialogMedia) error {
+// WithReaderPCMTap installs a PCM monitor tap on the audio reader.
+func WithReaderPCMTap(mon *audio.MonitorPCMReader, w io.Writer) ReaderOption {
+	return func(d *Media) error {
 		codec := media.CodecAudioFromSession(d.mediaSession)
 		if err := mon.Init(w, codec, d.getAudioReader()); err != nil {
 			return err
@@ -651,7 +659,7 @@ func WithAudioReaderPCMMonitor(mon *audio.MonitorPCMReader, w io.Writer) AudioRe
 // NOTE: AudioReader must be called after negotiation is finished, like Answer()
 // Reading buffer should be equal or bigger of media.RTPBufSize
 // Use AuidioListen for optimized reading.
-func (d *DialogMedia) AudioReader(opts ...AudioReaderOption) (io.Reader, error) {
+func (d *Media) AudioReader(opts ...ReaderOption) (io.Reader, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -660,7 +668,7 @@ func (d *DialogMedia) AudioReader(opts ...AudioReaderOption) (io.Reader, error) 
 
 // audioReaderUnsafe applies the reader options and returns the current reader.
 // Callers must hold d.mu.
-func (d *DialogMedia) audioReaderUnsafe(opts []AudioReaderOption) (io.Reader, error) {
+func (d *Media) audioReaderUnsafe(opts []ReaderOption) (io.Reader, error) {
 	if err := d.mediaGuard(); err != nil {
 		return nil, err
 	}
@@ -682,7 +690,7 @@ func (d *DialogMedia) audioReaderUnsafe(opts []AudioReaderOption) (io.Reader, er
 // ReaderWithProps is AudioReader plus the negotiated media properties: it
 // applies opts in order and returns the reader together with its codec and
 // local/remote RTP addresses. Replaces WithAudioReaderMediaProps.
-func (d *DialogMedia) ReaderWithProps(opts ...AudioReaderOption) (io.Reader, MediaProps, error) {
+func (d *Media) ReaderWithProps(opts ...ReaderOption) (io.Reader, MediaProps, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -695,7 +703,7 @@ func (d *DialogMedia) ReaderWithProps(opts ...AudioReaderOption) (io.Reader, Med
 
 // mediaPropsUnsafe snapshots the negotiated media properties. Callers must
 // hold d.mu.
-func (d *DialogMedia) mediaPropsUnsafe() MediaProps {
+func (d *Media) mediaPropsUnsafe() MediaProps {
 	if d.mediaSession == nil {
 		return MediaProps{}
 	}
@@ -706,7 +714,7 @@ func (d *DialogMedia) mediaPropsUnsafe() MediaProps {
 	}
 }
 
-func (d *DialogMedia) getAudioReader() io.Reader {
+func (d *Media) getAudioReader() io.Reader {
 	if d.audioReader != nil {
 		return d.audioReader
 	}
@@ -715,7 +723,7 @@ func (d *DialogMedia) getAudioReader() io.Reader {
 
 // audioReaderProps returns the current audio reader plus its media props.
 // It fails with the lifecycle sentinels if media is not usable.
-func (d *DialogMedia) audioReaderProps(p *MediaProps) (io.Reader, error) {
+func (d *Media) audioReaderProps(p *MediaProps) (io.Reader, error) {
 	r, props, err := d.ReaderWithProps()
 	if err != nil {
 		return nil, err
@@ -726,17 +734,19 @@ func (d *DialogMedia) audioReaderProps(p *MediaProps) (io.Reader, error) {
 
 // setAudioReader installs a custom audio reader head. It is internal: the
 // exported setter was removed because it bypassed the stable-handle chain.
-func (d *DialogMedia) setAudioReader(r io.Reader) {
+func (d *Media) setAudioReader(r io.Reader) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.audioReader = r
 }
 
-type AudioWriterOption func(d *DialogMedia) error
+// WriterOption configures the writer pipeline in AudioWriter,
+// WriterWithProps and related methods.
+type WriterOption func(d *Media) error
 
-// WithAudioWriterRTPStats creates RTP Statistics interceptor on audio writer
-func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
-	return func(d *DialogMedia) error {
+// WithWriterRTPStats creates RTP Statistics interceptor on audio writer
+func WithWriterRTPStats(hook media.OnRTPWriteStats) WriterOption {
+	return func(d *Media) error {
 		w := media.RTPStatsWriter{
 			Writer:          d.getAudioWriter(),
 			RTPSession:      d.rtpSession,
@@ -748,18 +758,18 @@ func WithAudioWriterRTPStats(hook media.OnRTPWriteStats) AudioWriterOption {
 	}
 }
 
-// WithAudioWriterDTMF adds DTMF into audio pipeline
-func WithAudioWriterDTMF(r *DTMFWriter) AudioWriterOption {
-	return func(d *DialogMedia) error {
+// WithWriterDTMF adds DTMF into audio pipeline
+func WithWriterDTMF(r *DTMFWriter) WriterOption {
+	return func(d *Media) error {
 		r.dtmfWriter = media.NewRTPDTMFWriter(d.dtmfCodec(), d.rtpPacketWriter, d.getAudioWriter())
 		d.audioWriter = r
 		return nil
 	}
 }
 
-// WithAudioWriterMonitor initializes and adds PCM monitor in audio pipeline. It records and decodes stream into PCM.
-func WithAudioWriterMonitor(mon *audio.MonitorPCMWriter, w io.Writer) AudioWriterOption {
-	return func(d *DialogMedia) error {
+// WithWriterPCMTap initializes and adds PCM monitor in audio pipeline. It records and decodes stream into PCM.
+func WithWriterPCMTap(mon *audio.MonitorPCMWriter, w io.Writer) WriterOption {
+	return func(d *Media) error {
 		codec := media.CodecAudioFromSession(d.mediaSession)
 		if err := mon.Init(w, codec, d.getAudioWriter()); err != nil {
 			return err
@@ -774,7 +784,7 @@ func WithAudioWriterMonitor(mon *audio.MonitorPCMWriter, w io.Writer) AudioWrite
 // By default it is the RTPPacketWriter handle unless a pipeline component wraps it.
 // Use WriterWithProps when the negotiated codec or addresses are needed.
 // NOTE: RTPPacketWriter has running sample clock, but it expects samples sent, match sample duration of codec.
-func (d *DialogMedia) AudioWriter(opts ...AudioWriterOption) (io.Writer, error) {
+func (d *Media) AudioWriter(opts ...WriterOption) (io.Writer, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -783,7 +793,7 @@ func (d *DialogMedia) AudioWriter(opts ...AudioWriterOption) (io.Writer, error) 
 
 // audioWriterUnsafe applies the writer options and returns the current writer.
 // Callers must hold d.mu.
-func (d *DialogMedia) audioWriterUnsafe(opts []AudioWriterOption) (io.Writer, error) {
+func (d *Media) audioWriterUnsafe(opts []WriterOption) (io.Writer, error) {
 	if err := d.mediaGuard(); err != nil {
 		return nil, err
 	}
@@ -806,7 +816,7 @@ func (d *DialogMedia) audioWriterUnsafe(opts []AudioWriterOption) (io.Writer, er
 // WriterWithProps is AudioWriter plus the negotiated media properties: it
 // applies opts in order and returns the writer together with its codec and
 // local/remote RTP addresses. Replaces WithAudioWriterMediaProps.
-func (d *DialogMedia) WriterWithProps(opts ...AudioWriterOption) (io.Writer, MediaProps, error) {
+func (d *Media) WriterWithProps(opts ...WriterOption) (io.Writer, MediaProps, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -817,14 +827,14 @@ func (d *DialogMedia) WriterWithProps(opts ...AudioWriterOption) (io.Writer, Med
 	return w, d.mediaPropsUnsafe(), nil
 }
 
-func (d *DialogMedia) getAudioWriter() io.Writer {
+func (d *Media) getAudioWriter() io.Writer {
 	if d.audioWriter != nil {
 		return d.audioWriter
 	}
 	return d.rtpPacketWriter
 }
 
-func (d *DialogMedia) audioWriterProps(p *MediaProps) (io.Writer, error) {
+func (d *Media) audioWriterProps(p *MediaProps) (io.Writer, error) {
 	w, props, err := d.WriterWithProps()
 	if err != nil {
 		return nil, err
@@ -835,7 +845,7 @@ func (d *DialogMedia) audioWriterProps(p *MediaProps) (io.Writer, error) {
 
 // EchoContext does audio echo until the context is canceled. Cancellation
 // interrupts the in-flight read through the reader gate and returns ctx.Err().
-func (d *DialogMedia) EchoContext(ctx context.Context) error {
+func (d *Media) EchoContext(ctx context.Context) error {
 	audioR, err := d.AudioReader()
 	if err != nil {
 		return err
@@ -857,20 +867,21 @@ func (d *DialogMedia) EchoContext(ctx context.Context) error {
 	return err
 }
 
-// CreatePlayback creates playback for audio
-func (d *DialogMedia) CreatePlayback() (*AudioPlayback, error) {
+// StartPlayback creates playback for audio
+func (d *Media) StartPlayback() (*AudioPlayback, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
 		return nil, err
 	}
 	p := NewAudioPlayback(w, mprops.Codec)
+	p.httpClient = d.httpClient
 	d.armPlaybackTimestampReset(&p)
 	return &p, nil
 }
 
-// CreatePlaybackControl creates playback with controls like mute, stop, pause, resume and replay
-func (d *DialogMedia) CreatePlaybackControl() (*AudioPlaybackControl, error) {
+// StartPlaybackControl creates playback with controls like mute, stop, pause, resume and replay
+func (d *Media) StartPlaybackControl() (*AudioPlaybackControl, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -884,6 +895,7 @@ func (d *DialogMedia) CreatePlaybackControl() (*AudioPlaybackControl, error) {
 		AudioPlayback: NewAudioPlayback(control, mprops.Codec),
 		control:       control,
 	}
+	p.httpClient = d.httpClient
 	d.armPlaybackTimestampReset(&p.AudioPlayback)
 	return &p, nil
 }
@@ -893,16 +905,16 @@ func (d *DialogMedia) CreatePlaybackControl() (*AudioPlaybackControl, error) {
 // timeline by the elapsed wall-clock time. Custom pipelines without an RTP
 // writer handle own their timing: the hook stays nil there instead of
 // dereferencing a missing handle.
-func (d *DialogMedia) armPlaybackTimestampReset(p *AudioPlayback) {
+func (d *Media) armPlaybackTimestampReset(p *AudioPlayback) {
 	if w := d.RTPPacketWriter(); w != nil {
 		p.onPlay = w.ResetTimestamp
 	}
 }
 
-// CreateRingtonePlayback creates playback for ringtone
+// StartRingtone creates playback for ringtone
 //
 // Experimental
-func (d *DialogMedia) CreateRingtonePlayback() (*AudioRingtone, error) {
+func (d *Media) StartRingtone() (*AudioRingtone, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -934,7 +946,7 @@ func (d *DialogMedia) CreateRingtonePlayback() (*AudioRingtone, error) {
 // answers to our own offers, including the initial INVITE answer); our own
 // Hold/Unhold negotiate sendonly/sendrecv and do not change it. Pair with
 // WithOnMediaUpdate to react to remote hold/unhold from application code.
-func (d *DialogMedia) IsRemoteHeld() bool {
+func (d *Media) IsRemoteHeld() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.isRemoteHeld
@@ -945,7 +957,7 @@ func (d *DialogMedia) IsRemoteHeld() bool {
 // Pause is refcounted, so concurrent pausers can not resume each other; the
 // returned release must be called exactly once. The StopFunc always reports a
 // nil error.
-func (d *DialogMedia) PauseAudioRead() (StopFunc, error) {
+func (d *Media) PauseAudioRead() (StopFunc, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -966,7 +978,7 @@ func (d *DialogMedia) PauseAudioRead() (StopFunc, error) {
 // Refcounted like PauseAudioRead. An in-flight write completes first, so
 // pause latency is bounded by one packet interval. The StopFunc always reports
 // a nil error.
-func (d *DialogMedia) PauseAudioWrite() (StopFunc, error) {
+func (d *Media) PauseAudioWrite() (StopFunc, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -998,7 +1010,7 @@ func (d *DialogMedia) PauseAudioWrite() (StopFunc, error) {
 // A DTLS-SRTP dialog whose handshake has not completed is a no-op: DTLS
 // flights share the socket with SRTP and dropping them would break the
 // handshake.
-func (d *DialogMedia) DiscardQueuedRTP() (int, error) {
+func (d *Media) DiscardQueuedRTP() (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.mediaGuard(); err != nil {
@@ -1010,7 +1022,7 @@ func (d *DialogMedia) DiscardQueuedRTP() (int, error) {
 // armReadInterrupt arms a context-driven interrupt on the dialog's stable
 // audio read handle. The returned disarm joins the watcher and restores the
 // reader when the interrupt was delivered.
-func (d *DialogMedia) armReadInterrupt(ctx context.Context) (func(), error) {
+func (d *Media) armReadInterrupt(ctx context.Context) (func(), error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -1024,7 +1036,7 @@ func (d *DialogMedia) armReadInterrupt(ctx context.Context) (func(), error) {
 
 // currentReadHandle returns the stable audio read handle for ctx-driven
 // interrupts, or nil. Safe from any goroutine.
-func (d *DialogMedia) currentReadHandle() *media.RTPPacketReader {
+func (d *Media) currentReadHandle() *media.RTPPacketReader {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.rtpPacketReader
@@ -1032,7 +1044,7 @@ func (d *DialogMedia) currentReadHandle() *media.RTPPacketReader {
 
 // Listen keeps reading stream until it gets closed or deadlined
 // Use ListenBackground or ListenContext for better control
-func (d *DialogMedia) Listen() (err error) {
+func (d *Media) Listen() (err error) {
 	buf := make([]byte, media.RTPBufSize)
 	audioReader, err := d.AudioReader()
 	if err != nil {
@@ -1048,7 +1060,7 @@ func (d *DialogMedia) Listen() (err error) {
 }
 
 // ListenBackground listens on stream in background and allows correct stoping of stream on network layer
-func (d *DialogMedia) ListenBackground() (stop StopFunc, err error) {
+func (d *Media) ListenBackground() (stop StopFunc, err error) {
 	buf := make([]byte, media.RTPBufSize)
 	audioReader, err := d.AudioReader()
 	if err != nil {
@@ -1098,7 +1110,7 @@ func (d *DialogMedia) ListenBackground() (stop StopFunc, err error) {
 // ListenContext listens until context is canceled. Cancellation interrupts
 // the in-flight read through the reader gate and returns ctx.Err(); the
 // dialog media stays usable afterwards.
-func (d *DialogMedia) ListenContext(pctx context.Context) error {
+func (d *Media) ListenContext(pctx context.Context) error {
 	buf := make([]byte, media.RTPBufSize)
 	audioReader, err := d.AudioReader()
 	if err != nil {
@@ -1125,10 +1137,11 @@ func (d *DialogMedia) ListenContext(pctx context.Context) error {
 	}
 }
 
+// DTMFReader reads RTP telephone-event digits from the dialog audio stream.
 type DTMFReader struct {
 	// dm resolves the CURRENT media session at use time so that deadline
 	// control survives media updates (re-INVITE)
-	dm *DialogMedia
+	dm *Media
 	// packetReader is the stable audio read handle used for ctx-driven
 	// interrupts; the pointer never changes across media updates
 	packetReader *media.RTPPacketReader
@@ -1159,7 +1172,7 @@ func (d *DTMFReader) getOnDTMF() func(dtmf rune) error {
 // dtmfCodec resolves the negotiated telephone-event codec. DTMF payload type
 // is negotiated per peer (RFC 4733) and may differ from the default constant.
 // NOTE: must be called with d.mu held or during the single-threaded setup phase.
-func (m *DialogMedia) dtmfCodec() media.Codec {
+func (m *Media) dtmfCodec() media.Codec {
 	if m.mediaSession != nil {
 		if codec, ok := m.mediaSession.DTMFCodecNegotiated(); ok {
 			return codec
@@ -1171,14 +1184,14 @@ func (m *DialogMedia) dtmfCodec() media.Codec {
 	return media.CodecTelephoneEvent8000
 }
 
-// CreateDTMFReader is DTMF over RTP. It reads audio and provides hook for dtmf while listening for audio
+// NewDTMFReader is DTMF over RTP. It reads audio and provides hook for dtmf while listening for audio
 // Use Listen or OnDTMF after this call
 //
-// Unlike the WithAudioReaderDTMF option, the returned reader is NOT installed
+// Unlike the WithReaderDTMF option, the returned reader is NOT installed
 // into the dialog audio pipeline: it wraps the current audio reader chain at
 // creation time. Deadline control resolves the current media session at use
 // time.
-func (m *DialogMedia) CreateDTMFReader() (*DTMFReader, error) {
+func (m *Media) NewDTMFReader() (*DTMFReader, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {
@@ -1204,7 +1217,7 @@ func (m *DialogMedia) CreateDTMFReader() (*DTMFReader, error) {
 
 // registerDTMFReader tracks r so out-of-band (SIP INFO) DTMF can be delivered
 // to its callback. Callers must hold d.mu.
-func (m *DialogMedia) registerDTMFReader(r *DTMFReader) {
+func (m *Media) registerDTMFReader(r *DTMFReader) {
 	if m.dtmfReaders == nil {
 		m.dtmfReaders = make(map[*DTMFReader]struct{})
 	}
@@ -1214,7 +1227,7 @@ func (m *DialogMedia) registerDTMFReader(r *DTMFReader) {
 // deliverDTMF dispatches an out-of-band DTMF digit to all registered DTMF
 // reader callbacks. It is safe to call from SIP transaction goroutines.
 // Without registered readers the digit is dropped (logged).
-func (m *DialogMedia) deliverDTMF(dtmf rune, dur time.Duration) {
+func (m *Media) deliverDTMF(dtmf rune, dur time.Duration) {
 	m.mu.Lock()
 	readers := make([]*DTMFReader, 0, len(m.dtmfReaders))
 	for r := range m.dtmfReaders {
@@ -1328,16 +1341,17 @@ func (d *DTMFReader) Read(buf []byte) (n int, err error) {
 	return n, nil
 }
 
+// DTMFWriter sends RFC 4733 telephone-event digits into the dialog stream.
 type DTMFWriter struct {
 	dtmfWriter *media.RTPDTMFWriter
 }
 
-// CreateDTMFWriter is DTMF over RTP on the write side.
+// NewDTMFWriter is DTMF over RTP on the write side.
 //
-// Unlike the WithAudioWriterDTMF option, the returned writer is NOT installed
+// Unlike the WithWriterDTMF option, the returned writer is NOT installed
 // into the dialog audio pipeline: it wraps the current audio writer chain at
 // creation time.
-func (m *DialogMedia) CreateDTMFWriter() (*DTMFWriter, error) {
+func (m *Media) NewDTMFWriter() (*DTMFWriter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.mediaGuard(); err != nil {
@@ -1364,7 +1378,7 @@ func (w *DTMFWriter) WriteDTMFContext(ctx context.Context, dtmf rune) error {
 	return w.dtmfWriter.WriteDTMFContext(ctx, dtmf)
 }
 
-// AudioReader exposes DTMF audio writer. You should use this for parallel audio processing
+// AudioWriter exposes the DTMF-aware writer for parallel audio processing.
 func (w *DTMFWriter) AudioWriter() *media.RTPDTMFWriter {
 	return w.dtmfWriter
 }

@@ -25,7 +25,8 @@ import (
 	"github.com/sjlit/diago/v2/media/sdp"
 )
 
-// RTPTracer receives decoded RTP packets when RTPDebug is enabled.
+// RTPTracer receives decoded RTP packets when MediaSession.RTPDebug is
+// enabled and a Tracer is configured.
 //
 // Traces run synchronously on the media path. Implementations must not block
 // and must clone packets that are retained after the method returns.
@@ -34,29 +35,11 @@ type RTPTracer interface {
 	RTPTraceWrite(laddr string, raddr string, packet *rtp.Packet)
 }
 
-var (
-	rtpPortOffset = atomic.Int32{}
+// RTPBufSize is the size of buffers used on RTP read paths (MTU guard).
+// It is a constant so no packet path depends on process-wide mutable state.
+const RTPBufSize = 1500
 
-	// RTPBufSize is the minimum size of buffers used on RTP read paths (MTU
-	// guard). It is a PROCESS-WIDE constant: sync.Pools and the jitter buffer
-	// capture it lazily at first use, so changing it mid-process has
-	// inconsistent effect. Set it once at startup before any media flows.
-	// There is intentionally no per-instance override yet.
-	RTPBufSize = 1500
-
-	// RTPDebug/RTCPDebug enable synchronous packet tracing on media paths.
-	// Atomic so tests and examples can flip them while media runs
-	RTPDebug     atomic.Bool
-	RTCPDebug    atomic.Bool
-	rtpTracerPtr atomic.Pointer[RTPTracer]
-
-	// RTPProfileSAVPDisable disables offering RTP/SAVP and keeps standard RTP/AVP for backward compatibilit needs
-	//
-	// Experimental
-	// Kept process-global: it is a bool flag where "unset" and "false" are
-	// indistinguishable, so a per-instance override cannot fall back cleanly.
-	RTPProfileSAVPDisable = false
-)
+var rtpPortOffset = atomic.Int32{}
 
 // RTPNAT options
 const (
@@ -64,34 +47,15 @@ const (
 	RTPNATSymetric = 1
 )
 
-// RTPDebugTracer sets the tracer used when RTPDebug is enabled.
-// Passing nil restores the default RTP debug logging.
-// It must be called before RTP traffic starts.
-func RTPDebugTracer(t RTPTracer) {
-	if t == nil {
-		rtpTracerPtr.Store(nil)
-		return
-	}
-	rtpTracerPtr.Store(&t)
-}
-
-// rtpTracerCurrent returns the currently installed tracer
-func rtpTracerCurrent() RTPTracer {
-	if p := rtpTracerPtr.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
 func logRTPRead(m *MediaSession, raddr net.Addr, p *rtp.Packet) {
-	if !RTPDebug.Load() {
+	if !m.RTPDebug {
 		return
 	}
 
 	laddr := m.Laddr.String()
 	raddrStr := raddr.String()
-	if tracer := rtpTracerCurrent(); tracer != nil {
-		tracer.RTPTraceRead(laddr, raddrStr, p)
+	if m.Tracer != nil {
+		m.Tracer.RTPTraceRead(laddr, raddrStr, p)
 		return
 	}
 
@@ -99,14 +63,14 @@ func logRTPRead(m *MediaSession, raddr net.Addr, p *rtp.Packet) {
 }
 
 func logRTPWrite(m *MediaSession, p *rtp.Packet) {
-	if !RTPDebug.Load() {
+	if !m.RTPDebug {
 		return
 	}
 
 	laddr := m.Laddr.String()
 	raddr := m.Raddr.String()
-	if tracer := rtpTracerCurrent(); tracer != nil {
-		tracer.RTPTraceWrite(laddr, raddr, p)
+	if m.Tracer != nil {
+		m.Tracer.RTPTraceWrite(laddr, raddr, p)
 		return
 	}
 
@@ -114,7 +78,7 @@ func logRTPWrite(m *MediaSession, p *rtp.Packet) {
 }
 
 func logRTCPRead(m *MediaSession, pkts []rtcp.Packet) {
-	if RTCPDebug.Load() {
+	if m.RTCPDebug {
 		laddr := m.rtcpConn.LocalAddr()
 		for _, p := range pkts {
 			m.logger().Debug(fmt.Sprintf("RTCP read %s < %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
@@ -123,7 +87,7 @@ func logRTCPRead(m *MediaSession, pkts []rtcp.Packet) {
 }
 
 func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
-	if RTCPDebug.Load() {
+	if m.RTCPDebug {
 		laddr := m.rtcpConn.LocalAddr()
 		m.logger().Debug(fmt.Sprintf("RTCP write %s > %s:\n%s", laddr.String(), m.rtcpRaddr.String(), StringRTCP(p)))
 	}
@@ -138,7 +102,7 @@ func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
 //     FROZEN. Only IO (ReadRTP/WriteRTP/ReadRTCP/WriteRTCP/StopRTP/StartRTP)
 //     and read-only queries (CommonCodecs, DTMFCodec) are allowed. Any change
 //     (codecs, direction, addresses) requires Fork() and installing the fork
-//     through diago's DialogMedia.
+//     through diago's Media.
 //
 // TODO: multiple media descriptions.
 // Consider https://datatracker.ietf.org/doc/rfc3388/ for grouping multiple media
@@ -172,8 +136,31 @@ type MediaSession struct {
 	SDPSessionName string
 
 	// Logger receives this session's logs. Nil falls back to the media
-	// package default (SetDefaultLogger/slog.Default). Carried through Fork.
+	// package default (slog.Default). Carried through Fork.
 	Logger *slog.Logger
+
+	// RTPDebug enables RTP packet tracing on this session. When Tracer is
+	// set packets are delivered to it; otherwise they are logged through
+	// Logger. Set only in the Config phase; carried through Fork.
+	RTPDebug bool
+	// RTCPDebug enables RTCP packet logging through Logger. Set only in the
+	// Config phase; carried through Fork.
+	RTCPDebug bool
+	// Tracer receives RTP packets when RTPDebug is enabled. Nil logs instead.
+	// Set only in the Config phase; carried through Fork.
+	Tracer RTPTracer
+	// SAVPDisable keeps RTP/AVP in the offered SDP profile even when SRTP is
+	// enabled (a=crypto compatibility mode), unless the remote offer already
+	// uses RTP/SAVP. Set only in the Config phase; carried through Fork.
+	SAVPDisable bool
+	// SourceLock enables RTP source locking after IP changes. Set only in the
+	// Config phase; carried through Fork.
+	SourceLock bool
+	// OnReadRTCP/OnWriteRTCP are the RTCP hooks installed on RTPSession
+	// instances created from this session. Nil keeps the previous hook
+	// behavior. Set only in the Config phase; carried through Fork.
+	OnReadRTCP  func(pkt rtcp.Packet, rtpStats RTPReadStats)
+	OnWriteRTCP func(pkt rtcp.Packet, rtpStats RTPWriteStats)
 
 	// Mode is sdp mode. Check consts sdp.ModeRecvOnly etc...
 	Mode string
@@ -205,7 +192,7 @@ type MediaSession struct {
 	remoteCtxSRTP *srtp.Context
 	srtpRemoteTag int
 
-	// RTP NAT enables handling RTP behind NAT. Checkout also RTPSourceLock
+	// RTP NAT enables handling RTP behind NAT. Checkout also MediaSession.SourceLock
 	RTPNAT          int // 0 - disabled, 1 - Learn source change (RTP Symetric)
 	learnedRTPFrom  atomic.Pointer[net.UDPAddr]
 	learnedRTCPFrom atomic.Pointer[net.UDPAddr]
@@ -333,7 +320,7 @@ func (s *MediaSession) InitWithSDP(localSDP []byte) error {
 //
 // It is a low-level primitive retained for the deadline-based components
 // (bridge mix polling, DTMF read windows). New code should use the refcounted
-// gate APIs on the stable handles: diago's DialogMedia.PauseAudioRead /
+// gate APIs on the stable handles: diago's Media.PauseAudioRead /
 // PauseAudioWrite (PauseRead/PauseWrite in this package). The rw mask values
 // 1 (read) and 2 (write) can be combined.
 func (s *MediaSession) StopRTP(rw int8, dur time.Duration) error {
@@ -370,7 +357,7 @@ func (s *MediaSession) StartRTP(rw int8) error {
 // The draft shares the parent's RTP/RTCP connections; everything negotiated
 // (Raddr, rtcpRaddr, negotiated mode, filterCodecs, SRTP/DTLS state, NAT-learned
 // addresses) is reset and must be re-established via RemoteSDP on the draft.
-// The draft becomes active only when installed through diago's DialogMedia
+// The draft becomes active only when installed through diago's Media
 // mutating the active session in place is forbidden.
 //
 // An established DTLS-SRTP association is the exception: its keys cannot be
@@ -407,6 +394,13 @@ func (s *MediaSession) Fork() *MediaSession {
 		SDPCodecPreferLocalOrder: s.SDPCodecPreferLocalOrder,
 		SDPSessionName:           s.SDPSessionName,
 		Logger:                   s.Logger,
+		RTPDebug:                 s.RTPDebug,
+		RTCPDebug:                s.RTCPDebug,
+		Tracer:                   s.Tracer,
+		SAVPDisable:              s.SAVPDisable,
+		SourceLock:               s.SourceLock,
+		OnReadRTCP:               s.OnReadRTCP,
+		OnWriteRTCP:              s.OnWriteRTCP,
 	}
 
 	if cp.SecureRTP == 2 && cp.isDTLSEstablished {
@@ -505,7 +499,7 @@ func (s *MediaSession) LocalSDP() []byte {
 
 				// NOTE: For some compatibility reasons (like asterisk) it would be required that this stays on RTP/AVP
 				// When the remote offer uses RTP/SAVP, we must mirror it per RFC 3264
-				if !RTPProfileSAVPDisable || s.remoteProto == "RTP/SAVP" {
+				if !s.SAVPDisable || s.remoteProto == "RTP/SAVP" {
 					rtpProfile = "RTP/SAVP"
 				}
 				return nil
@@ -591,9 +585,9 @@ func (s *MediaSession) LocalSDP() []byte {
 // sdp.ModeRecvonly or sdp.ModeInactive. It returns "" before the first
 // negotiation and after a Fork (forks reset it until RemoteSDP applies).
 //
-// The value is written while the owning DialogMedia holds its lock (all
+// The value is written while the owning Media holds its lock (all
 // RemoteSDP/install paths do); read it under the same discipline. From
-// component code, resolve through DialogMedia instead of capturing a session.
+// component code, resolve through Media instead of capturing a session.
 func (s *MediaSession) NegotiatedDirection() string {
 	return s.mode
 }

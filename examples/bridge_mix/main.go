@@ -45,11 +45,11 @@ func main() {
 func start(ctx context.Context) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	d, err := diago.New(ua, diago.WithDefaultTransport())
+	d, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
 	if err != nil {
 		return err
 	}
-	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		BridgeCall(ctx, d, inDialog)
 
 		fmt.Println("Bridge state", bridge.String())
@@ -57,7 +57,7 @@ func start(ctx context.Context) error {
 	})
 }
 
-func BridgeCall(ctx context.Context, d *diago.Diago, inDialog *diago.DialogServerSession) error {
+func BridgeCall(ctx context.Context, d *diago.Agent, inDialog *diago.InboundCall) error {
 	inDialog.Trying(ctx)  // 100 Trying
 	inDialog.Ringing(ctx) // 180 Ringing
 
@@ -66,10 +66,10 @@ func BridgeCall(ctx context.Context, d *diago.Diago, inDialog *diago.DialogServe
 	if err := inDialog.Answer(ctx); err != nil {
 		return err
 	}
-	if err := bridge.AddDialogSession(inDialog); err != nil {
+	if err := bridge.Add(inDialog); err != nil {
 		return err
 	}
 
 	<-inCtx.Done()
-	return bridge.RemoveDialogSession(inDialog)
+	return bridge.Remove(inDialog)
 }

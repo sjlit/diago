@@ -10,9 +10,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/emiago/sipgo"
-	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 )
@@ -41,7 +41,7 @@ func main() {
 		return
 	}
 
-	var regOpts []diago.SignalOption
+	var regOpts []diago.RegisterOption
 	if *fUsername != "" || *fPassword != "" {
 		regOpts = append(regOpts, diago.WithAuthCredentials(*fUsername, *fPassword))
 	}
@@ -51,12 +51,7 @@ func main() {
 	}
 }
 
-func start(ctx context.Context, recipientURI string, username string, regOpts ...diago.SignalOption) error {
-	recipient := sip.Uri{}
-	if err := sip.ParseUri(recipientURI, &recipient); err != nil {
-		return fmt.Errorf("failed to parse register uri: %w", err)
-	}
-
+func start(ctx context.Context, recipientURI string, username string, regOpts ...diago.RegisterOption) error {
 	// Setup our main transaction user
 	useragent := username
 	if useragent == "" {
@@ -69,11 +64,11 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 	)
 	defer ua.Close()
 
-	tu, err := diago.New(ua, diago.WithTransport(
+	tu, err := diago.New(diago.WithUserAgent(ua), diago.WithTransport(
 		diago.Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  15060,
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 15060,
 		},
 	))
 	if err != nil {
@@ -82,13 +77,26 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 
 	// Start listening incoming calls
 	go func() {
-		tu.Serve(ctx, func(_ context.Context, inDialog *diago.DialogServerSession) error {
+		tu.Serve(ctx, func(_ context.Context, inDialog *diago.InboundCall) error {
 			slog.Info("New dialog request", "id", inDialog.ID())
 			defer slog.Info("Dialog finished", "id", inDialog.ID())
 			return nil
 		})
 	}()
 
-	// Do register or fail on error
-	return tu.Register(ctx, recipient, regOpts...)
+	// Start registration and keep it running until the process is stopped.
+	reg, err := tu.Register(ctx, recipientURI, regOpts...)
+	if err != nil {
+		return err
+	}
+	if err := reg.WaitReady(ctx); err != nil {
+		return err
+	}
+	slog.Info("Registered", "recipient", recipientURI)
+
+	<-ctx.Done()
+
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelClose()
+	return reg.Close(closeCtx)
 }

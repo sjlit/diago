@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/emiago/sipgo"
-	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/audio"
 	"github.com/sjlit/diago/v2/examples"
@@ -25,28 +24,25 @@ func main() {
 	examples.SetupLogger()
 
 	ua, _ := sipgo.NewUA()
-	dg, err := diago.New(ua,
+	dg, err := diago.New(diago.WithUserAgent(ua),
+		diago.WithMediaProfile("dtls", diago.MediaConfig{
+			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+			SRTP:   diago.SRTPConfig{Mode: diago.SecureRTPDTLS}, // USE DTLS
+		}),
 		diago.WithTransport(
 			diago.Transport{
-				ID:        "tcp",
-				Transport: "tcp",
-				BindHost:  "127.0.0.1",
-				BindPort:  16441,
-				Media: diago.TransportMediaConfig{
-					SRTP: diago.SRTPConfig{Mode: diago.SecureRTPDTLS}, // USE DTLS
-				},
-			},
-		),
-		diago.WithMediaConfig(
-			diago.MediaConfig{
-				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				ID:       "tcp",
+				Network:  "tcp",
+				BindHost: "127.0.0.1",
+				BindPort: 16441,
+				Profile:  "dtls",
 			},
 		))
 	if err != nil {
 		panic(err)
 	}
 
-	d, err := dg.Dial(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, diago.WithDialogTransport("tcp"))
+	d, err := dg.Dial(ctx, "sip:11@127.0.0.1:16443", diago.WithDialogTransport("tcp"))
 	if err != nil {
 		panic(err)
 	}

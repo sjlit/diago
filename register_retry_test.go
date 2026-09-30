@@ -79,9 +79,9 @@ func TestRegisterRetryAfterHonored(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
+	require.ErrorIs(t, reg.Wait(), context.Canceled)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -113,10 +113,10 @@ func TestRegisterRetryIntervalBeatsRetryAfter(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"},
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"},
 		WithRegisterRetryInterval(3*time.Millisecond))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, err)
+	require.ErrorIs(t, reg.Wait(), context.Canceled)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -147,8 +147,10 @@ func TestRegisterTransient408Retries(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
 	go func() {
-		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+		done <- reg.Wait()
 	}()
 
 	select {
@@ -167,7 +169,7 @@ func TestRegisterTerminal4xxStops(t *testing.T) {
 	defer cancel()
 
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		// The deferred Unregister at the end of Diago.Register sends
+		// The deferred Unregister at the end of Agent.Register sends
 		// Expires: 0; it must not count as a retry.
 		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
 			return sip.NewResponseFromRequest(req, 200, "OK", nil)
@@ -185,8 +187,10 @@ func TestRegisterTerminal4xxStops(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
 	go func() {
-		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+		done <- reg.Wait()
 	}()
 
 	select {
@@ -261,8 +265,9 @@ func TestRegisterRetryable5xxKeepsRetrying(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
-	require.ErrorIs(t, err, context.Canceled)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
+	require.ErrorIs(t, reg.Wait(), context.Canceled)
 	assert.GreaterOrEqual(t, attempts.Load(), int32(4), "500 and 503 must be retried")
 }
 
@@ -289,8 +294,10 @@ func TestRegisterTerminal5xxStops(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
 	go func() {
-		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+		done <- reg.Wait()
 	}()
 
 	select {
@@ -327,8 +334,10 @@ func TestRegister3xxStops(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
 	go func() {
-		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+		done <- reg.Wait()
 	}()
 
 	select {
@@ -377,8 +386,10 @@ func TestRegisterRetryAfterClearedOnSuccess(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
 	go func() {
-		done <- dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+		done <- reg.Wait()
 	}()
 
 	var delays []time.Duration
@@ -439,13 +450,100 @@ func TestRegisterIntervalTooBriefUsesMinExpires(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
+	require.ErrorIs(t, reg.Wait(), context.Canceled)
 
 	got, _ := retryExpires.Load().(string)
 	assert.Equal(t, "120", got, "retry after 423 must carry Min-Expires")
 	require.GreaterOrEqual(t, attempts.Load(), int32(3))
+}
+
+// TestRegistrationHandle locks the Registration handle contract: Ready closes
+// after the first successful REGISTER, Close stops the loop and unregisters
+// the contact, and Wait reports a clean stop.
+func TestRegistrationHandle(t *testing.T) {
+	var mu sync.Mutex
+	var reqs []*sip.Request
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		mu.Lock()
+		reqs = append(reqs, req.Clone())
+		mu.Unlock()
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	reg, err := dg.Register(ctx, "sip:alice@localhost")
+	require.NoError(t, err)
+	require.NoError(t, reg.WaitReady(ctx))
+	require.NoError(t, reg.Close(ctx))
+	require.NoError(t, reg.Wait(), "a clean Close must not report a loop error")
+
+	select {
+	case <-reg.Ready():
+	default:
+		t.Fatal("Ready must be closed after the first successful REGISTER")
+	}
+	select {
+	case <-reg.Done():
+	default:
+		t.Fatal("Done must be closed after Close")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var unregister bool
+	for _, req := range reqs {
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			unregister = true
+		}
+	}
+	assert.True(t, unregister, "Close must send an unregister (Expires: 0)")
+}
+
+// TestRegistrationInitialFailure locks that a terminal initial REGISTER fails
+// the handle without ever reporting Ready, and that no unregister is sent when
+// nothing was ever registered.
+func TestRegistrationInitialFailure(t *testing.T) {
+	var attempts atomic.Int32
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		attempts.Add(1)
+		return sip.NewResponseFromRequest(req, 403, "Forbidden", nil)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
+
+	err = reg.WaitReady(ctx)
+	var rr *RegisterResponseError
+	require.ErrorAs(t, err, &rr)
+	assert.Equal(t, 403, rr.StatusCode())
+	require.ErrorAs(t, reg.Wait(), &rr)
+
+	select {
+	case <-reg.Ready():
+		t.Fatal("Ready must not be closed after a failed initial REGISTER")
+	default:
+	}
+	assert.EqualValues(t, 1, attempts.Load(), "a failed initial REGISTER must not trigger an unregister")
+}
+
+// TestRegistrationCloseBeforeReady locks that closing a handle before the
+// first success reports ErrRegistrationClosed from WaitReady instead of
+// looking like a success.
+func TestRegistrationCloseBeforeReady(t *testing.T) {
+	r := &Registration{
+		ready: make(chan struct{}),
+		done:  make(chan struct{}),
+	}
+	close(r.done) // loop stopped before Ready
+
+	assert.ErrorIs(t, r.WaitReady(context.Background()), ErrRegistrationClosed)
 }
 
 // A server that keeps answering 423 with the same Min-Expires after the client
@@ -473,7 +571,9 @@ func TestRegisterIntervalTooBriefRepeatedIsTerminal(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	err := dg.Register(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
+	err = reg.Wait()
 	var rr *RegisterResponseError
 	require.ErrorAs(t, err, &rr, "a repeated 423 cannot be satisfied and must stop")
 	assert.Equal(t, 423, rr.StatusCode())

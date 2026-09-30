@@ -12,7 +12,7 @@ import (
 )
 
 func TestErrorsIsMediaSessionMissing(t *testing.T) {
-	dm := &DialogMedia{}
+	dm := &Media{}
 
 	err := dm.checkEarlyMedia([]byte("v=0"))
 	assert.ErrorIs(t, err, ErrMediaSessionMissing)

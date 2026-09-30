@@ -19,7 +19,7 @@ type toneConfig struct {
 	volume float64
 }
 
-// ToneOption tunes DialogMedia.PlayTone.
+// ToneOption tunes Media.PlayTone.
 type ToneOption func(*toneConfig) error
 
 // WithToneLoop replays the tone until the context is canceled. Without it the
@@ -55,7 +55,7 @@ func WithToneVolume(scale float64) ToneOption {
 // The tone is written into the audio pipeline regardless of the negotiated SDP
 // direction: playing ringback to an answered originator works after Answer,
 // and a peer that is sendonly simply ignores the packets.
-func (d *DialogMedia) PlayTone(ctx context.Context, tone audio.Tone, opts ...ToneOption) error {
+func (d *Media) PlayTone(ctx context.Context, tone audio.Tone, opts ...ToneOption) error {
 	cfg := toneConfig{}
 	for _, o := range opts {
 		if o == nil {

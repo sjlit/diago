@@ -35,7 +35,7 @@ import (
 //
 // For manual control:
 //
-//	go func() { time.Sleep(5*time.Second); inDialog.PlayMusicOnHold(ctx, diago.WithMoHTone(myTone)) }()
+//	go func() { time.Sleep(5*time.Second); inDialog.StartMusicOnHold(ctx, diago.WithMoHTone(myTone)) }()
 //	go func() { time.Sleep(15*time.Second); inDialog.StopMusicOnHold() }()
 
 func main() {
@@ -58,24 +58,24 @@ func run(ctx context.Context) error {
 		Segments: []audio.ToneSegment{{Freqs: []float64{425}, On: 30 * time.Millisecond}},
 	}
 
-	dg, err := diago.New(ua,
-		diago.WithTransport(diago.Transport{Transport: "udp", BindHost: "127.0.0.1", BindPort: 5060}),
+	dg, err := diago.New(diago.WithUserAgent(ua),
+		diago.WithTransport(diago.Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 5060}),
 		diago.WithMediaConfig(diago.MediaConfig{MusicOnHold: holdTone}),
 	)
 	if err != nil {
 		return err
 	}
 
-	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.DialogServerSession) error {
+	return dg.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
 		if err := inDialog.Answer(ctx); err != nil {
 			slog.Error("Answer failed", "error", err)
 			return err
 		}
 
 		// DTMF reader for Hold (1) and Unhold (2).
-		reader, err := inDialog.CreateDTMFReader()
+		reader, err := inDialog.NewDTMFReader()
 		if err != nil {
-			slog.Error("CreateDTMFReader failed", "error", err)
+			slog.Error("NewDTMFReader failed", "error", err)
 			return err
 		}
 		reader.OnDTMF(func(r rune) error {
@@ -94,7 +94,8 @@ func run(ctx context.Context) error {
 			return nil
 		})
 
-		// Block until the call ends (server Serve tears it down on return).
+		// Block until the call ends; the framework releases the media and the
+		// cache entry when it does.
 		<-inDialog.Context().Done()
 		return nil
 	})

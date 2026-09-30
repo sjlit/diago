@@ -21,10 +21,10 @@ import (
 	"github.com/sjlit/diago/v2/media"
 )
 
-// Bridger is the bridge contract accepted by Diago.DialBridge. Both *Bridge
+// Bridger is the bridge contract accepted by Agent.DialBridge. Both *Bridge
 // (2-party proxy) and *BridgeMix (N-party mixer) satisfy it.
 type Bridger interface {
-	AddDialogSession(d DialogSession) error
+	Add(d Call) error
 }
 
 var (
@@ -32,11 +32,13 @@ var (
 	_ Bridger = (*BridgeMix)(nil)
 )
 
+// Bridge is a two-party proxy: it forwards encoded media between the two
+// added dialogs without transcoding.
 type Bridge struct {
 	// Originator is dialog session that created bridge
-	Originator DialogSession
+	Originator Call
 	// DTMFpass is also dtmf pipeline and proxy. By default only audio media is proxied
-	// NOTE: this may not work if you are already processing DTMF with CreateDTMFReader
+	// NOTE: this may not work if you are already processing DTMF with NewDTMFReader
 	DTMFpass bool
 
 	log *slog.Logger
@@ -44,11 +46,11 @@ type Bridge struct {
 	// This gives high performance but you can not attach any pipeline in media processing
 	// RTPpass bool
 
-	// dialogs and Originator are guarded by mu: AddDialogSession may be called
+	// dialogs and Originator are guarded by mu: AddCall may be called
 	// while a previous proxyMedia goroutine is still reading the list, and
 	// ProxyMediaControl's stop iterates it from another goroutine.
 	mu      sync.Mutex
-	dialogs []DialogSession
+	dialogs []Call
 
 	// minDialogs is just helper flag when to start proxy
 	WaitDialogsNum int
@@ -74,7 +76,13 @@ type Bridge struct {
 	initOnce sync.Once
 }
 
-var ErrBridgeClosed = errors.New("bridge closed")
+var (
+	// ErrBridgeClosed is returned by Add after Close.
+	ErrBridgeClosed = errors.New("bridge closed")
+	// ErrBridgeFull is returned by Bridge.Add when the 2-party bridge already
+	// holds two dialogs.
+	ErrBridgeFull = errors.New("bridge is full")
+)
 
 var bridgeReadPool = sync.Pool{
 	New: func() any {
@@ -119,15 +127,17 @@ func (b *Bridge) ensureInit() {
 }
 
 // originator returns the current bridge originator under mu. The field is
-// guarded because AddDialogSession updates it while callers (ex. DialBridge)
+// guarded because AddCall updates it while callers (ex. DialBridge)
 // may read it concurrently.
-func (b *Bridge) originator() DialogSession {
+func (b *Bridge) originator() Call {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.Originator
 }
 
-func (b *Bridge) AddDialogSession(d DialogSession) error {
+// Add adds a dialog to the 2-party bridge; the call starts proxying when the
+// joined dialog count reaches WaitDialogsNum.
+func (b *Bridge) Add(d Call) error {
 	if d == nil {
 		return fmt.Errorf("bridge: dialog session is nil")
 	}
@@ -142,18 +152,18 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Bridge only supports 2 parties: reject before appending so a failed
 	// third Add does not leave a stale dialog behind (#21 atomicity).
 	if len(b.dialogs) >= 2 {
-		return fmt.Errorf("currently bridge only support 2 party")
+		return fmt.Errorf("%w: 2-party bridge already has 2 dialogs", ErrBridgeFull)
 	}
 
 	if b.Originator != nil {
 		// This may look ugly but it is safe way of reading
-		origM := b.Originator.DialogMedia()
+		origM := b.Originator.Media()
 		origProps := MediaProps{}
 		if _, err := origM.audioWriterProps(&origProps); err != nil {
 			return fmt.Errorf("bridge originator dialog has no media: %w", err)
 		}
 
-		m := d.DialogMedia()
+		m := d.Media()
 		mprops := MediaProps{}
 		if _, err := m.audioWriterProps(&mprops); err != nil {
 			return fmt.Errorf("bridge dialog %q has no media: %w", d.ID(), err)
@@ -195,7 +205,7 @@ func (b *Bridge) AddDialogSession(d DialogSession) error {
 	// Check are both answered. On failure roll back the append so the
 	// bridge does not keep a stale half-ready dialog.
 	for _, dd := range b.dialogs {
-		if err := dd.DialogMedia().checkMediaUsable(); err != nil {
+		if err := dd.Media().checkMediaUsable(); err != nil {
 			rollbackLast()
 			return fmt.Errorf("dialog session not answered %q: %w", dd.ID(), err)
 		}
@@ -251,11 +261,11 @@ func (b *Bridge) releaseProxy(done chan struct{}) {
 	b.mu.Unlock()
 }
 
-// RemoveDialogSession removes a dialog by ID. Missing IDs are a no-op nil.
+// Remove removes a dialog by ID. Missing IDs are a no-op nil.
 // If a proxy is running it is interrupted through the write gate; removal
 // still succeeds on pause errors (e.g. already hung up). Originator falls
 // back to the first remaining dialog.
-func (b *Bridge) RemoveDialogSession(d DialogSession) error {
+func (b *Bridge) Remove(d Call) error {
 	if d == nil {
 		return fmt.Errorf("bridge: dialog session is nil")
 	}
@@ -346,10 +356,10 @@ func (b *Bridge) Close() error {
 // interruptBridgeProxy pauses writers to surface media.ErrWritePaused in the
 // proxy copy loop. Callers must call the returned releases after the proxy
 // exits (or times out) to restore writers.
-func interruptBridgeProxy(dialogs []DialogSession) []StopFunc {
+func interruptBridgeProxy(dialogs []Call) []StopFunc {
 	var releases []StopFunc
 	for _, d := range dialogs {
-		release, err := d.DialogMedia().PauseAudioWrite()
+		release, err := d.Media().PauseAudioWrite()
 		if err != nil {
 			continue
 		}
@@ -440,7 +450,7 @@ func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
 			rels := make([]StopFunc, 0, len(dialogs))
 			var pauseErrs error
 			for _, d := range dialogs {
-				release, err := d.DialogMedia().PauseAudioWrite()
+				release, err := d.Media().PauseAudioWrite()
 				if err != nil {
 					pauseErrs = errors.Join(pauseErrs, err)
 					continue
@@ -467,7 +477,7 @@ func (b *Bridge) proxyMedia() error {
 	var err error
 	log := b.log
 
-	// Snapshot the dialog list: AddDialogSession may append (and fail with
+	// Snapshot the dialog list: AddCall may append (and fail with
 	// "only support 2 party") while proxying is already running.
 	b.mu.Lock()
 	dialogs := slices.Clone(b.dialogs)
@@ -484,8 +494,8 @@ func (b *Bridge) proxyMedia() error {
 		b.discardQueuedRTP(dialogs)
 	}
 
-	m1 := dialogs[0].DialogMedia()
-	m2 := dialogs[1].DialogMedia()
+	m1 := dialogs[0].Media()
+	m2 := dialogs[1].Media()
 
 	// Lets for now simplify proxy and later optimize
 
@@ -506,7 +516,7 @@ func (b *Bridge) proxyMedia() error {
 		return err
 	}
 	errCh := make(chan error, 2)
-	startProxy := func(mFrom, mTo *DialogMedia) error {
+	startProxy := func(mFrom, mTo *Media) error {
 		p1, p2 := MediaProps{}, MediaProps{}
 		r, err := mFrom.audioReaderProps(&p1)
 		if err != nil {
@@ -541,9 +551,9 @@ func (b *Bridge) proxyMedia() error {
 // discardQueuedRTP drops RTP that queued on each leg's socket before the proxy
 // loop could read it. Errors are fail-open: the bridge proceeds and forwards
 // whatever remains queued, which is the pre-existing behavior.
-func (b *Bridge) discardQueuedRTP(dialogs []DialogSession) {
+func (b *Bridge) discardQueuedRTP(dialogs []Call) {
 	for _, d := range dialogs {
-		n, err := d.DialogMedia().DiscardQueuedRTP()
+		n, err := d.Media().DiscardQueuedRTP()
 		if err != nil {
 			b.log.Warn("discarding queued RTP before proxy failed",
 				"dialog", d.ID(), "packets", n, "error", err)
@@ -573,14 +583,14 @@ func proxyMediaBackground(log *slog.Logger, reader io.Reader, writer io.Writer, 
 	ch <- err
 }
 
-func (b *Bridge) proxyMediaWithDTMF(m1 *DialogMedia, m2 *DialogMedia) error {
+func (b *Bridge) proxyMediaWithDTMF(m1 *Media, m2 *Media) error {
 	dtmfReader := DTMFReader{}
-	r, p1, err := m1.ReaderWithProps(WithAudioReaderDTMF(&dtmfReader))
+	r, p1, err := m1.ReaderWithProps(WithReaderDTMF(&dtmfReader))
 	if err != nil {
 		return err
 	}
 	dtmfWriter := DTMFWriter{}
-	w, p2, err := m2.WriterWithProps(WithAudioWriterDTMF(&dtmfWriter))
+	w, p2, err := m2.WriterWithProps(WithWriterDTMF(&dtmfWriter))
 	if err != nil {
 		return err
 	}
@@ -607,7 +617,7 @@ func (b *Bridge) proxyMediaWithDTMF(m1 *DialogMedia, m2 *DialogMedia) error {
 // Experimental: not fully tested yet
 type BridgeMix struct {
 	mu      sync.Mutex
-	dialogs []DialogSession
+	dialogs []Call
 
 	// mixMutateMu serializes Add/Remove across the stop-wait-restart cycle.
 	// mixStopWait releases b.mu while waiting for the mix to drain, so without
@@ -637,17 +647,7 @@ type BridgeMix struct {
 	initOnce sync.Once
 }
 
-var (
-	// BridgeDebug enables some traces
-	BridgeDebug bool
-
-	bridgeTrace = func(args ...any) {
-		if BridgeDebug {
-			fmt.Fprintln(os.Stderr, args...)
-		}
-	}
-)
-
+// NewBridgeMix creates an N-party mixer with realtime reading and polling enabled.
 func NewBridgeMix() *BridgeMix {
 	b := BridgeMix{
 		RealtimeReader: true,
@@ -687,18 +687,8 @@ func (b *BridgeMix) String() string {
 	return str.String()
 }
 
-// DialogSessionsList returns list of dialogs in bridge
-// It is not safe to use dialogs for media until they are removed from bridge
-//
-// Deprecated: Not used by the library; keep track of the sessions you added yourself.
-func (b *BridgeMix) DialogSessionsList() []DialogSession {
-	b.ensureInit()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.dialogs)
-}
-
-func (b *BridgeMix) AddDialogSession(d DialogSession) error {
+// Add adds an answered dialog to the mixer; mixing restarts with the new set.
+func (b *BridgeMix) Add(d Call) error {
 	if d == nil {
 		return fmt.Errorf("bridge mix: dialog session is nil")
 	}
@@ -709,7 +699,11 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if state := d.DialogSIP().LoadState(); state != sip.DialogStateConfirmed {
+	switch state := d.SIP().LoadState(); state {
+	case sip.DialogStateEstablished, sip.DialogStateConfirmed:
+		// Answered: Established means the 2xx was sent and the ACK may still
+		// be in flight; media is already negotiated at that point.
+	default:
 		return fmt.Errorf("dialog must be answered before adding into bridge")
 	}
 
@@ -737,7 +731,8 @@ func (b *BridgeMix) AddDialogSession(d DialogSession) error {
 	return nil
 }
 
-func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
+// Remove removes a dialog from the mixer and restarts mixing with the rest.
+func (b *BridgeMix) Remove(d Call) error {
 	if d == nil {
 		return fmt.Errorf("bridge mix: dialog session is nil")
 	}
@@ -749,7 +744,7 @@ func (b *BridgeMix) RemoveDialogSession(d DialogSession) error {
 	defer b.mu.Unlock()
 	dialogID := d.ID()
 
-	var dialog DialogSession
+	var dialog Call
 	for _, d := range b.dialogs {
 		if d.ID() == dialogID {
 			dialog = d
@@ -836,7 +831,7 @@ func (b *BridgeMix) mixStop() (bool, error) {
 		for _, d := range b.dialogs {
 			// Pause reading: interrupts the mix loop reads through the reader
 			// gate; releases are held until mixStopWait rejoins the mix.
-			release, err := d.DialogMedia().PauseAudioRead()
+			release, err := d.Media().PauseAudioRead()
 			if err != nil {
 				allErros = errors.Join(allErros, err)
 				continue
@@ -955,7 +950,7 @@ func (b *BridgeMix) mixLoop(rwStreams []*bridgePCMStream, poll bool) error {
 			return err
 		}
 		if n == 0 {
-			bridgeTrace("Nothing read, delaying read")
+			b.log.Debug("Nothing read, delaying read")
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
@@ -969,7 +964,7 @@ func (b *BridgeMix) mixLoop(rwStreams []*bridgePCMStream, poll bool) error {
 			}
 
 			n, err := w.w.Write(streamBuf)
-			bridgeTrace("Writing stream", "i", i, "stream", w.id, "n", n, "err", err)
+			b.log.Debug("Writing stream", "i", i, "stream", w.id, "n", n, "err", err)
 			if err != nil {
 				// Detect is this Deadline or EOF error caused by stream exiting
 				if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -996,7 +991,7 @@ type bridgePCMStream struct {
 	w  io.Writer
 	// dm resolves the CURRENT media session at use time so mix-loop deadline
 	// control survives media updates (re-INVITE)
-	dm *DialogMedia
+	dm *Media
 	// read buf
 	buf []byte
 	n   int
@@ -1006,8 +1001,8 @@ type bridgePCMStream struct {
 	isMarkGone bool
 }
 
-func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream *bridgePCMStream, wg *sync.WaitGroup, firstDialogCodec *media.Codec, poll bool) error {
-	m := d.DialogMedia()
+func (b *BridgeMix) addDialogStream(ctx context.Context, d Call, stream *bridgePCMStream, wg *sync.WaitGroup, firstDialogCodec *media.Codec, poll bool) error {
+	m := d.Media()
 
 	r, p, err := m.ReaderWithProps()
 	if err != nil {
@@ -1072,7 +1067,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 	if poll {
 		// We do buffering because initial packet can be read oner than actual mixing has started
 		wg.Add(1)
-		bridgeTrace("poll: starting stream", "stream.id", stream.id)
+		b.log.Debug("poll: starting stream", "stream.id", stream.id)
 		go func(s *bridgePCMStream) {
 			defer wg.Done()
 
@@ -1085,7 +1080,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 			for {
 				n, err := s.r.Read(buf)
 				if err != nil {
-					bridgeTrace("poll: stopped with error", "error", err, "stream.id", stream.id)
+					b.log.Debug("poll: stopped with error", "error", err, "stream.id", stream.id)
 					return
 				}
 
@@ -1098,7 +1093,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d DialogSession, stream
 						b.log.Error("Reading from pipe was not full", "stream.id", s.id, "n", n, "written", nw)
 					}
 				case <-ctx.Done():
-					bridgeTrace("poll: stream context canceled", "stream.id", stream.id)
+					b.log.Debug("poll: stream context canceled", "stream.id", stream.id)
 					return
 				}
 			}

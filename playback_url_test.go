@@ -29,11 +29,11 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := New(ua, WithTransport(
+	tu, err := New(WithUserAgent(ua), WithTransport(
 		Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  0,
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 0,
 		},
 	))
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	var handled atomic.Bool
-	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+	err = tu.ServeBackground(ctx, func(ctx context.Context, in *InboundCall) error {
 		// Stray retransmissions from other tests used to reach this fixed
 		// port; only the first dialog is the one under test.
 		if !handled.CompareAndSwap(false, true) {
@@ -59,7 +59,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		in.Ringing(ctx)
 		in.Answer(ctx)
 		t.Log("Playing url ", urlStr)
-		pb, _ := in.CreatePlayback()
+		pb, _ := in.StartPlayback()
 		if _, err := pb.PlayURL(urlStr); err != nil {
 			errServer = errors.Join(errServer, err)
 		}
@@ -75,19 +75,19 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
-		phone, err := New(ua, WithTransport(Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  0,
+		phone, err := New(WithUserAgent(ua), WithTransport(Transport{
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 0,
 		}))
 		require.NoError(t, err)
 		// Just to have handled BYE
-		err = phone.ServeBackground(context.TODO(), func(ctx context.Context, d *DialogServerSession) error {
+		err = phone.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 		require.NoError(t, err)
 
-		dialog, err := phone.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
+		dialog, err := phone.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
 		defer dialog.Close()
 

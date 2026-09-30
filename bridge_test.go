@@ -34,8 +34,8 @@ func TestBridgeProxy(t *testing.T) {
 	b := NewBridge()
 	b.WaitDialogsNum = 99 // Do not start proxy
 
-	incoming := &DialogServerSession{
-		dialogMedia: DialogMedia{
+	incoming := &InboundCall{
+		callMedia: Media{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
@@ -45,8 +45,8 @@ func TestBridgeProxy(t *testing.T) {
 			rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 		},
 	}
-	outgoing := &DialogClientSession{
-		dialogMedia: DialogMedia{
+	outgoing := &OutboundCall{
+		callMedia: Media{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
@@ -57,9 +57,9 @@ func TestBridgeProxy(t *testing.T) {
 		},
 	}
 
-	err := b.AddDialogSession(incoming)
+	err := b.Add(incoming)
 	require.NoError(t, err)
-	err = b.AddDialogSession(outgoing)
+	err = b.Add(outgoing)
 	require.NoError(t, err)
 
 	err = b.proxyMedia()
@@ -74,8 +74,8 @@ func TestBridgeNoTranscodingAllowed(t *testing.T) {
 	b := NewBridge()
 	// b.waitDialogsNum = 99 // Do not start proxy
 
-	incoming := &DialogServerSession{
-		dialogMedia: DialogMedia{
+	incoming := &InboundCall{
+		callMedia: Media{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
@@ -83,8 +83,8 @@ func TestBridgeNoTranscodingAllowed(t *testing.T) {
 			// rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 		},
 	}
-	outgoing := &DialogClientSession{
-		dialogMedia: DialogMedia{
+	outgoing := &OutboundCall{
+		callMedia: Media{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioUlaw},
 			},
@@ -93,9 +93,9 @@ func TestBridgeNoTranscodingAllowed(t *testing.T) {
 		},
 	}
 
-	err := b.AddDialogSession(incoming)
+	err := b.Add(incoming)
 	require.NoError(t, err)
-	err = b.AddDialogSession(outgoing)
+	err = b.Add(outgoing)
 	require.Error(t, err)
 }
 
@@ -113,16 +113,16 @@ func TestIntegrationBridging(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := New(ua, WithTransport(
+	tu, err := New(WithUserAgent(ua), WithTransport(
 		Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  5090,
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 5090,
 		},
 	))
 	require.NoError(t, err)
 
-	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+	err = tu.ServeBackground(ctx, func(ctx context.Context, in *InboundCall) error {
 		in.Trying(ctx)
 		in.Ringing(ctx)
 		in.Answer(ctx)
@@ -134,12 +134,12 @@ func TestIntegrationBridging(t *testing.T) {
 		// Wa want to bridge this call with originator
 		bridge := NewBridge()
 		// Add us in bridge
-		if err := bridge.AddDialogSession(in); err != nil {
+		if err := bridge.Add(in); err != nil {
 			t.Log("Adding dialog in bridge failed", err)
 			return nil
 		}
 
-		out, err := tu.DialBridge(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: int(outboundPort.Load())}, bridge)
+		out, err := tu.DialBridgeURI(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: int(outboundPort.Load())}, bridge)
 		if err != nil {
 			t.Log("Dialing failed", err)
 			return nil
@@ -167,18 +167,18 @@ func TestIntegrationBridging(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(ua, WithTransport(
+		dg, err := New(WithUserAgent(ua), WithTransport(
 			Transport{
-				Transport: "udp",
-				BindHost:  "127.0.0.1",
-				BindPort:  0,
+				Network:  "udp",
+				BindHost: "127.0.0.1",
+				BindPort: 0,
 			},
 		))
 		require.NoError(t, err)
 
 		// The handler runs on the request goroutine: keep its error off the
 		// test goroutine's variables (sharing err here was a data race).
-		serveErr := dg.ServeBackground(context.Background(), func(_ context.Context, d *DialogServerSession) error {
+		serveErr := dg.ServeBackground(context.Background(), func(_ context.Context, d *InboundCall) error {
 			ctx := d.Context()
 			if err := d.Answer(ctx); err != nil {
 				return err
@@ -215,7 +215,7 @@ func TestIntegrationBridging(t *testing.T) {
 		defer ua.Close()
 
 		dg := newDialer(t, ua)
-		dialog, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog.Close()
 
@@ -242,11 +242,11 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := New(ua, WithTransport(
+	tu, err := New(WithUserAgent(ua), WithTransport(
 		Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  5090,
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 5090,
 		},
 	))
 	require.NoError(t, err)
@@ -258,7 +258,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	var bridgePtr atomic.Pointer[BridgeMix]
 	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
-	err = tu.ServeBackground(ctx, func(ctx context.Context, in *DialogServerSession) error {
+	err = tu.ServeBackground(ctx, func(ctx context.Context, in *InboundCall) error {
 		defer func() { dialogExit <- in.ID() }()
 
 		in.Trying(ctx)
@@ -267,13 +267,13 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 		// Add us in bridge
 		t.Log("Adding into bridge", in.ID())
-		if err := bridgePtr.Load().AddDialogSession(in); err != nil {
+		if err := bridgePtr.Load().Add(in); err != nil {
 			t.Log("Adding dialog in bridge failed", err)
 			return nil
 		}
 		defer func() {
 			t.Log("Removing from bridge", in.ID())
-			bridgePtr.Load().RemoveDialogSession(in)
+			bridgePtr.Load().Remove(in)
 		}()
 
 		<-in.Context().Done()
@@ -287,10 +287,10 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 		dg := newDialer(t, ua)
 
-		dialogs := make([]*DialogClientSession, 3)
+		dialogs := make([]*OutboundCall, 3)
 		for i := range 3 {
 			t.Log("Inviting", "i", i)
-			dialog, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+			dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 			require.NoError(t, err)
 			dialogs[i] = dialog
 		}
@@ -307,8 +307,12 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		for range len(dialogs) {
 			<-dialogExit
 		}
-		assert.Empty(t, bridgePtr.Load().DialogSessionsList())
-		assert.EqualValues(t, 0, bridgePtr.Load().stateRead())
+		bridge := bridgePtr.Load()
+		bridge.mu.Lock()
+		remaining := len(bridge.dialogs)
+		bridge.mu.Unlock()
+		assert.Zero(t, remaining, "bridge must be drained")
+		assert.EqualValues(t, 0, bridge.stateRead())
 	})
 
 	t.Run("check mixing", func(t *testing.T) {
@@ -342,17 +346,17 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 		bridgePtr.Store(bridge)
 
-		dialog1, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog1, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog1.Hangup(dialog1.Context())
 
-		dialog2, err := dg.Dial(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog2, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
 		require.NoError(t, err)
 		defer dialog2.Hangup(dialog2.Context())
 
 		// Write sound on dialog 1 and make sure it is read on dialog2
 		sound := []byte("123450")
-		go func(dialog *DialogClientSession) {
+		go func(dialog *OutboundCall) {
 			w, _ := dialog.AudioWriter()
 			for i := 0; i < 10; i++ {
 				w.Write(sound)

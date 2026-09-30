@@ -21,9 +21,10 @@ type AudioRingtone struct {
 	sampleSize int
 	// dm resolves the stable write handle at use time; stop goes through the
 	// write gate
-	dm *DialogMedia
+	dm *Media
 }
 
+// PlayBackground plays the ringtone in a loop until the returned StopFunc is called.
 func (a *AudioRingtone) PlayBackground() (StopFunc, error) {
 	if err := a.dm.checkMediaUsable(); err != nil {
 		return nil, err
@@ -64,6 +65,7 @@ func (a *AudioRingtone) PlayBackground() (StopFunc, error) {
 	}, nil
 }
 
+// Play plays the ringtone in a loop until ctx is canceled.
 func (a *AudioRingtone) Play(ctx context.Context) error {
 	return a.play(ctx)
 }
