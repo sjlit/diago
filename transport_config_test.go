@@ -8,12 +8,13 @@ import (
 	"crypto/tls"
 	"net"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2/media"
-	"github.com/sjlit/diago/v2/media/sdp"
 	"github.com/sjlit/diago/v2/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,13 +159,56 @@ func TestNewRejectsInvalidTransport(t *testing.T) {
 	assert.Equal(t, "tls", dg.transports[0].Network)
 }
 
-// TestReaderWriterWithProps locks the 4.6 replacement of the
-// WithAudio{Reader,Writer}MediaProps option passes: the props come back from
-// the call itself instead of through a pointer option.
+// TestAgentTransportsResolved locks the Transports accessor: the ephemeral port
+// is reported once the listener is ready, the IP-family suffix is trimmed and
+// the returned slice is a copy. Polling Transports during startup keeps the
+// race detector on the listener ready callback.
+func TestAgentTransportsResolved(t *testing.T) {
+	ua, err := sipgo.NewUA()
+	require.NoError(t, err)
+	t.Cleanup(func() { ua.Close() })
+
+	dg, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "udp4", BindHost: "127.0.0.1"}))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = dg.Transports()
+			}
+		}
+	}()
+	err = dg.ServeBackground(ctx, nil)
+	close(stop)
+	wg.Wait()
+	require.NoError(t, err)
+	t.Cleanup(func() { dg.Close(context.Background()) })
+
+	got := dg.Transports()
+	require.Len(t, got, 1)
+	assert.Equal(t, "udp", got[0].Network, "the IP-family suffix is not part of the resolved network")
+	assert.NotZero(t, got[0].BindPort, "ephemeral port must be reported once listening")
+	assert.Equal(t, got[0].BindPort, got[0].ExternalPort)
+
+	got[0].BindPort = 1
+	assert.NotEqual(t, 1, dg.Transports()[0].BindPort, "Transports must return a copy")
+}
+
+// TestReaderWriterWithProps locks the props accessors: the props come back
+// from the call itself instead of through a pointer option.
 func TestReaderWriterWithProps(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
-		body := sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
-		return sip.NewResponseFromRequest(req, 200, "OK", body)
+		return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
 	}, WithMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 	}))

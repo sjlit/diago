@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"sort"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,11 +46,6 @@ type chanRTPReader struct {
 	packets chan rtp.Packet
 }
 
-type countingChanRTPReader struct {
-	*chanRTPReader
-	reads atomic.Uint64
-}
-
 func newChanRTPReader() *chanRTPReader {
 	return &chanRTPReader{packets: make(chan rtp.Packet)}
 }
@@ -72,14 +66,6 @@ func (r *chanRTPReader) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
 
 	n := copy(buf, raw)
 	return n, RTPUnmarshal(buf[:n], p)
-}
-
-func (r *countingChanRTPReader) ReadRTP(buf []byte, p *rtp.Packet) (int, error) {
-	n, err := r.chanRTPReader.ReadRTP(buf, p)
-	if err == nil && n > 0 {
-		r.reads.Add(1)
-	}
-	return n, err
 }
 
 func TestRTPJitterBuffer(t *testing.T) {
@@ -250,74 +236,6 @@ func TestRTPJitterBuffer(t *testing.T) {
 		require.NoError(t, jb.Close())
 		require.ErrorIs(t, <-result, io.ErrClosedPipe)
 		close(reader.packets)
-	})
-}
-
-func TestRTPJitterBufferOverflow(t *testing.T) {
-	t.Skip("Jitter Buffer Overflow needs WORK")
-	t.Run("continues reading", func(t *testing.T) {
-		reader := &countingChanRTPReader{
-			chanRTPReader: &chanRTPReader{packets: make(chan rtp.Packet, 32)},
-		}
-		jb := mustNewRTPJitterBuffer(t, reader, time.Millisecond, RTPJitterBufferOptions{
-			DelayPackets: 3,
-			MaxPackets:   5,
-		})
-		t.Cleanup(func() {
-			_ = jb.Close()
-			close(reader.packets)
-		})
-
-		first := make(chan uint16, 1)
-		go func() {
-			first <- readJitterSeq(t, jb)
-		}()
-		for seq := uint16(0); seq < 3; seq++ {
-			reader.packets <- rtpPacket(1234, seq)
-		}
-		require.Equal(t, uint16(0), <-first)
-
-		for seq := uint16(3); seq <= 20; seq++ {
-			reader.packets <- rtpPacket(1234, seq)
-		}
-		require.Eventually(t, func() bool {
-			return reader.reads.Load() == 21
-		}, 100*time.Millisecond, time.Millisecond,
-			"upstream reading must continue when all playout slots are occupied")
-	})
-
-	t.Run("discards stale packets", func(t *testing.T) {
-		reader := &countingChanRTPReader{
-			chanRTPReader: &chanRTPReader{packets: make(chan rtp.Packet, 32)},
-		}
-		jb := mustNewRTPJitterBuffer(t, reader, time.Millisecond, RTPJitterBufferOptions{
-			DelayPackets: 3,
-			MaxPackets:   5,
-		})
-		t.Cleanup(func() {
-			_ = jb.Close()
-			close(reader.packets)
-		})
-
-		first := make(chan uint16, 1)
-		go func() {
-			first <- readJitterSeq(t, jb)
-		}()
-		for seq := uint16(0); seq < 3; seq++ {
-			reader.packets <- rtpPacket(1234, seq)
-		}
-		require.Equal(t, uint16(0), <-first)
-
-		for seq := uint16(3); seq <= 20; seq++ {
-			reader.packets <- rtpPacket(1234, seq)
-		}
-		require.Eventually(t, func() bool {
-			return reader.reads.Load() >= 6
-		}, 100*time.Millisecond, time.Millisecond)
-
-		seq := readJitterSeq(t, jb)
-		require.GreaterOrEqual(t, seq, uint16(18),
-			"playout should resume near the newest packet instead of returning stale audio")
 	})
 }
 

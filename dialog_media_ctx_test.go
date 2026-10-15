@@ -219,21 +219,21 @@ func TestMediaCtxAPIsGuards(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDialogClosed)
 }
 
-// TestPlaybackDTMF	closeStopsReadLoopWithoutDeadlines: closing the DTMF
+// TestPlaybackDTMFCloseStopsReadLoopWithoutDeadlines: closing the DTMF
 // playback interrupts its read loop through the gate and leaves the dialog
 // reader usable - no recurring conn deadlines involved anymore.
 func TestPlaybackDTMFCloseStopsReadLoopWithoutDeadlines(t *testing.T) {
 	d := newTestMedia(t)
 	send := ctxSender(t, d)
 
-	pb, err := d.StartPlaybackDTMF()
+	pb, err := d.NewPlaybackDTMF()
 	require.NoError(t, err)
 
 	data := make([]byte, 6400)
 	playDone := make(chan struct{})
 	go func() {
 		defer close(playDone)
-		_, _ = pb.Play(&slowCtxReader{r: data}, "")
+		_, _ = pb.PlayContext(context.Background(), &slowCtxReader{r: data}, "")
 	}()
 
 	// Wait until the read loop is running, then close.

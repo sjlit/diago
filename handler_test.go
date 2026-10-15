@@ -23,7 +23,8 @@ func TestHandlerErrorResponseMapping(t *testing.T) {
 			err  error
 			code int
 		}{
-			{ErrDecline, sip.StatusTemporarilyUnavailable},
+			{ErrDecline, sip.StatusGlobalDecline},
+			{ErrTemporarilyUnavailable, sip.StatusTemporarilyUnavailable},
 			{ErrBusy, sip.StatusBusyHere},
 			{ErrNotFound, sip.StatusNotFound},
 			{errors.New("boom"), sip.StatusInternalServerError},
@@ -85,6 +86,11 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 		{
 			name:     "decline",
 			handler:  func(ctx context.Context, d *InboundCall) error { return ErrDecline },
+			wantCode: sip.StatusGlobalDecline,
+		},
+		{
+			name:     "temporarily unavailable",
+			handler:  func(ctx context.Context, d *InboundCall) error { return ErrTemporarilyUnavailable },
 			wantCode: sip.StatusTemporarilyUnavailable,
 		},
 		{

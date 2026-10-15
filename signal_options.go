@@ -211,6 +211,8 @@ type signalRegisterParams struct {
 
 	// OnRegistered is called after a successful initial REGISTER
 	OnRegistered func()
+	// Detached keeps the registration out of Agent.Close (WithRegistrationDetached).
+	Detached bool
 }
 
 // newSignalParams applies opts and returns the accumulated per-call
@@ -329,7 +331,7 @@ func WithHeaders(headers ...Header) headersOption {
 	return func(p *signalParams) error {
 		for _, h := range headers {
 			if h == nil {
-				return fmt.Errorf("WithHeaders: nil header provided")
+				return fmt.Errorf("%w: WithHeaders: nil header provided", ErrInvalidOption)
 			}
 		}
 		p.Msg.Headers = append(p.Msg.Headers, headers...)
@@ -342,7 +344,7 @@ func WithHeaders(headers ...Header) headersOption {
 func WithContact(contact *ContactHeader) contactOption {
 	return func(p *signalParams) error {
 		if contact == nil {
-			return fmt.Errorf("WithContact: contact header is nil")
+			return fmt.Errorf("%w: WithContact: contact header is nil", ErrInvalidOption)
 		}
 		p.Msg.Contact = contact
 		return nil
@@ -354,7 +356,7 @@ func WithContact(contact *ContactHeader) contactOption {
 func WithBody(body []byte) bodyOption {
 	return func(p *signalParams) error {
 		if body == nil {
-			return fmt.Errorf("WithBody: body is nil")
+			return fmt.Errorf("%w: WithBody: body is nil", ErrInvalidOption)
 		}
 		p.Msg.Body = body
 		return nil
@@ -365,7 +367,7 @@ func WithBody(body []byte) bodyOption {
 func WithCodecs(codecs ...media.Codec) codecsOption {
 	return func(p *signalParams) error {
 		if len(codecs) == 0 {
-			return fmt.Errorf("WithCodecs: no codecs provided")
+			return fmt.Errorf("%w: WithCodecs: no codecs provided", ErrInvalidOption)
 		}
 		p.Media.Codecs = codecs
 		return nil
@@ -377,7 +379,7 @@ func WithCodecs(codecs ...media.Codec) codecsOption {
 func WithRTPNAT(n RTPNATMode) rtpnatOption {
 	return func(p *signalParams) error {
 		if n != RTPNATDisabled && n != RTPNATLearnSource {
-			return fmt.Errorf("WithRTPNAT: invalid mode %d", n)
+			return fmt.Errorf("%w: WithRTPNAT: invalid mode %d", ErrInvalidOption, n)
 		}
 		v := n
 		p.Media.RTPNAT = &v
@@ -389,7 +391,7 @@ func WithRTPNAT(n RTPNATMode) rtpnatOption {
 func WithMediaBindIP(ip net.IP) mediaBindIPOption {
 	return func(p *signalParams) error {
 		if ip == nil {
-			return fmt.Errorf("WithMediaBindIP: ip is nil")
+			return fmt.Errorf("%w: WithMediaBindIP: ip is nil", ErrInvalidOption)
 		}
 		p.Media.MediaBindIP = ip
 		return nil
@@ -400,7 +402,7 @@ func WithMediaBindIP(ip net.IP) mediaBindIPOption {
 func WithMediaExternalIP(ip net.IP) mediaExternalIPOption {
 	return func(p *signalParams) error {
 		if ip == nil {
-			return fmt.Errorf("WithMediaExternalIP: ip is nil")
+			return fmt.Errorf("%w: WithMediaExternalIP: ip is nil", ErrInvalidOption)
 		}
 		p.Media.MediaExternalIP = ip
 		return nil
@@ -412,7 +414,7 @@ func WithMediaExternalIP(ip net.IP) mediaExternalIPOption {
 func WithMediaDTLS(conf media.DTLSConfig) mediaDTLSOption {
 	return func(p *signalParams) error {
 		if dtlsConfIsZero(conf) {
-			return fmt.Errorf("WithMediaDTLS: configuration is empty")
+			return fmt.Errorf("%w: WithMediaDTLS: configuration is empty", ErrInvalidOption)
 		}
 		c := conf
 		p.Media.MediaDTLSConf = &c
@@ -427,10 +429,10 @@ func WithMediaDTLS(conf media.DTLSConfig) mediaDTLSOption {
 func WithSDPSessionName(name string) sdpSessionNameOption {
 	return func(p *signalParams) error {
 		if name == "" {
-			return fmt.Errorf("WithSDPSessionName: name is empty")
+			return fmt.Errorf("%w: WithSDPSessionName: name is empty", ErrInvalidOption)
 		}
 		if err := media.ValidateSDPSessionName(name); err != nil {
-			return fmt.Errorf("WithSDPSessionName: %w", err)
+			return fmt.Errorf("%w: WithSDPSessionName: %w", ErrInvalidOption, err)
 		}
 		p.Media.SDPSessionName = name
 		return nil
@@ -442,7 +444,7 @@ func WithSDPSessionName(name string) sdpSessionNameOption {
 func WithMediaSession(m *media.MediaSession) mediaSessionOption {
 	return func(p *signalParams) error {
 		if m == nil {
-			return fmt.Errorf("WithMediaSession: media session is nil")
+			return fmt.Errorf("%w: WithMediaSession: media session is nil", ErrInvalidOption)
 		}
 		p.Media.MediaSession = m
 		return nil
@@ -465,7 +467,7 @@ func WithMusicOnHold(tone audio.Tone) musicOnHoldOption {
 func WithOnResponse(fn func(res *Response) error) onResponseOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithOnResponse: fn is nil")
+			return fmt.Errorf("%w: WithOnResponse: fn is nil", ErrInvalidOption)
 		}
 		p.Dialog.OnResponse = fn
 		return nil
@@ -476,7 +478,7 @@ func WithOnResponse(fn func(res *Response) error) onResponseOption {
 func WithOnMediaUpdate(fn func(d *Media)) onMediaUpdateOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithOnMediaUpdate: fn is nil")
+			return fmt.Errorf("%w: WithOnMediaUpdate: fn is nil", ErrInvalidOption)
 		}
 		p.Dialog.OnMediaUpdate = fn
 		return nil
@@ -487,7 +489,7 @@ func WithOnMediaUpdate(fn func(d *Media)) onMediaUpdateOption {
 func WithOnRefer(fn OnReferFunc) onReferOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithOnRefer: fn is nil")
+			return fmt.Errorf("%w: WithOnRefer: fn is nil", ErrInvalidOption)
 		}
 		p.Dialog.OnRefer = fn
 		return nil
@@ -500,7 +502,7 @@ func WithOnRefer(fn OnReferFunc) onReferOption {
 func WithOnReferNotify(fn func(statusCode int)) onReferNotifyOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithOnReferNotify: fn is nil")
+			return fmt.Errorf("%w: WithOnReferNotify: fn is nil", ErrInvalidOption)
 		}
 		p.Dialog.OnReferNotify = fn
 		return nil
@@ -513,7 +515,7 @@ func WithOnReferNotify(fn func(statusCode int)) onReferNotifyOption {
 func WithRequestMutator(fn func(req *Request) error) requestMutatorOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithRequestMutator: fn is nil")
+			return fmt.Errorf("%w: WithRequestMutator: fn is nil", ErrInvalidOption)
 		}
 		p.Msg.MutateRequest = fn
 		return nil
@@ -526,7 +528,7 @@ func WithRequestMutator(fn func(req *Request) error) requestMutatorOption {
 func WithResponseMutator(fn func(res *Response) error) responseMutatorOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithResponseMutator: fn is nil")
+			return fmt.Errorf("%w: WithResponseMutator: fn is nil", ErrInvalidOption)
 		}
 		p.Msg.MutateResponse = fn
 		return nil
@@ -538,7 +540,7 @@ func WithResponseMutator(fn func(res *Response) error) responseMutatorOption {
 func WithDialogTransport(name string) dialogTransportOption {
 	return func(p *signalParams) error {
 		if name == "" {
-			return fmt.Errorf("WithDialogTransport: name is empty")
+			return fmt.Errorf("%w: WithDialogTransport: name is empty", ErrInvalidOption)
 		}
 		p.Dialog.Transport = name
 		return nil
@@ -550,7 +552,7 @@ func WithDialogTransport(name string) dialogTransportOption {
 func WithDialogTransportID(id string) dialogTransportIDOption {
 	return func(p *signalParams) error {
 		if id == "" {
-			return fmt.Errorf("WithDialogTransportID: id is empty")
+			return fmt.Errorf("%w: WithDialogTransportID: id is empty", ErrInvalidOption)
 		}
 		p.Dialog.TransportID = id
 		return nil
@@ -562,7 +564,7 @@ func WithDialogTransportID(id string) dialogTransportIDOption {
 func WithOriginator(o Call) originatorOption {
 	return func(p *signalParams) error {
 		if o == nil {
-			return fmt.Errorf("WithOriginator: originator is nil")
+			return fmt.Errorf("%w: WithOriginator: originator is nil", ErrInvalidOption)
 		}
 		p.Dialog.Originator = o
 		return nil
@@ -574,7 +576,7 @@ func WithOriginator(o Call) originatorOption {
 func WithAuthCredentials(username string, password string) authCredentialsOption {
 	return func(p *signalParams) error {
 		if username == "" && password == "" {
-			return fmt.Errorf("WithAuthCredentials: username and password are empty")
+			return fmt.Errorf("%w: WithAuthCredentials: username and password are empty", ErrInvalidOption)
 		}
 		p.Dialog.Username = username
 		p.Dialog.Password = password
@@ -598,7 +600,7 @@ func WithEarlyMediaDetect() earlyMediaDetectOption {
 func WithRegisterExpiry(d time.Duration) registerExpiryOption {
 	return func(p *signalParams) error {
 		if d < 0 {
-			return fmt.Errorf("WithRegisterExpiry: negative duration %s", d)
+			return fmt.Errorf("%w: WithRegisterExpiry: negative duration %s", ErrInvalidOption, d)
 		}
 		p.Register.Expiry = d
 		return nil
@@ -611,7 +613,7 @@ func WithRegisterExpiry(d time.Duration) registerExpiryOption {
 func WithRegisterRetryInterval(d time.Duration) registerRetryIntervalOption {
 	return func(p *signalParams) error {
 		if d < 0 {
-			return fmt.Errorf("WithRegisterRetryInterval: negative duration %s", d)
+			return fmt.Errorf("%w: WithRegisterRetryInterval: negative duration %s", ErrInvalidOption, d)
 		}
 		p.Register.RetryInterval = d
 		return nil
@@ -623,11 +625,11 @@ func WithRegisterRetryInterval(d time.Duration) registerRetryIntervalOption {
 func WithRegisterAllowHeaders(headers ...string) registerAllowHeadersOption {
 	return func(p *signalParams) error {
 		if len(headers) == 0 {
-			return fmt.Errorf("WithRegisterAllowHeaders: no headers provided")
+			return fmt.Errorf("%w: WithRegisterAllowHeaders: no headers provided", ErrInvalidOption)
 		}
 		for _, h := range headers {
 			if h == "" {
-				return fmt.Errorf("WithRegisterAllowHeaders: empty header value")
+				return fmt.Errorf("%w: WithRegisterAllowHeaders: empty header value", ErrInvalidOption)
 			}
 		}
 		p.Register.AllowHeaders = headers
@@ -640,7 +642,7 @@ func WithRegisterAllowHeaders(headers ...string) registerAllowHeadersOption {
 func WithRegisterProxyHost(host string) registerProxyHostOption {
 	return func(p *signalParams) error {
 		if host == "" {
-			return fmt.Errorf("WithRegisterProxyHost: host is empty")
+			return fmt.Errorf("%w: WithRegisterProxyHost: host is empty", ErrInvalidOption)
 		}
 		p.Register.ProxyHost = host
 		return nil
@@ -652,9 +654,20 @@ func WithRegisterProxyHost(host string) registerProxyHostOption {
 func WithOnRegistered(fn func()) onRegisteredOption {
 	return func(p *signalParams) error {
 		if fn == nil {
-			return fmt.Errorf("WithOnRegistered: fn is nil")
+			return fmt.Errorf("%w: WithOnRegistered: fn is nil", ErrInvalidOption)
 		}
 		p.Register.OnRegistered = fn
+		return nil
+	}
+}
+
+// WithRegistrationDetached keeps the registration created by Register or
+// RegisterURI out of Agent.Close. The caller then owns the handle and stops it
+// with Registration.Close (or by canceling its context). Scope: Register and
+// RegisterURI; RegisterTransaction rejects it because it runs no loop.
+func WithRegistrationDetached() registrationDetachedOption {
+	return func(p *signalParams) error {
+		p.Register.Detached = true
 		return nil
 	}
 }
@@ -895,6 +908,12 @@ type registerProxyHostOption func(*signalParams) error
 
 func (o registerProxyHostOption) applySignal(p *signalParams) error { return o(p) }
 func (registerProxyHostOption) isRegisterOption()                   {}
+
+// registrationDetachedOption is the concrete type returned by WithRegistrationDetached.
+type registrationDetachedOption func(*signalParams) error
+
+func (o registrationDetachedOption) applySignal(p *signalParams) error { return o(p) }
+func (registrationDetachedOption) isRegisterOption()                   {}
 
 // onRegisteredOption is the concrete type returned by WithOnRegistered.
 type onRegisteredOption func(*signalParams) error

@@ -84,9 +84,9 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 
 - **CallHandler**: `Serve` installs one handler per inbound dialog. A handler
   that returns before sending a final response declines the pending INVITE
-  (`nil` → 480, or the mapped response for an error: `ErrDecline` → 480,
-  `ErrBusy` → 486, `ErrNotFound` → 404, `*ResponseError` → custom, anything
-  else → 500). **Answering and returning keeps the call alive**; an answered
+  (`nil` → 480, or the mapped response for an error: `ErrDecline` → 603,
+  `ErrTemporarilyUnavailable` → 480, `ErrBusy` → 486, `ErrNotFound` → 404,
+  `*ResponseError` → custom, anything else → 500). **Answering and returning keeps the call alive**; an answered
   call ends with BYE carrying an RFC 3326 `Reason` header when the handler
   returns an error, or when the peer hangs up. Wrap `ErrResponseSent` when the
   handler already wrote its own final response.
@@ -94,13 +94,14 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   interface. `Dial` accepts a SIP URI string; `DialURI` takes a `diago.URI`.
   `Hangup` performs the signaling teardown, `Close` releases local resources
   (Close is idempotent; Hangup on an already ended dialog is a no-op).
-- **Lifecycle**: `Agent.Close` hangs up tracked dialogs, stops the listeners
+- **Lifecycle**: `Agent.Close` hangs up tracked dialogs, unregisters the
+  registrations it created, stops the listeners
   started by `Serve`/`ServeBackground` and closes the private UserAgent. A
   UserAgent supplied with `WithUserAgent` (and servers/clients from
   `WithServer`/`WithClient`) stay caller-owned.
 - **Media**: `call.Media()` is the single owner of the media session.
-  Components (`StartPlayback`, `StartRecording`, `StartMusicOnHold`, `SendDTMF`,
-  `PlayTone`, ...) resolve the reader/writer at use time, so re-INVITEs
+  Components (`NewPlayback`, `StartStereoRecording`, `StartMusicOnHold`,
+  `SendDTMF`, `PlayTone`, ...) resolve the reader/writer at use time, so re-INVITEs
   hot-swap the internals without replacing installed handles. Media entry
   points return `ErrDialogNotAnswered`/`ErrDialogClosed` instead of panicking.
 - **Answer/ACK**: `Answer`, `AnswerLate` and `RespondSDP` return once the 2xx
@@ -110,7 +111,8 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 - **Options**: each API takes the option interface for its operation
   (`AnswerOption`, `HangupOption`, `InviteOption`, `DialOption`,
   `RegisterOption`, ...); passing an option an API does not consume is a
-  compile error. Constructors validate their values at call time.
+  compile error. Constructors validate their values at call time; failures
+  wrap `ErrInvalidOption`.
 - **Configuration**: construction-time media settings live in `MediaConfig`
   (`Codecs`, `SRTP`, `Network`, `SDP`, `MusicOnHold`, `Logger`, `Debug`,
   `Tracer`, `HTTPClient`). Transports can select a complete named profile with
@@ -118,8 +120,9 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   configuration.
 - **REGISTER**: `Agent.Register` returns a `*Registration` handle
   (`WaitReady`/`Wait`/`Close`) that keeps the registration refreshed and
-  unregisters on `Close`. `RegisterTransaction` exposes single attempts
-  (`Register`/`Qualify`/`Unregister`).
+  unregisters on `Close`; `Agent.Close` does the same for every registration
+  it created unless `WithRegistrationDetached` is passed. `RegisterTransaction`
+  exposes single attempts (`Register`/`Qualify`/`Unregister`).
 - **sipgo interop**: sipgo types in signatures are aliases (`diago.URI`,
   `diago.Header`, `diago.Request`, `diago.Response`, ...), so importing sipgo
   is optional. Escape hatches: `WithUserAgent`, `WithServer`, `WithClient`,
@@ -163,7 +166,7 @@ Breaking changes since the first v2 preview (same module path):
 | `MatchDialog` / `NewDialog` | `FindCall` / `NewCall` |
 | `HangupAndClose` | removed: `Hangup` + `Close` |
 | `WithHeader` | removed: `WithHeaders(sip.NewHeader(name, value))` |
-| `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `StartPlayback*` / `NewDTMF*` / `StartRingtone` |
+| `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `NewPlayback*` / `NewDTMF*` / `NewRingtone` |
 | `PlayMusicOnHold` | `StartMusicOnHold` |
 | `WithAudioReader*` / `WithAudioWriter*` | `WithReader*` / `WithWriter*` |
 | `Transport.Transport` | `Transport.Network` |
@@ -181,6 +184,9 @@ Behavioral notes:
   is canceled (or `Registration.Close`).
 - Server `Hangup` on a still-pending INVITE sends the 480 decline even when the
   passed ctx is already canceled.
+- `Agent.Close` unregisters the REGISTER handles created by `Register` and
+  `RegisterURI` (opt out with `WithRegistrationDetached`). Registering after
+  `Close` returns `ErrAgentClosed`.
 
 ## License
 

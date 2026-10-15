@@ -48,7 +48,7 @@ func WithReplayKeys(keys string) PlaybackDTMFOption {
 func WithOnDTMF(fn func(dtmf rune)) PlaybackDTMFOption {
 	return func(p *AudioPlaybackDTMF) error {
 		if fn == nil {
-			return fmt.Errorf("WithOnDTMF: fn is nil")
+			return fmt.Errorf("%w: WithOnDTMF: fn is nil", ErrInvalidOption)
 		}
 		p.onDTMF = fn
 		return nil
@@ -96,23 +96,24 @@ func (p *AudioPlaybackDTMF) logger() *slog.Logger {
 	return media.DefaultLogger()
 }
 
-// StartPlaybackDTMF creates playback controlled with in-band RTP DTMF.
+// NewPlaybackDTMF creates the playback handle controlled with in-band RTP
+// DTMF. Nothing is streamed until one of its Play methods is called.
 //
 // By default any DTMF key interrupts playback. Use options to customize:
 //
-//	pb, _ := dialog.StartPlaybackDTMF(
+//	pb, _ := dialog.NewPlaybackDTMF(
 //	    WithInterruptKeys("1234567890"), // only number keys interrupt
 //	    WithReplayKeys("*"),             // star key replays prompt
 //	)
-//	go pb.PlayFile("menu.wav")
+//	go pb.PlayFileContext(ctx, "menu.wav")
 //	dtmf := <-pb.DTMF()
 //	pb.Close()
 //
 // While playback is active DTMF keys are detected by reading audio RTP in
 // background. Other audio reading (NewDTMFReader, EchoContext, recording)
 // MUST NOT be used until Close is called.
-func (d *Media) StartPlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
-	pb, err := d.StartPlaybackControl()
+func (d *Media) NewPlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
+	pb, err := d.NewPlaybackControl()
 	if err != nil {
 		return nil, err
 	}
@@ -152,14 +153,6 @@ func (p *AudioPlaybackDTMF) DTMF() <-chan rune {
 	return p.dtmfCh
 }
 
-// Play plays reader content with DTMF control.
-//
-// Deprecated: Use PlayContext.
-func (p *AudioPlaybackDTMF) Play(reader io.Reader, mimeType string) (int64, error) {
-	p.startReadLoop()
-	return p.AudioPlaybackControl.Play(reader, mimeType)
-}
-
 // PlayContext plays reader content with DTMF control, stopping with ctx.Err()
 // when the context is canceled. DTMF reading continues until Close.
 func (p *AudioPlaybackDTMF) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
@@ -167,27 +160,11 @@ func (p *AudioPlaybackDTMF) PlayContext(ctx context.Context, reader io.Reader, m
 	return p.AudioPlaybackControl.PlayContext(ctx, reader, mimeType)
 }
 
-// PlayFile plays wav file with DTMF control.
-//
-// Deprecated: Use PlayFileContext.
-func (p *AudioPlaybackDTMF) PlayFile(filename string) (int64, error) {
-	p.startReadLoop()
-	return p.AudioPlaybackControl.PlayFile(filename)
-}
-
 // PlayFileContext plays wav file with DTMF control, stopping with ctx.Err()
 // when the context is canceled.
 func (p *AudioPlaybackDTMF) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	p.startReadLoop()
 	return p.AudioPlaybackControl.PlayFileContext(ctx, filename)
-}
-
-// PlayURL plays wav from url with DTMF control.
-//
-// Deprecated: Use PlayURLContext.
-func (p *AudioPlaybackDTMF) PlayURL(urlStr string) (int64, error) {
-	p.startReadLoop()
-	return p.AudioPlaybackControl.PlayURL(urlStr)
 }
 
 // PlayURLContext plays wav from url with DTMF control, stopping with

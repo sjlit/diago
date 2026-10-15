@@ -91,6 +91,10 @@ func (w *RTPDTMFReader) Read(b []byte) (int, error) {
 }
 
 func (w *RTPDTMFReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
+	// TODO: multi-packet start/end-of-event sequences (an event spread over
+	// several packets with the end bit retransmitted) have no automated
+	// coverage; the old TestDTMFReaderCases test for them was skipped as
+	// unverified.
 	if w.logger().Handler().Enabled(context.Background(), slog.LevelDebug) {
 		// Expensive call on logger
 		w.logger().Debug("Processing DTMF event", "ev", ev, "mbit", mbit)

@@ -21,8 +21,9 @@
 // Server dialogs are delivered to a CallHandler:
 //   - Returning before a final response was sent declines the pending INVITE
 //     (nil -> 480, or the mapped final response for an error:
-//     ErrDecline/ErrBusy/ErrNotFound/*ResponseError); wrap ErrResponseSent
-//     when the handler already wrote the final response.
+//     ErrDecline -> 603, ErrTemporarilyUnavailable -> 480, ErrBusy -> 486,
+//     ErrNotFound -> 404, *ResponseError -> custom, anything else -> 500);
+//     wrap ErrResponseSent when the handler already wrote the final response.
 //   - Answering and returning keeps the call alive: the framework owns the
 //     dialog until the peer ends it, Close runs or the handler hangs it
 //     up. Once a 2xx was sent, teardown is always by BYE.
@@ -79,15 +80,17 @@
 // The UserAgent is optional: without WithUserAgent, New creates a private one
 // and Close closes it. A UserAgent, Server or Client supplied by the caller
 // (WithUserAgent/WithServer/WithClient) stays caller-owned and is not closed.
-// Close hangs up and closes every tracked dialog, stops the listeners started
-// by Serve and then closes the private UserAgent. In-flight handlers keep
-// running concurrently with the dialog teardown (the framework closes each
-// dialog when it ends). Registration handles are caller-owned: stop them with
-// Registration.Close (or cancel their context) around Close.
+// Close hangs up and closes every tracked dialog, unregisters and stops the
+// registrations created by Register, stops the listeners started by Serve and
+// then closes the private UserAgent. In-flight handlers keep running
+// concurrently with the dialog teardown (the framework closes each dialog when
+// it ends). Registrations created with WithRegistrationDetached are
+// caller-owned: stop them with Registration.Close (or cancel their context).
 //
 // The sipgo types in public signatures are aliased in aliases.go (URI, Header,
 // Request, Response, ...), so applications can build on diago without
 // importing sipgo; escape hatches stay explicit (Agent.Server, Agent.UA,
 // call.SIP, WithUserAgent, WithServer, WithClient). API conventions are
-// documented in API.md.
+// documented in API.md. The media and audio packages belong to this module and
+// are imported explicitly; only sipgo is aliased.
 package diago

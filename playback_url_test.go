@@ -59,8 +59,8 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		in.Ringing(ctx)
 		in.Answer(ctx)
 		t.Log("Playing url ", urlStr)
-		pb, _ := in.StartPlayback()
-		if _, err := pb.PlayURL(urlStr); err != nil {
+		pb, _ := in.NewPlayback()
+		if _, err := pb.PlayURLContext(context.Background(), urlStr); err != nil {
 			errServer = errors.Join(errServer, err)
 		}
 
@@ -130,15 +130,8 @@ func testStartAudioStreamServer(t *testing.T) string {
 		}
 
 		w.Header().Add("content-type", "audio/wav")
-		// w.Header().Add("cache-control", "max-age=10")
-		// w.WriteHeader(http.StatusOK)
 		t.Logf("Serving file %q", fh.Name())
 		http.ServeContent(w, req, "audio/wav", fileInfo.ModTime(), fh)
-
-		// _, err = io.Copy(w, fh)
-		// if err != nil {
-		// 	http.Error(w, err.Error(), http.StatusInternalServerError)
-		// }
 	})
 
 	srv := http.Server{

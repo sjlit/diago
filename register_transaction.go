@@ -31,6 +31,10 @@ type RegisterResponseError struct {
 // absent from sipgo's status constants.
 const statusIntervalTooBrief = 423
 
+// unregisterTimeout bounds the unregister sent when a registration loop exits,
+// and the time Agent.Close waits for each registration.
+const unregisterTimeout = 5 * time.Second
+
 // StatusCode returns the SIP status code of the REGISTER response.
 func (e *RegisterResponseError) StatusCode() int {
 	return e.RegisterRes.StatusCode
@@ -474,6 +478,9 @@ var ErrRegistrationClosed = errors.New("registration closed")
 //   - Close stops the loop, unregisters the contact and waits for the loop to
 //     exit (bounded by ctx). It is idempotent.
 //
+// Agent.Close also closes the handle, unless it was created with
+// WithRegistrationDetached; then the caller owns it.
+//
 // The handle is safe for concurrent use.
 type Registration struct {
 	log   *slog.Logger
@@ -481,6 +488,10 @@ type Registration struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// onDone, when set, runs once the loop has unregistered and exited. The
+	// Agent uses it to stop tracking the handle.
+	onDone func(*Registration)
 
 	ready chan struct{}
 	done  chan struct{}
@@ -501,8 +512,12 @@ func newRegistration(ctx context.Context, log *slog.Logger, t *RegisterTransacti
 		ready:  make(chan struct{}),
 		done:   make(chan struct{}),
 	}
-	go r.run()
 	return r
+}
+
+// start runs the registration loop in the background.
+func (r *Registration) start() {
+	go r.run()
 }
 
 // Ready is closed after the first successful REGISTER. It is never closed
@@ -588,6 +603,9 @@ func (r *Registration) setErr(err error) {
 // Done is closed.
 func (r *Registration) run() {
 	defer close(r.done)
+	if r.onDone != nil {
+		defer r.onDone(r)
+	}
 	// unregister is only meaningful once a REGISTER succeeded: on an initial
 	// failure there is no binding to remove, so exit without an extra request
 	// (matching the historical behavior).
@@ -597,7 +615,7 @@ func (r *Registration) run() {
 			return
 		}
 		// The timeout context is independent of r.ctx on purpose.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), unregisterTimeout)
 		defer cancel()
 		if err := r.trans.Unregister(ctx); err != nil {
 			r.log.Error("Failed to unregister", "error", err)

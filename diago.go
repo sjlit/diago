@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +38,10 @@ type Agent struct {
 	uaName     string
 	uaHostname string
 
-	transports []Transport
+	// transports is written by the listener ready callback when an ephemeral
+	// port is bound, so every access goes through transportsMu.
+	transportsMu sync.RWMutex
+	transports   []Transport
 
 	serveHandler atomic.Pointer[CallHandler]
 
@@ -64,6 +68,11 @@ type Agent struct {
 	// field so tests can exercise retry pacing without wall-clock waits.
 	registerAfter func(time.Duration) <-chan time.Time
 
+	// registrations holds the handles Agent.Close unregisters: every handle from
+	// Register/RegisterURI except WithRegistrationDetached ones.
+	registrationsMu sync.Mutex
+	registrations   map[*Registration]struct{}
+
 	// Serve lifecycle state. serveWG tracks the listener goroutines started
 	// by serve(); serveCancel cancels them. stopped is terminal: once
 	// Close has run, serving is refused.
@@ -82,7 +91,8 @@ type Agent struct {
 type AgentOption func(dg *Agent) error
 
 // Transport describes one SIP signaling listener. See NewTransport and
-// Transport.Validate for the accepted network values.
+// Transport.Validate for the accepted network values. Agent.Transports returns
+// the resolved values after New.
 type Transport struct {
 	ID string
 
@@ -211,7 +221,7 @@ func WithDefaultTransport() AgentOption {
 func WithTransport(t Transport) AgentOption {
 	return func(dg *Agent) error {
 		if strings.TrimSpace(t.Network) == "" {
-			return fmt.Errorf("WithTransport: network is empty")
+			return fmt.Errorf("%w: WithTransport: network is empty", ErrInvalidOption)
 		}
 		t.bindIP = net.ParseIP(t.BindHost)
 		t.mediaBindIP = t.bindIP
@@ -399,7 +409,7 @@ func validateMediaConfig(conf MediaConfig) error {
 func WithMediaConfig(conf MediaConfig) AgentOption {
 	return func(dg *Agent) error {
 		if err := validateMediaConfig(conf); err != nil {
-			return fmt.Errorf("WithMediaConfig: %w", err)
+			return fmt.Errorf("%w: WithMediaConfig: %w", ErrInvalidOption, err)
 		}
 		dg.mediaConf = conf
 		return nil
@@ -415,10 +425,10 @@ func WithMediaConfig(conf MediaConfig) AgentOption {
 func WithMediaProfile(name string, conf MediaConfig) AgentOption {
 	return func(dg *Agent) error {
 		if strings.TrimSpace(name) == "" {
-			return fmt.Errorf("WithMediaProfile: name is empty")
+			return fmt.Errorf("%w: WithMediaProfile: name is empty", ErrInvalidOption)
 		}
 		if err := validateMediaConfig(conf); err != nil {
-			return fmt.Errorf("WithMediaProfile %q: %w", name, err)
+			return fmt.Errorf("%w: WithMediaProfile %q: %w", ErrInvalidOption, name, err)
 		}
 		if dg.mediaProfiles == nil {
 			dg.mediaProfiles = map[string]MediaConfig{}
@@ -435,7 +445,7 @@ func WithMediaProfile(name string, conf MediaConfig) AgentOption {
 func WithHTTPClient(client *http.Client) AgentOption {
 	return func(dg *Agent) error {
 		if client == nil {
-			return fmt.Errorf("WithHTTPClient: client is nil")
+			return fmt.Errorf("%w: WithHTTPClient: client is nil", ErrInvalidOption)
 		}
 		dg.httpClient = client
 		return nil
@@ -447,7 +457,7 @@ func WithHTTPClient(client *http.Client) AgentOption {
 func WithServer(srv *Server) AgentOption {
 	return func(dg *Agent) error {
 		if srv == nil {
-			return fmt.Errorf("WithServer: server is nil")
+			return fmt.Errorf("%w: WithServer: server is nil", ErrInvalidOption)
 		}
 		dg.server = srv
 		return nil
@@ -459,7 +469,7 @@ func WithServer(srv *Server) AgentOption {
 func WithClient(client *Client) AgentOption {
 	return func(dg *Agent) error {
 		if client == nil {
-			return fmt.Errorf("WithClient: client is nil")
+			return fmt.Errorf("%w: WithClient: client is nil", ErrInvalidOption)
 		}
 		dg.client = client
 		return nil
@@ -473,7 +483,7 @@ func WithClient(client *Client) AgentOption {
 func WithUserAgent(ua *UserAgent) AgentOption {
 	return func(dg *Agent) error {
 		if ua == nil {
-			return fmt.Errorf("WithUserAgent: user agent is nil")
+			return fmt.Errorf("%w: WithUserAgent: user agent is nil", ErrInvalidOption)
 		}
 		dg.ua = ua
 		return nil
@@ -485,7 +495,7 @@ func WithUserAgent(ua *UserAgent) AgentOption {
 func WithUserAgentName(name string) AgentOption {
 	return func(dg *Agent) error {
 		if name == "" {
-			return fmt.Errorf("WithUserAgentName: name is empty")
+			return fmt.Errorf("%w: WithUserAgentName: name is empty", ErrInvalidOption)
 		}
 		dg.uaName = name
 		return nil
@@ -498,7 +508,7 @@ func WithUserAgentName(name string) AgentOption {
 func WithUserAgentHostname(hostname string) AgentOption {
 	return func(dg *Agent) error {
 		if hostname == "" {
-			return fmt.Errorf("WithUserAgentHostname: hostname is empty")
+			return fmt.Errorf("%w: WithUserAgentHostname: hostname is empty", ErrInvalidOption)
 		}
 		dg.uaHostname = hostname
 		return nil
@@ -512,7 +522,7 @@ func WithUserAgentHostname(hostname string) AgentOption {
 func WithLogger(l *slog.Logger) AgentOption {
 	return func(dg *Agent) error {
 		if l == nil {
-			return fmt.Errorf("WithLogger: logger is nil")
+			return fmt.Errorf("%w: WithLogger: logger is nil", ErrInvalidOption)
 		}
 		dg.log = l
 		return nil
@@ -524,7 +534,7 @@ func WithLogger(l *slog.Logger) AgentOption {
 func WithServerRequestMiddleware(f func(next RequestHandler) RequestHandler) AgentOption {
 	return func(dg *Agent) error {
 		if f == nil {
-			return fmt.Errorf("WithServerRequestMiddleware: middleware is nil")
+			return fmt.Errorf("%w: WithServerRequestMiddleware: middleware is nil", ErrInvalidOption)
 		}
 		dg.serverMiddleware = f
 		return nil
@@ -582,7 +592,7 @@ func New(opts ...AgentOption) (*Agent, error) {
 	}
 
 	if len(dg.transports) == 0 {
-		return nil, fmt.Errorf("diago: no transport configured: use WithTransport or WithDefaultTransport")
+		return nil, fmt.Errorf("diago: %w: use WithTransport or WithDefaultTransport", ErrNoTransport)
 	}
 	for i := range dg.transports {
 		if err := dg.transports[i].Validate(); err != nil {
@@ -935,6 +945,10 @@ type MethodHandler func(req *Request, tx ServerTransaction) error
 // Handle must be called before Serve/ServeBackground: the sipgo method to
 // handler map is not safe to mutate while the server is dispatching, so
 // registering while serving returns an error.
+//
+// The checks run in a fixed order: an agent-managed method is rejected with
+// ErrManagedMethod first (also after Close), then a closed agent with
+// ErrAgentClosed, then a serving one with ErrHandleAfterServe.
 func (dg *Agent) Handle(method RequestMethod, handler MethodHandler) error {
 	if handler == nil {
 		return fmt.Errorf("diago: Handle: handler is nil")
@@ -943,10 +957,13 @@ func (dg *Agent) Handle(method RequestMethod, handler MethodHandler) error {
 	// them would silently bypass it.
 	switch method {
 	case sip.INVITE, sip.ACK, sip.CANCEL, sip.BYE, sip.INFO, sip.OPTIONS, sip.REFER, sip.NOTIFY:
-		return fmt.Errorf("diago: Handle: method %s is managed by the agent", method)
+		return fmt.Errorf("diago: Handle: method %s is %w", method, ErrManagedMethod)
 	}
-	if dg.serving.Load() || dg.stopped.Load() {
-		return fmt.Errorf("diago: Handle must be called before Serve")
+	if dg.stopped.Load() {
+		return fmt.Errorf("diago: Handle: %w", ErrAgentClosed)
+	}
+	if dg.serving.Load() {
+		return fmt.Errorf("diago: Handle: %w", ErrHandleAfterServe)
 	}
 	dg.server.OnRequest(method, dg.wrapRequest(handler))
 	return nil
@@ -962,6 +979,7 @@ func (dg *Agent) UA() *UserAgent {
 // Server returns the sipgo SIP server used for incoming requests. It is the
 // escape hatch for sipgo features diago does not expose; prefer Handle for
 // registering additional methods and WithServer for a fully custom server.
+// It is never nil after New.
 func (dg *Agent) Server() *Server {
 	return dg.server
 }
@@ -970,6 +988,17 @@ func (dg *Agent) Server() *Server {
 // when each transport uses its own client.
 func (dg *Agent) Client() *Client {
 	return dg.client
+}
+
+// Transports returns a copy of the signaling transports with their resolved
+// values: Network is the base network without the IP-family suffix (udp, tcp,
+// tls, ws or wss), ExternalHost and ExternalPort are filled in, and BindPort is
+// the bound port once the listener is ready (an ephemeral BindPort stays 0
+// until Serve starts). Changing the returned slice does not affect the agent.
+func (dg *Agent) Transports() []Transport {
+	dg.transportsMu.RLock()
+	defer dg.transportsMu.RUnlock()
+	return slices.Clone(dg.transports)
 }
 
 // Serve starts 'Server' handle for SIP.
@@ -1003,10 +1032,10 @@ func (dg *Agent) handler() CallHandler {
 
 func (dg *Agent) serve(ctx context.Context, h CallHandler, readyCh func()) error {
 	if dg.stopped.Load() {
-		return fmt.Errorf("diago is shut down and cannot serve again")
+		return fmt.Errorf("diago: %w: cannot serve again", ErrAgentClosed)
 	}
 	if !dg.serving.CompareAndSwap(false, true) {
-		return fmt.Errorf("diago is already serving")
+		return fmt.Errorf("diago: %w", ErrAgentServing)
 	}
 	// Reset serving on every exit path from here on, including the
 	// concurrent-Close refusal below.
@@ -1041,7 +1070,7 @@ func (dg *Agent) serve(ctx context.Context, h CallHandler, readyCh func()) error
 		// of leaking listeners it could no longer stop.
 		dg.serveMu.Unlock()
 		cancel()
-		return fmt.Errorf("diago is shut down and cannot serve again")
+		return fmt.Errorf("diago: %w: cannot serve again", ErrAgentClosed)
 	}
 	dg.serveCtx = serveCtx
 	dg.serveCancel = cancel
@@ -1082,7 +1111,9 @@ func (dg *Agent) serve(ctx context.Context, h CallHandler, readyCh func()) error
 					tran.BindPort = port
 					tran.ExternalPort = port
 					tran.client = dg.createClient(tran)
+					dg.transportsMu.Lock()
 					dg.transports[i] = tran
+					dg.transportsMu.Unlock()
 				}
 				settle()
 				readyCh()
@@ -1149,30 +1180,40 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //     (server dialogs are tracked from the incoming INVITE, client dialogs
 //     once confirmed). Media sockets close with the dialogs and the cache
 //     entries are evicted.
-//  2. It stops the SIP listeners started by Serve/ServeBackground and waits
+//  2. It unregisters and stops every registration created by Register or
+//     RegisterURI, waiting at most unregisterTimeout for each within ctx.
+//     Registrations created with WithRegistrationDetached are left alone.
+//  3. It stops the SIP listeners started by Serve/ServeBackground and waits
 //     for them to exit.
-//  3. It closes the private UserAgent created by New. A UserAgent passed with
+//  4. It closes the private UserAgent created by New. A UserAgent passed with
 //     WithUserAgent is caller-owned and is NOT closed, so it can be shared
 //     between agents; call ua.Close() yourself when done.
 //
 // Ownership boundaries:
 //   - Outgoing dialogs that never reached an answer are not in the cache;
 //     cancel their Invite contexts instead (which sends CANCEL).
-//   - Registration handles are caller-owned: call Registration.Close (which
-//     unregisters the contact and stops the loop) or cancel their context
-//     around Close.
+//   - Registrations created with WithRegistrationDetached and RegisterTransaction
+//     objects are caller-owned: stop a detached registration with
+//     Registration.Close (or cancel its context).
 //
 // In-flight serve handlers keep running concurrently with phase 1; their own
 // Hangup/Close on an already-torn-down dialog is a tolerated no-op path.
-// Close is idempotent. After Close, Serve/ServeBackground return an
-// error.
+// Close is idempotent. After Close, Serve/ServeBackground and
+// Register/RegisterURI return ErrAgentClosed.
+//
+// ctx bounds the phase 1 waits (dialog hangup, registration unregister) and
+// phase 2 (listener exit). An already-canceled ctx makes those waits fail fast
+// and their context errors are joined into the returned error; the unregister
+// itself still runs, bounded by unregisterTimeout, because the registration
+// loop uses a context independent of the one passed here.
 func (dg *Agent) Close(ctx context.Context) error {
 	dg.stopped.Store(true)
 
 	var errs []error
-	// Phase 1: tear down dialogs while the signaling stack is still alive so
-	// the BYE/decline messages can actually be sent.
+	// Phase 1: tear down dialogs and registrations while the signaling stack
+	// is still alive so the BYE, decline and unregister messages can be sent.
 	errs = append(errs, dg.shutdownDialogs(ctx)...)
+	errs = append(errs, dg.shutdownRegistrations(ctx)...)
 
 	// Phase 2: stop the listeners and wait for them to exit.
 	dg.serveMu.Lock()
@@ -1230,6 +1271,65 @@ func (dg *Agent) shutdownDialogs(ctx context.Context) []error {
 		errs = append(errs, shutdownDialog(ctx, id, d)...)
 		return true
 	}); err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// admitRegistration refuses registrations once Close has started and, unless
+// the handle is detached, records it so Close can unregister it.
+func (dg *Agent) admitRegistration(reg *Registration, detached bool) error {
+	dg.registrationsMu.Lock()
+	defer dg.registrationsMu.Unlock()
+	if dg.stopped.Load() {
+		return fmt.Errorf("register: %w", ErrAgentClosed)
+	}
+	if detached {
+		return nil
+	}
+	if dg.registrations == nil {
+		dg.registrations = map[*Registration]struct{}{}
+	}
+	dg.registrations[reg] = struct{}{}
+	reg.onDone = dg.untrackRegistration
+	return nil
+}
+
+// untrackRegistration stops tracking a handle whose loop has exited.
+func (dg *Agent) untrackRegistration(reg *Registration) {
+	dg.registrationsMu.Lock()
+	defer dg.registrationsMu.Unlock()
+	delete(dg.registrations, reg)
+}
+
+// shutdownRegistrations stops the tracked registrations in parallel. Each one
+// unregisters within unregisterTimeout and the passed ctx.
+func (dg *Agent) shutdownRegistrations(ctx context.Context) []error {
+	dg.registrationsMu.Lock()
+	regs := make([]*Registration, 0, len(dg.registrations))
+	for reg := range dg.registrations {
+		regs = append(regs, reg)
+	}
+	dg.registrationsMu.Unlock()
+
+	errCh := make(chan error, len(regs))
+	var wg sync.WaitGroup
+	for _, reg := range regs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rctx, cancel := context.WithTimeout(ctx, unregisterTimeout)
+			defer cancel()
+			if err := reg.Close(rctx); err != nil {
+				errCh <- fmt.Errorf("close registration: %w", err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
 		errs = append(errs, err)
 	}
 	return errs
@@ -1341,7 +1441,7 @@ func (dg *Agent) DialBridge(ctx context.Context, target string, bridge Bridger, 
 // DialBridgeURI is DialBridge for an already parsed SIP URI.
 func (dg *Agent) DialBridgeURI(ctx context.Context, recipient URI, bridge Bridger, opts ...DialOption) (d *OutboundCall, err error) {
 	if isNilBridger(bridge) {
-		return nil, fmt.Errorf("dial bridge: bridge is nil")
+		return nil, fmt.Errorf("dial bridge: %w", ErrBridgeNil)
 	}
 	params, err := newSignalParams(opts...)
 	if err != nil {
@@ -1435,9 +1535,9 @@ func (dg *Agent) newDialogWithParams(recipient URI, params *signalParams) (d *Ou
 	tran, exists := dg.findTransport(transport, transportID)
 	if !exists {
 		if transport == "" {
-			return nil, fmt.Errorf("transport %q does not exist: no default UDP transport configured", "udp")
+			return nil, fmt.Errorf("transport %q: %w: no default UDP transport configured", "udp", ErrTransportNotFound)
 		}
-		return nil, fmt.Errorf("transport %q does not exist", transport)
+		return nil, fmt.Errorf("transport %q: %w", transport, ErrTransportNotFound)
 	}
 
 	return dg.newSIPDialog(recipient, tran, contact)
@@ -1580,8 +1680,11 @@ func (dg *Agent) getClient(tran *Transport) *Client {
 }
 
 func (dg *Agent) getTransport(transport string) (*Transport, bool) {
+	dg.transportsMu.RLock()
+	defer dg.transportsMu.RUnlock()
 	if transport == "" {
-		return &dg.transports[0], true
+		t := dg.transports[0]
+		return &t, true
 	}
 	for _, t := range dg.transports {
 		if sip.NetworkToLower(transport) == t.Network {
@@ -1593,6 +1696,8 @@ func (dg *Agent) getTransport(transport string) (*Transport, bool) {
 
 func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 	if id != "" {
+		dg.transportsMu.RLock()
+		defer dg.transportsMu.RUnlock()
 		for _, t := range dg.transports {
 			if id == t.ID {
 				return &t, true
@@ -1616,8 +1721,9 @@ func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 //
 // The returned handle owns the loop: Registration.Close stops it and
 // unregisters the contact; Registration.Wait reports the terminal error.
-// Cancel the passed ctx to stop the loop without unregistering explicitly
-// (Close is still recommended to wait for the exit).
+// Agent.Close stops and unregisters it too, unless WithRegistrationDetached
+// was passed. Cancel the passed ctx to stop the loop without unregistering
+// explicitly (Close is still recommended to wait for the exit).
 //
 // Retry semantics: a terminal REGISTER response (401/407, other 4xx, 3xx, 6xx)
 // ends the loop and is reported by Err/Wait. 423 Interval Too Brief is retried
@@ -1630,11 +1736,11 @@ func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 //
 // Options configure the transaction (WithRegisterExpiry,
 // WithRegisterRetryInterval, WithRegisterProxyHost, WithRegisterAllowHeaders,
-// WithOnRegistered) and every REGISTER attempt (WithAuthCredentials,
-// WithContact, WithHeaders, WithRequestMutator).
+// WithOnRegistered, WithRegistrationDetached) and every REGISTER attempt
+// (WithAuthCredentials, WithContact, WithHeaders, WithRequestMutator).
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials,
 // WithRegisterExpiry, WithRegisterRetryInterval, WithRegisterAllowHeaders,
-// WithRegisterProxyHost, WithOnRegistered.
+// WithRegisterProxyHost, WithOnRegistered, WithRegistrationDetached.
 func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOption) (*Registration, error) {
 	uri, err := parseTargetURI(target)
 	if err != nil {
@@ -1645,11 +1751,21 @@ func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOp
 
 // RegisterURI is Register for an already parsed SIP URI.
 func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...RegisterOption) (*Registration, error) {
-	t, err := dg.RegisterTransaction(ctx, recipient, opts...)
+	params, err := newSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
-	return newRegistration(ctx, dg.log, t), nil
+	t, err := dg.registerTransaction(recipient, params)
+	if err != nil {
+		return nil, err
+	}
+	reg := newRegistration(ctx, dg.log, t)
+	if err := dg.admitRegistration(reg, params.Register.Detached); err != nil {
+		reg.cancel()
+		return nil, err
+	}
+	reg.start()
+	return reg, nil
 }
 
 // RegisterTransaction creates the REGISTER transaction object used for
@@ -1658,11 +1774,21 @@ func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...Registe
 // attempt. Scope: WithHeaders, WithContact, WithRequestMutator,
 // WithAuthCredentials, WithRegisterExpiry, WithRegisterRetryInterval,
 // WithRegisterAllowHeaders, WithRegisterProxyHost, WithOnRegistered.
+// WithRegistrationDetached is rejected: a transaction runs no registration loop.
 func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ...RegisterOption) (*RegisterTransaction, error) {
 	params, err := newSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
+	if params.Register.Detached {
+		return nil, fmt.Errorf("%w: WithRegistrationDetached: a RegisterTransaction has no registration loop", ErrInvalidOption)
+	}
+	return dg.registerTransaction(recipient, params)
+}
+
+// registerTransaction builds the REGISTER transaction for a parsed recipient
+// from validated params.
+func (dg *Agent) registerTransaction(recipient URI, params *signalParams) (*RegisterTransaction, error) {
 	// Make our client reuse address
 	transport, exists := recipient.UriParams.Get("transport")
 	if !exists {
@@ -1670,7 +1796,7 @@ func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ..
 	}
 	tran, exists := dg.getTransport(transport)
 	if !exists {
-		return nil, fmt.Errorf("transport=%q does not exist", transport)
+		return nil, fmt.Errorf("transport=%q: %w", transport, ErrTransportNotFound)
 	}
 
 	contactHDR := ContactHeader{}

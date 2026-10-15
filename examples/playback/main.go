@@ -58,7 +58,7 @@ func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 	playfile, _ := testdata.OpenFile("demo-echodone.wav")
 	slog.Info("Playing a file", "file", "demo-echodone.wav")
 
-	pb, err := inDialog.StartPlayback()
+	pb, err := inDialog.NewPlayback()
 	if err != nil {
 		return err
 	}

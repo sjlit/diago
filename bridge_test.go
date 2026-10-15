@@ -72,15 +72,12 @@ func TestBridgeProxy(t *testing.T) {
 
 func TestBridgeNoTranscodingAllowed(t *testing.T) {
 	b := NewBridge()
-	// b.waitDialogsNum = 99 // Do not start proxy
 
 	incoming := &InboundCall{
 		callMedia: Media{
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioAlaw},
 			},
-			// rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioAlaw),
-			// rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioAlaw),
 		},
 	}
 	outgoing := &OutboundCall{
@@ -88,8 +85,6 @@ func TestBridgeNoTranscodingAllowed(t *testing.T) {
 			mediaSession: &media.MediaSession{
 				Codecs: []media.Codec{media.CodecAudioUlaw},
 			},
-			// rtpPacketReader: media.NewRTPPacketReader(nil, media.CodecAudioUlaw),
-			// rtpPacketWriter: media.NewRTPPacketWriter(nil, media.CodecAudioUlaw),
 		},
 	}
 
@@ -184,7 +179,6 @@ func TestIntegrationBridging(t *testing.T) {
 				return err
 			}
 
-			// ms := d.mediaSession
 			buf := make([]byte, media.RTPBufSize)
 			r, err := d.AudioReader()
 			if err != nil {
@@ -294,11 +288,6 @@ func TestIntegrationBridgingMix(t *testing.T) {
 			require.NoError(t, err)
 			dialogs[i] = dialog
 		}
-		// bridge.mu.Lock()
-		// assert.Equal(t, 3, len(bridge.dialogs))
-		// assert.Equal(t, 1, bridge.mixState)
-		// bridge.mu.Unlock()
-
 		for _, dialog := range dialogs {
 			dialog.Hangup(ctx)
 			dialog.Close()
@@ -337,7 +326,6 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		dg := newDialer(t, ua)
 
 		// Make number of calls that will have audio mixed in bridge
-		// wg := sync.WaitGroup{}
 		bridge := NewBridgeMix()
 		// RealtimeReader keeps its production default (true): the mix loop
 		// drops packets it considers late under CPU contention. Assert on the

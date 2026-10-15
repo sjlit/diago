@@ -6,6 +6,7 @@ package diago
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,14 @@ func (c *capturedRTPWriter) count() int {
 	return len(c.packets)
 }
 
+// snapshot copies the captured packets under the lock, so a test can iterate
+// them while the writer may still be receiving from another goroutine.
+func (c *capturedRTPWriter) snapshot() []*rtp.Packet {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.packets)
+}
+
 // newFakeMedia builds a Media with an in-memory write path.
 func newFakeMedia(t *testing.T, codecs []media.Codec) (*Media, *capturedRTPWriter) {
 	t.Helper()
@@ -61,7 +70,7 @@ func TestPlayToneFinite(t *testing.T) {
 	if n := sink.count(); n < 4 || n > 6 {
 		t.Fatalf("expected ~5 ulaw packets, got %d", n)
 	}
-	for _, p := range sink.packets {
+	for _, p := range sink.snapshot() {
 		if p.PayloadType != media.CodecAudioUlaw.PayloadType {
 			t.Fatalf("audio must ride PT 0, got %d", p.PayloadType)
 		}

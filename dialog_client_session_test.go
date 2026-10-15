@@ -6,7 +6,7 @@ package diago
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"sync"
@@ -60,7 +60,6 @@ func TestIntegrationDialogClient(t *testing.T) {
 	require.NoError(t, err)
 
 	err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-		// t.Log("Call received", d.InviteRequest)
 		// Add some routing
 		if d.ToUser() == "alice" {
 			d.Trying(ctx)
@@ -233,8 +232,11 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 		require.NoError(t, err)
 
 		authServer := NewDigestServer()
+		// The handler runs on the library's serve goroutines and may still be
+		// running when the test returns (the client stops at early media), so
+		// it must not touch t: log through slog instead.
 		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-			t.Log("Call received")
+			slog.Debug("Call received")
 
 			err := authServer.AuthorizeDialog(d, DigestAuth{
 				Username: "test",
@@ -243,31 +245,31 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 				Expire:   10 * time.Second,
 			})
 			if err != nil {
-				t.Log("Failed to authorize", "error", err)
+				slog.Error("Failed to authorize", "error", err)
 				return nil
 			}
 
 			d.Trying(ctx)
 			if err := d.ProgressMedia(ctx); err != nil {
-				t.Log("Failed to progress media", err)
+				slog.Error("Failed to progress media", "error", err)
 				return nil
 			}
 
 			// Write frame
 			w, _ := d.AudioWriter()
 			if _, err := w.Write(bytes.Repeat([]byte{0, 100}, 80)); err != nil {
-				t.Log("Failed to write frame", err)
+				slog.Error("Failed to write frame", "error", err)
 				return nil
 			}
 
 			if err := d.Answer(ctx); err != nil {
-				t.Log("Failed to answer", err)
+				slog.Error("Failed to answer", "error", err)
 				return nil
 			}
 			// The old semantics ended the call when the handler returned;
 			// now the handler owns the teardown decision.
 			if err := d.Hangup(ctx); err != nil {
-				t.Log("Failed to hangup", "error", err)
+				slog.Error("Failed to hangup", "error", err)
 			}
 			return nil
 		})
@@ -357,15 +359,17 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	dialog.Hangup(ctx)
 }
 
-// TestIntegrationDialogClientReinviteSingleAck 守护 re-INVITE 双 ACK 回归:
-// ReInvite 曾在 reInviteDo 的 WriteAck(完整路径:发包+置 Confirmed+挂重传钩子)
-// 之外又补一发裸 WriteRequest,导致线上出现两条同 CSeq、不同 Via branch 的
-// ACK(独立事务,非重传)。修复后 re-INVITE 必须恰好只 ACK 一次。
+// TestIntegrationDialogClientReinviteSingleAck guards the double-ACK
+// regression: ReInvite used to send a bare WriteRequest on top of the full
+// WriteAck path in reInviteDo, producing two ACKs with the same CSeq but
+// different Via branches (independent transactions, not retransmissions).
+// After the fix a re-INVITE must be acknowledged exactly once.
 func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 服务端在中间件层数收到的 ACK(OnAck 同样经过 serverMiddleware)。
+	// Count ACKs arriving at the server middleware layer (OnAck passes
+	// through serverMiddleware as well).
 	var mu sync.Mutex
 	var ackCount int
 
@@ -413,8 +417,8 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15110})
 	require.NoError(t, err)
 
-	// dg.Invite 会为初始 INVITE 自动 ACK;等这条先落账,把基线隔开,
-	// 之后新增的 ACK 只可能来自 re-INVITE。
+	// dg.Invite auto-ACKs the initial INVITE; wait for that ACK to land and
+	// record the baseline, so any further ACK can only come from the re-INVITE.
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -427,8 +431,9 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 
 	require.NoError(t, dialog.ReInvite(ctx))
 
-	// re-INVITE 的 ACK 必须到达;回归发生时两条 ACK 在同一条同步代码路径上
-	// 背靠背发出(实测间隔微秒级),50ms 余量足以捕捉第二条。
+	// The re-INVITE ACK must arrive; when the regression was present both
+	// ACKs were emitted back-to-back on the same synchronous path
+	// (microseconds apart in practice), so a 50ms margin catches the second.
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -504,6 +509,9 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 
 	t.Log("Size beep", len(beep), numPkts)
 	audioReceived := make(chan []byte)
+	// The serve handler runs on library goroutines: it must not call require.
+	// Failures travel back through this channel instead.
+	handlerErr := make(chan error, 1)
 	{
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
@@ -526,9 +534,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 				return nil
 			}
 
-			d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
-				// fmt.Println("Server media update", d)
-			}))
+			d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {}))
 
 			ar := d.rtpPacketReader
 			ctx, cancel := context.WithCancel(context.Background())
@@ -548,10 +554,18 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 			ms.Laddr = net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 39999}
 			ms.ExternalIP = net.IPv4(127, 0, 0, 2)
 			err = ms.Init() // This will start new listener
-			require.NoError(t, err)
+			if err != nil {
+				// Handler runs on the serve goroutine: never call require
+				// there (FailNow would kill the handler, not the test).
+				handlerErr <- err
+				return err
+			}
 
 			err = d.reInviteMediaSession(ctx, ms, nil)
-			require.NoError(t, err)
+			if err != nil {
+				handlerErr <- err
+				return err
+			}
 
 			<-ctx.Done()
 			return nil
@@ -573,9 +587,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15079})
 	require.NoError(t, err)
 	err = dialog.Invite(ctx,
-		WithOnMediaUpdate(func(d *Media) {
-			fmt.Println("Media update", d)
-		}),
+		WithOnMediaUpdate(func(d *Media) {}),
 		WithAuthCredentials("test", "test"),
 	)
 	require.NoError(t, err)
@@ -583,13 +595,19 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, err)
-	pb, _ := dialog.StartPlayback()
-	_, err = pb.Play(bytes.NewBuffer(beep), "audio/pcm")
+	pb, _ := dialog.NewPlayback()
+	_, err = pb.PlayContext(context.Background(), bytes.NewBuffer(beep), "audio/pcm")
 	require.NoError(t, err)
 
 	err = dialog.Hangup(ctx)
 	require.NoError(t, err)
 	remoteAudio := <-audioReceived
+
+	select {
+	case err := <-handlerErr:
+		t.Fatalf("server handler failed: %v", err)
+	default:
+	}
 
 	// 1 packet will not be consumed due to update of RTP packets
 	assert.GreaterOrEqual(t, len(remoteAudio)/160, numPkts-1)
@@ -769,7 +787,6 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	}
 
 	// UAS that accepts REFER
-	// waitReferDialog := make(chan *InboundCall)
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
@@ -785,7 +802,6 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 
 		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 			t.Log("Call INVITE due to REFER received")
-			// waitReferDialog <- d
 			switch d.ToUser() {
 			case "busy":
 				d.Respond(sip.StatusBusyHere, "Busy Here", nil)

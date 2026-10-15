@@ -5,6 +5,7 @@ package diago
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -111,7 +112,7 @@ func TestPlaybackControlStopDuringPlay(t *testing.T) {
 	var written int64
 	go func() {
 		var err error
-		written, err = p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		written, err = p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -134,7 +135,7 @@ func TestPlaybackControlStopDuringPlay(t *testing.T) {
 	assert.Equal(t, PlaybackStateStopped, p.State())
 
 	// New play is not affected by previous stop
-	written2, err := p.Play(bytes.NewReader(data), "")
+	written2, err := p.PlayContext(context.Background(), bytes.NewReader(data), "")
 	require.NoError(t, err)
 	assert.EqualValues(t, len(data), written2)
 	assert.Equal(t, PlaybackStateIdle, p.State())
@@ -152,7 +153,7 @@ func TestPlaybackControlReuseAfterStop(t *testing.T) {
 	play := func() chan error {
 		done := make(chan error, 1)
 		go func() {
-			_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+			_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 			done <- err
 		}()
 		waitPlaying(t, &p)
@@ -193,7 +194,7 @@ func TestPlaybackControlStopDuringPause(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -223,7 +224,7 @@ func TestPlaybackControlPauseResume(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: src, delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: src, delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -265,7 +266,7 @@ func TestPlaybackControlReplaySeeker(t *testing.T) {
 	var written int64
 	go func() {
 		var err error
-		written, err = p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		written, err = p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -298,7 +299,7 @@ func TestPlaybackControlReplayNotReplayable(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&noSeekReader{r: &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}}, "")
+		_, err := p.PlayContext(context.Background(), &noSeekReader{r: &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}}, "")
 		done <- err
 	}()
 
@@ -330,21 +331,21 @@ func TestPlaybackControlReplayFile(t *testing.T) {
 	}
 
 	// Measure single pass first
-	single, err := dialog().StartPlaybackControl()
+	single, err := dialog().NewPlaybackControl()
 	require.NoError(t, err)
-	singleWritten, err := single.PlayFile("testdata/files/demo-echodone.wav")
+	singleWritten, err := single.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	require.Greater(t, singleWritten, int64(10000))
 
 	// Replay once, so at least double amount should be written
-	playback, err := dialog().StartPlaybackControl()
+	playback, err := dialog().NewPlaybackControl()
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
 	var written int64
 	go func() {
 		var err error
-		written, err = playback.PlayFile("testdata/files/demo-echodone.wav")
+		written, err = playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 		done <- err
 	}()
 
@@ -385,7 +386,7 @@ func TestPlaybackControlStopWhilePausedExitsImmediately(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -423,7 +424,7 @@ func TestPlaybackControlReplayAfterStopRejected(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 

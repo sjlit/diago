@@ -80,7 +80,7 @@ func newAudioControl(writer io.Writer) *audioControl {
 }
 
 // NewAudioPlaybackControl wraps a playback with controls. Prefer
-// Media.StartPlaybackControl on a dialog.
+// Media.NewPlaybackControl on a dialog.
 func NewAudioPlaybackControl(a AudioPlayback) AudioPlaybackControl {
 	// Replace audio playback writer with control
 	writer := a.writer
@@ -113,10 +113,10 @@ func (p *AudioPlaybackControl) Resume() {
 }
 
 // Replay requests playback restart from the beginning. It MUST be called from
-// a different goroutine than Play (ie DTMF callback) and only while playback
-// is active. Ongoing Play returns ErrPlaybackReplayed and playback source is
-// restarted. Sources opened with PlayFile/PlayURL can always replay. Generic
-// Play(reader) requires reader to implement io.Seeker.
+// a different goroutine than PlayContext (ie DTMF callback) and only while
+// playback is active. Ongoing PlayContext returns ErrPlaybackReplayed and the
+// playback source is restarted. Sources opened with PlayFileContext or
+// PlayURLContext can always replay; a generic reader requires io.Seeker.
 func (p *AudioPlaybackControl) Replay() error {
 	return p.control.Replay()
 }
@@ -126,18 +126,11 @@ func (p *AudioPlaybackControl) State() PlaybackState {
 	return p.control.State()
 }
 
-// Play plays reader content with replay support. On replay request (Replay()
-// called from other goroutine) playback restarts if reader implements
-// io.Seeker, otherwise error ErrSourceNotReplayable is returned.
-// Use PlayFile or PlayURL for non-seekable sources.
-//
-// Deprecated: Use PlayContext.
-func (p *AudioPlaybackControl) Play(reader io.Reader, mimeType string) (int64, error) {
-	return p.PlayContext(context.Background(), reader, mimeType)
-}
-
 // PlayContext plays reader content with replay support, stopping with ctx.Err()
-// when the context is canceled. See Play for the replay semantics.
+// when the context is canceled. On replay request (Replay() called from
+// another goroutine) playback restarts if reader implements io.Seeker,
+// otherwise error ErrSourceNotReplayable is returned; use PlayFileContext or
+// PlayURLContext for non-seekable sources.
 func (p *AudioPlaybackControl) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
@@ -162,16 +155,9 @@ func (p *AudioPlaybackControl) PlayContext(ctx context.Context, reader io.Reader
 	}
 }
 
-// PlayFile plays wav file with replay support. On replay request file is
-// reopened and playback restarts from the beginning.
-//
-// Deprecated: Use PlayFileContext.
-func (p *AudioPlaybackControl) PlayFile(filename string) (int64, error) {
-	return p.PlayFileContext(context.Background(), filename)
-}
-
 // PlayFileContext plays wav file with replay support, stopping with ctx.Err()
-// when the context is canceled.
+// when the context is canceled. On replay request the file is reopened and
+// playback restarts from the beginning.
 func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
@@ -204,16 +190,9 @@ func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename str
 	}
 }
 
-// PlayURL plays wav content from url with replay support. On replay request
-// url is refetched and playback restarts from the beginning.
-//
-// Deprecated: Use PlayURLContext.
-func (p *AudioPlaybackControl) PlayURL(urlStr string) (int64, error) {
-	return p.PlayURLContext(context.Background(), urlStr)
-}
-
 // PlayURLContext plays wav content from url with replay support, stopping
-// with ctx.Err() when the context is canceled.
+// with ctx.Err() when the context is canceled. On replay request the url is
+// refetched and playback restarts from the beginning.
 func (p *AudioPlaybackControl) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()

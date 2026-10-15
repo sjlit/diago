@@ -5,6 +5,7 @@ package diago
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"os"
@@ -36,7 +37,7 @@ func TestIntegrationStreamWAV(t *testing.T) {
 
 	p := NewAudioPlayback(rtpWriter, codec)
 
-	written, err := p.Play(fh, "audio/wav")
+	written, err := p.PlayContext(context.Background(), fh, "audio/wav")
 	// written, err := streamWavRTP(fh, rtpWriter, codec)
 	require.NoError(t, err)
 	require.Greater(t, written, int64(10000))
@@ -62,7 +63,7 @@ func TestIntegrationPlaybackStreamWAV(t *testing.T) {
 		io.ReadAll(udpDump)
 	}()
 
-	written, err := p.Play(fh, "audio/wav")
+	written, err := p.PlayContext(context.Background(), fh, "audio/wav")
 	require.NoError(t, err)
 	require.Greater(t, written, int64(10000))
 }
@@ -84,21 +85,21 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 	}
 
 	t.Run("with control", func(t *testing.T) {
-		playback, err := dialog.StartPlaybackControl()
+		playback, err := dialog.NewPlaybackControl()
 		require.NoError(t, err)
 
 		// Stop before play is cleared when new play starts
 		playback.Stop()
-		written, err := playback.PlayFile("testdata/files/demo-echodone.wav")
+		written, err := playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 		require.NoError(t, err)
 		require.Greater(t, written, int64(10000))
 	})
 
 	t.Run("default", func(t *testing.T) {
-		playback, err := dialog.StartPlayback()
+		playback, err := dialog.NewPlayback()
 		require.NoError(t, err)
 
-		written, err := playback.PlayFile("testdata/files/demo-echodone.wav")
+		written, err := playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 		require.NoError(t, err)
 		require.Greater(t, written, int64(10000))
 		t.Log("Written on RTP stream", written)

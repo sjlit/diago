@@ -46,6 +46,6 @@ linters:
       # The exported-doc rule is enforced on the root diago package. The
       # lower-level packages still have undocumented exports; document them and
       # remove this exclusion.
-      - path: ^(audio|media|diagotest|testdata|examples)/
+      - path: ^(audio|media|testdata|examples)/
         linters:
           - revive

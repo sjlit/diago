@@ -30,7 +30,7 @@ func TestMusicOnHoldLoopsUntilStop(t *testing.T) {
 	// 40ms cadence of 20ms ulaw packets: several packets must arrive and keep
 	// arriving (loop), riding the negotiated audio payload type.
 	require.Eventually(t, func() bool { return sink.count() >= 3 }, 2*time.Second, 10*time.Millisecond)
-	for _, p := range sink.packets {
+	for _, p := range sink.snapshot() {
 		if p.PayloadType != media.CodecAudioUlaw.PayloadType {
 			t.Fatalf("hold music must ride PT %d, got %d", media.CodecAudioUlaw.PayloadType, p.PayloadType)
 		}

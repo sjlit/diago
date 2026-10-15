@@ -7,12 +7,18 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"sync"
 	"sync/atomic"
 
 	"github.com/emiago/sipgo/sip"
 )
 
+// ConnRecorder is a sipgo connection usable without a real transport. A fresh
+// recorder is created per client transaction, so each one is normally touched
+// by a single goroutine; the mutex keeps WriteMsg race-free if the transaction
+// layer ever writes from more than one.
 type ConnRecorder struct {
+	mu   sync.Mutex
 	msgs []sip.Message
 
 	ref atomic.Int32
@@ -27,6 +33,8 @@ func (c *ConnRecorder) LocalAddr() net.Addr {
 }
 
 func (c *ConnRecorder) WriteMsg(msg sip.Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.msgs = append(c.msgs, msg)
 	return nil
 }

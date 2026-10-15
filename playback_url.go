@@ -34,16 +34,9 @@ func (p *AudioPlayback) httpClientOrDefault() *http.Client {
 	return &http.Client{Timeout: 20 * time.Second}
 }
 
-// PlayURL plays wav content from url.
-//
-// Deprecated: Use PlayURLContext.
-func (p *AudioPlayback) PlayURL(urlStr string) (int64, error) {
-	return p.PlayURLContext(context.Background(), urlStr)
-}
-
 // PlayURLContext plays wav content from url. The context bounds the request
-// and the streaming; unlike the deprecated PlayURL there is no implicit
-// 10s deadline when the caller provides one.
+// and the streaming; a context without a deadline keeps the legacy 10s cap on
+// the initial request.
 func (p *AudioPlayback) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	var written int64
 	err := p.playURL(ctx, urlStr, &written)

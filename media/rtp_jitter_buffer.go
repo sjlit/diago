@@ -409,6 +409,12 @@ func (j *RTPJitterBuffer) handleSlot(slotIndex int) {
 	position := int(slot.seq) % j.maxPackets
 	existing := j.sequence[position]
 	if existing >= 0 {
+		// TODO: overflow semantics are uncovered. When a burst fills every
+		// playout slot, colliding arrivals are dropped here, but neither
+		// "upstream reading keeps going" nor "playout resumes near the
+		// newest packet instead of playing stale audio" is verified by a
+		// test (the old TestRTPJitterBufferOverflow was skipped as
+		// unfinished).
 		if j.slots[existing].seq == slot.seq {
 			j.stats.packetsDuplicate.Add(1)
 			j.debugPacketDecision("duplicate", slot, "same_sequence")

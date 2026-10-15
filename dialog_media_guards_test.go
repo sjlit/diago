@@ -87,19 +87,19 @@ func TestMediaGuardsNotAnswered(t *testing.T) {
 		assert.ErrorIs(t, d.ListenContext(context.Background()), ErrDialogNotAnswered)
 	})
 	t.Run("create playback", func(t *testing.T) {
-		_, err := d.StartPlayback()
+		_, err := d.NewPlayback()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create playback control", func(t *testing.T) {
-		_, err := d.StartPlaybackControl()
+		_, err := d.NewPlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create playback dtmf", func(t *testing.T) {
-		_, err := d.StartPlaybackDTMF()
+		_, err := d.NewPlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create ringtone playback", func(t *testing.T) {
-		_, err := d.StartRingtone()
+		_, err := d.NewRingtone()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create dtmf reader", func(t *testing.T) {
@@ -139,19 +139,19 @@ func TestMediaGuardsClosed(t *testing.T) {
 		assert.ErrorIs(t, d.ListenContext(context.Background()), ErrDialogClosed)
 	})
 	t.Run("create playback", func(t *testing.T) {
-		_, err := d.StartPlayback()
+		_, err := d.NewPlayback()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create playback control", func(t *testing.T) {
-		_, err := d.StartPlaybackControl()
+		_, err := d.NewPlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create playback dtmf", func(t *testing.T) {
-		_, err := d.StartPlaybackDTMF()
+		_, err := d.NewPlaybackDTMF()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create ringtone playback", func(t *testing.T) {
-		_, err := d.StartRingtone()
+		_, err := d.NewRingtone()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create dtmf reader", func(t *testing.T) {
@@ -248,11 +248,11 @@ func TestMediaStartStereoRecordingSetupWindow(t *testing.T) {
 func TestMediaPlaybackTimestampResetHook(t *testing.T) {
 	d := newTestMedia(t)
 
-	pb, err := d.StartPlayback()
+	pb, err := d.NewPlayback()
 	require.NoError(t, err)
 	require.NotNil(t, pb.onPlay)
 
-	pbc, err := d.StartPlaybackControl()
+	pbc, err := d.NewPlaybackControl()
 	require.NoError(t, err)
 	require.NotNil(t, pbc.AudioPlayback.onPlay)
 }
@@ -271,11 +271,11 @@ func TestMediaPlaybackWithoutRTPWriterHandle(t *testing.T) {
 	d.audioWriter = io.Discard
 	d.mu.Unlock()
 
-	pb, err := d.StartPlayback()
+	pb, err := d.NewPlayback()
 	require.NoError(t, err)
 	require.Nil(t, pb.onPlay)
 
-	pbc, err := d.StartPlaybackControl()
+	pbc, err := d.NewPlaybackControl()
 	require.NoError(t, err)
 	require.Nil(t, pbc.AudioPlayback.onPlay)
 }

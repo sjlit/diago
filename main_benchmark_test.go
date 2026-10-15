@@ -70,12 +70,12 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 			return nil
 		}
 
-		pb, err := d.StartPlayback()
+		pb, err := d.NewPlayback()
 		if err != nil {
 			t.Log(err.Error())
 			return nil
 		}
-		_, err = pb.PlayFile("./testdata/files/demo-echodone.wav")
+		_, err = pb.PlayFileContext(context.Background(), "./testdata/files/demo-echodone.wav")
 		if err != nil {
 			t.Log(err.Error())
 			return nil
@@ -118,11 +118,8 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 
 			t.RunParallel(func(p *testing.PB) {
 				// Build UAC
-				// ua, _ := NewUA(WithUserAgenTLSConfig(clientTLS))
 				ua, _ := sipgo.NewUA()
 				defer ua.Close()
-				// client, err := sipgo.NewClient(ua)
-				// require.NoError(t, err)
 				phone, err := New(WithUserAgent(ua), WithDefaultTransport())
 				require.NoError(t, err)
 				id, _ := rand.Int(rand.Reader, big.NewInt(int64(runtime.GOMAXPROCS(0))))
@@ -163,17 +160,14 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 						}
 					}()
 
-					// start := time.Now()
 					clientHangup := false
 					select {
 					// Audio is 2 sec long
 					case <-time.After(3 * time.Second):
-						// t.Log("NON SERVER hanguping")
 						dialog.Hangup(context.TODO())
 						clientHangup = true
 					case <-dialog.Context().Done():
 					}
-					// callDuration := time.Since(start)
 					dialog.Close()
 					assert.Empty(t, outoforder, "Out of order media detected")
 					assert.True(t, clientHangup)
@@ -182,22 +176,6 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 			})
 
 			t.ReportMetric(float64(t.N)/t.Elapsed().Seconds(), "req/s")
-
-			// ua, _ := NewUA(WithUserAgenTLSConfig(clientTLS))
-			// 		client, err := NewClient(ua)
-			// 		require.NoError(t, err)
-
-			// for i := 0; i < t.N; i++ {
-			// 	req, _, _ := createTestInvite(t, proto+":bob@"+tc.serverAddr, tc.transport, client.ip.String())
-			// 	tx, err := client.TransactionRequest(ctx, req)
-			// 	require.NoError(t, err)
-
-			// 	res := <-tx.Responses()
-			// 	assert.Equal(t, sip.StatusCode(200), res.StatusCode)
-
-			// 	tx.Terminate()
-			// }
-			// t.ReportMetric(float64(t.N)/max(t.Elapsed().Seconds(), 1), "req/s")
 		})
 	}
 }

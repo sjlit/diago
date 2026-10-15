@@ -69,6 +69,7 @@ func TestOptionInterfaceMatrix(t *testing.T) {
 		{"WithRegisterAllowHeaders", WithRegisterAllowHeaders("INVITE"), []string{"register"}},
 		{"WithRegisterProxyHost", WithRegisterProxyHost("127.0.0.1:5060"), []string{"register"}},
 		{"WithOnRegistered", WithOnRegistered(func() {}), []string{"register"}},
+		{"WithRegistrationDetached", WithRegistrationDetached(), []string{"register"}},
 	}
 
 	for _, tc := range options {

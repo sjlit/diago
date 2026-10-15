@@ -25,11 +25,12 @@ const maxPlayoutPayloadSize = 3840
 // Playback errors. PlaybackStopped and PlaybackReplayed also match io.EOF
 // for backward compatibility with code treating EOF as successful end.
 var (
-	// ErrPlaybackStopped is returned by Play when playback was stopped with
-	// Stop() or by DTMF interrupt. It also matches io.EOF.
+	// ErrPlaybackStopped is returned by the Play* methods when playback was
+	// stopped with Stop() or by DTMF interrupt. It also matches io.EOF.
 	ErrPlaybackStopped = errors.New("playback stopped")
-	// ErrPlaybackReplayed is returned by Play when replay was requested with
-	// Replay() and playback will restart from the beginning. It also matches io.EOF.
+	// ErrPlaybackReplayed is returned by the Play* methods when replay was
+	// requested with Replay() and playback will restart from the beginning.
+	// It also matches io.EOF.
 	ErrPlaybackReplayed = errors.New("playback replayed")
 	// ErrSourceNotReplayable is returned when replay is requested but playback
 	// source can not be restarted (generic reader without io.Seeker support).
@@ -49,9 +50,9 @@ type AudioPlayback struct {
 	codec  media.Codec
 	onPlay func()
 
-	// httpClient is used by PlayURL/PlayURLContext. Nil falls back to a
-	// default client with a 20s timeout. Set by Media.StartPlayback* from the
-	// dialog's MediaConfig.HTTPClient.
+	// httpClient is used by PlayURLContext. Nil falls back to a default
+	// client with a 20s timeout. Set by Media.NewPlayback* from the dialog's
+	// MediaConfig.HTTPClient.
 	httpClient *http.Client
 
 	// Read only values
@@ -62,8 +63,9 @@ type AudioPlayback struct {
 	totalWritten int64
 }
 
-// NewAudioPlayback creates a playback where writer is encoder/streamer to media codec
-// Use dialog.StartPlayback() instead creating manually playback
+// NewAudioPlayback creates a playback where writer is encoder/streamer to
+// media codec. Prefer dialog.NewPlayback() instead of creating playback
+// manually.
 func NewAudioPlayback(writer io.Writer, codec media.Codec) AudioPlayback {
 	return AudioPlayback{
 		writer:      writer,
@@ -78,17 +80,11 @@ func (p *AudioPlayback) Codec() media.Codec {
 	return p.codec
 }
 
-// Play is generic approach to play supported audio contents
-// Empty mimeType will stream reader as buffer. Make sure that bitdepth and numchannels is set correctly
-//
-// Deprecated: Use PlayContext for cancellable playback.
-func (p *AudioPlayback) Play(reader io.Reader, mimeType string) (int64, error) {
-	return p.play(context.Background(), reader, mimeType)
-}
-
 // PlayContext plays supported audio contents and stops streaming with
-// ctx.Err() when the context is canceled. Cancellation latency is bounded by
-// one packet interval (the pacing wait inside the writer).
+// ctx.Err() when the context is canceled. An empty mimeType streams reader as
+// a raw buffer; make sure BitDepth and NumChannels are set correctly.
+// Cancellation latency is bounded by one packet interval (the pacing wait
+// inside the writer).
 func (p *AudioPlayback) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	return p.play(ctx, reader, mimeType)
 }
@@ -124,16 +120,9 @@ func (p *AudioPlayback) play(ctx context.Context, reader io.Reader, mimeType str
 	return written, err
 }
 
-// PlayFile will play file and close file when finished playing
-// If you need to play same file multiple times, that use generic Play function
-//
-// Deprecated: Use PlayFileContext.
-func (p *AudioPlayback) PlayFile(filename string) (int64, error) {
-	return p.PlayFileContext(context.Background(), filename)
-}
-
 // PlayFileContext plays a wav file and closes it when finished. Cancellation
-// stops streaming and returns ctx.Err().
+// stops streaming and returns ctx.Err(). Call it again to play the file a
+// second time.
 func (p *AudioPlayback) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	file, err := os.Open(filename)
 	if err != nil {

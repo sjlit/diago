@@ -25,10 +25,10 @@ import (
 //     beyond its return can keep using the dialog (or spawn goroutines) until
 //     ctx is canceled / the dialog ends.
 //   - Returning an error terminates the call: before a final response is sent
-//     the error is mapped to a final SIP response — ErrDecline -> 480,
-//     ErrBusy -> 486, ErrNotFound -> 404, *ResponseError -> custom, anything
-//     else -> 500. An answered call is ended with BYE carrying a matching
-//     Reason header instead.
+//     the error is mapped to a final SIP response — ErrDecline -> 603,
+//     ErrTemporarilyUnavailable -> 480, ErrBusy -> 486, ErrNotFound -> 404,
+//     *ResponseError -> custom, anything else -> 500. An answered call is
+//     ended with BYE carrying a matching Reason header instead.
 //   - Wrap ErrResponseSent when the handler already wrote its own final
 //     response (for example DigestAuthServer.AuthorizeDialog); the framework
 //     then only tears the dialog down.
@@ -58,6 +58,8 @@ func handlerErrorResponse(err error) (code int, reason string, headers []Header)
 
 	switch {
 	case errors.Is(err, ErrDecline):
+		return sip.StatusGlobalDecline, "Decline", nil
+	case errors.Is(err, ErrTemporarilyUnavailable):
 		return sip.StatusTemporarilyUnavailable, "Temporarily Unavailable", nil
 	case errors.Is(err, ErrBusy):
 		return sip.StatusBusyHere, "Busy Here", nil
@@ -80,6 +82,8 @@ func defaultReasonPhrase(code int) string {
 		return "Server Internal Error"
 	case sip.StatusServiceUnavailable:
 		return "Service Unavailable"
+	case sip.StatusGlobalDecline:
+		return "Decline"
 	default:
 		return "Error"
 	}

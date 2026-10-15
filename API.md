@@ -10,15 +10,23 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - The engine is `Agent`, constructed by `New`. Options are per-domain types
   (`AgentOption`, `SignalOption`, `MediaConfig`, `ReaderOption`, ...).
 - Methods follow one verb per intent:
-  - `New*` constructs an object (`New`, `NewCall`, `NewBridge`).
-  - `Start*` starts background work (`StartPlayback`, `StartMusicOnHold`,
+  - `New*` constructs an object or a media handle (`New`, `NewCall`,
+    `NewBridge`, `NewPlayback`, `NewDTMFReader`, ...). A playback handle
+    created by a `New*` factory streams nothing until one of its `Play*`
+    methods is called.
+  - `Start*` starts background work (`StartMusicOnHold`,
     `StartStereoRecording`).
   - `Play*`/`Send*` perform a blocking action (`PlayTone`, `SendDTMF`).
-  - `Close` releases local resources and never sends SIP; `Hangup` performs
+  - `Close` releases local resources and, except for `Agent.Close`
+    unregistering its registrations, never sends SIP; `Hangup` performs
     the signaling teardown.
 - No stutter: prefer `Transport.Network` over `Transport.Transport`,
   `call.Media()` over `call.DialogMedia()`, `call.SIP()` over
   `call.DialogSIP()`.
+- Targets: `Dial`, `DialBridge` and `Register` take a SIP URI string and have a
+  `*URI` variant for an already parsed `URI`. Low-level constructors take a
+  `URI` only (`NewCall`, `RegisterTransaction`); Go has no overloading, so they
+  have no string variant.
 
 ## Options
 
@@ -26,10 +34,14 @@ Conventions used by the public API. New code (and reviews) should follow them;
   type. APIs take the per-operation interface for what they consume
   (`AnswerOption`, `HangupOption`, `InviteOption`, `DialOption`,
   `RegisterOption`, ...); passing an option an API does not consume is a
-  compile error. Keep `TestOptionInterfaceMatrix` in sync when adding one.
+  compile error. Adding an option means: a concrete type implementing the
+  marker methods of every interface it is valid for, one row in
+  `TestOptionInterfaceMatrix` (a constructor missing from the matrix is not
+  checked), and a case in `TestSignalOptionValidation` for signal options.
 - Option constructors validate their own input and return an error from the
   option function (surfaced by the API call). Nil callbacks, empty names and
-  out-of-range values are rejected instead of silently ignored.
+  out-of-range values are rejected instead of silently ignored; every such
+  error wraps `ErrInvalidOption`.
 - Nil options are skipped; slices of options must use the operation's
   interface type (`[]diago.RegisterOption`, not `[]diago.SignalOption`).
 - Agent-level options validate in `New` and abort construction
@@ -41,9 +53,14 @@ Conventions used by the public API. New code (and reviews) should follow them;
   `errors.Is`-compatible (`%w` wrapping, `errors.Join` for multiple failures).
 - Typed errors carry structured data: `*ResponseError` (handler to SIP
   response), `*RegisterResponseError` (REGISTER status).
-- `DialogHandler` errors map to SIP: `ErrDecline` 480, `ErrBusy` 486,
-  `ErrNotFound` 404, `*ResponseError` custom, anything else 500; wrap
-  `ErrResponseSent` when the handler already wrote the final response.
+- `CallHandler` errors map to SIP: `ErrDecline` 603,
+  `ErrTemporarilyUnavailable` 480, `ErrBusy` 486, `ErrNotFound` 404,
+  `*ResponseError` custom, anything else 500; wrap `ErrResponseSent` when the
+  handler already wrote the final response.
+- Configuration and lifecycle conditions have sentinels as well:
+  `ErrInvalidOption` (every option validation failure), `ErrNoTransport`,
+  `ErrTransportNotFound`, `ErrAgentServing`, `ErrAgentClosed`,
+  `ErrManagedMethod`, `ErrHandleAfterServe` and `ErrBridgeNil`.
 - Do not return bare `fmt.Errorf` for conditions callers must branch on.
 
 ## Contexts
@@ -62,11 +79,12 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - Server dialogs are owned by the framework from the incoming INVITE: a handler
   that answers and returns keeps the call alive; the framework closes the
   dialog (media, cache entry) when it ends.
-- `Agent.Close` hangs up dialogs, stops listeners and closes the private
+- `Agent.Close` hangs up dialogs, unregisters and stops the registrations it
+  created (`Register`/`RegisterURI`), stops listeners and closes the private
   UserAgent. A UserAgent supplied with `WithUserAgent` stays caller-owned.
 - Caller-owned resources are explicit: the UserAgent (when supplied),
-  registration handles, outgoing calls that never got a response, bridge
-  objects.
+  registrations created with `WithRegistrationDetached`, REGISTER
+  transactions, outgoing calls that never got a response, bridge objects.
 
 ## Configuration
 
@@ -99,6 +117,11 @@ Conventions used by the public API. New code (and reviews) should follow them;
   signatures on the aliases so applications can use diago without importing
   sipgo. Escape hatches are explicit: `WithUserAgent`, `WithServer`,
   `WithClient`, `Agent.Server`, `Agent.UA`, `call.SIP`.
+- `media` and `audio` are subpackages of this module, not third-party
+  dependencies: they stay explicit imports and are intentionally not aliased.
+- Accessors: `Agent.UA` and `Agent.Server` never return nil; `Agent.Client` is
+  nil unless `WithClient` was used (each transport then uses its own client).
+  `Agent.Transports` returns resolved copies of the transport configuration.
 - `git grep 'sipgo\.' -- '*_test.go'` is fine; production signatures should
   not grow new direct sipgo types.
 - Exported identifiers need a doc comment; keep promises (contexts, errors,

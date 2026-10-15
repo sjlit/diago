@@ -77,8 +77,11 @@ var (
 // that is already answered the framework sends BYE with a matching Reason
 // header (RFC 3326) instead of a response.
 var (
-	// ErrDecline maps to 480 Temporarily Unavailable.
+	// ErrDecline maps to 603 Decline.
 	ErrDecline = errors.New("call declined")
+	// ErrTemporarilyUnavailable maps to 480 Temporarily Unavailable (for
+	// example SIP overload or maintenance).
+	ErrTemporarilyUnavailable = errors.New("temporarily unavailable")
 	// ErrBusy maps to 486 Busy Here.
 	ErrBusy = errors.New("call busy")
 	// ErrNotFound maps to 404 Not Found.
@@ -89,6 +92,31 @@ var (
 	// writes a second response. Wrap it alongside the original error:
 	// errors.Join(ErrResponseSent, err).
 	ErrResponseSent = errors.New("response already sent")
+)
+
+// Configuration and lifecycle sentinels. New, the option constructors and the
+// Agent methods wrap them, so callers can branch with errors.Is.
+var (
+	// ErrInvalidOption is wrapped by every option constructor that rejects its
+	// value: nil callbacks or headers, empty names and out-of-range values.
+	ErrInvalidOption = errors.New("invalid option")
+	// ErrNoTransport is returned by New when no transport is configured.
+	ErrNoTransport = errors.New("no transport configured")
+	// ErrTransportNotFound is returned when no configured transport matches the
+	// requested network or ID.
+	ErrTransportNotFound = errors.New("transport not found")
+	// ErrAgentServing is returned by Serve and ServeBackground while the agent
+	// is already serving.
+	ErrAgentServing = errors.New("already serving")
+	// ErrAgentClosed is returned by Serve, Register and Handle after Close.
+	ErrAgentClosed = errors.New("agent is shut down")
+	// ErrManagedMethod is returned by Handle for methods the agent owns: INVITE,
+	// ACK, CANCEL, BYE, INFO, OPTIONS, REFER and NOTIFY.
+	ErrManagedMethod = errors.New("managed by the agent")
+	// ErrHandleAfterServe is returned by Handle once the agent is serving.
+	ErrHandleAfterServe = errors.New("must be called before Serve")
+	// ErrBridgeNil is returned by DialBridge when the bridge is nil.
+	ErrBridgeNil = errors.New("bridge is nil")
 )
 
 // ResponseError lets a CallHandler map an error to an arbitrary final SIP

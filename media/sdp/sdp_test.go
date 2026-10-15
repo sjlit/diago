@@ -11,7 +11,6 @@ import (
 )
 
 func TestParseSDP(t *testing.T) {
-	// t.Skip("TODO: fix SDP unmarshal")
 	body := `v=0
 o=- 3905350750 3905350750 IN IP4 192.168.100.11
 s=pjmedia

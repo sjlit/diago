@@ -52,7 +52,7 @@ func WithDTMFMethod(m DTMFMethod) DTMFSendOption {
 			c.method = m
 			return nil
 		default:
-			return fmt.Errorf("WithDTMFMethod: unknown method %d", m)
+			return fmt.Errorf("%w: WithDTMFMethod: unknown method %d", ErrInvalidOption, m)
 		}
 	}
 }
@@ -61,7 +61,7 @@ func WithDTMFMethod(m DTMFMethod) DTMFSendOption {
 func WithDTMFInterval(d time.Duration) DTMFSendOption {
 	return func(c *dtmfSendConfig) error {
 		if d < 0 {
-			return fmt.Errorf("WithDTMFInterval: negative duration")
+			return fmt.Errorf("%w: WithDTMFInterval: negative duration", ErrInvalidOption)
 		}
 		c.interval = d
 		return nil
@@ -73,7 +73,7 @@ func WithDTMFInterval(d time.Duration) DTMFSendOption {
 func WithDTMFEventDuration(d time.Duration) DTMFSendOption {
 	return func(c *dtmfSendConfig) error {
 		if d <= 0 {
-			return fmt.Errorf("WithDTMFEventDuration: must be greater than 0")
+			return fmt.Errorf("%w: WithDTMFEventDuration: must be greater than 0", ErrInvalidOption)
 		}
 		c.eventDur = d
 		return nil
@@ -87,7 +87,7 @@ func WithDTMFEventDuration(d time.Duration) DTMFSendOption {
 func WithDTMFVolume(v uint8) DTMFSendOption {
 	return func(c *dtmfSendConfig) error {
 		if v > 63 {
-			return fmt.Errorf("WithDTMFVolume: %d out of range 0-63", v)
+			return fmt.Errorf("%w: WithDTMFVolume: %d out of range 0-63", ErrInvalidOption, v)
 		}
 		c.volume = v
 		c.isVolumeSet = true

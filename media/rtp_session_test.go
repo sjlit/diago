@@ -4,7 +4,6 @@
 package media
 
 import (
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -108,7 +107,6 @@ func TestRTPSessionReading(t *testing.T) {
 
 	// rtpSess.readStats.firstPktSequenceNumber
 	assert.Equal(t, len(rtpStream), int(rtpSessRead.readStats.IntervalPacketsCount))
-	// assert.Equal(t, Npkts, int(rtpSess.readStats.intervalTotalPackets))
 
 	// Now make a sender report
 	senderReport := rtcp.SenderReport{}
@@ -162,17 +160,8 @@ func TestRTPSessionWriting(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// stream pkts + 3 -1 as increase of seq number
-	// lostPackets := 2
-	// expectedPkts := len(rtpStream) + lostPackets
-
-	// rtpSess.readStats.firstPktSequenceNumber
-	// assert.Equal(t, len(rtpStream), int(rtpSess.readStats.intervalTotalPackets))
-	// assert.Equal(t, Npkts, int(rtpSess.readStats.intervalTotalPackets))
-
 	// Now make a sender report
 	senderReport := rtcp.SenderReport{}
-	fmt.Println(rtpSessWrite.writeStats.lastPacketTime, time.Now())
 	now := time.Now()
 	rtpSessWrite.parseSenderReport(&senderReport, now, rtpWriter.SSRC)
 
@@ -181,33 +170,7 @@ func TestRTPSessionWriting(t *testing.T) {
 	assert.Equal(t, uint32(N), senderReport.PacketCount, "packets=%d ", senderReport.PacketCount)
 	assert.Equal(t, uint32(N)*160, senderReport.OctetCount, "octes=%d", senderReport.OctetCount)
 	assert.LessOrEqual(t, rtpWriter.initTimestamp+uint32(N-1)*160, senderReport.RTPTime, "RTPTime=%d", int(senderReport.RTPTime))
-
-	// recReport := senderReport.Reports[0]
-	// assert.Equal(t, lostPackets, int(recReport.TotalLost))
-	// firstpkt + expected pkts = last seq numb
-	// assert.Equal(t, int(rtpSess.readStats.firstPktSequenceNumber)+expectedPkts, int(recReport.LastSequenceNumber))
-	// assert.Equal(t, int(float32(lostPackets)/float32(expectedPkts)*256), int(recReport.FractionLost))
 }
-
-// func TestRTPSessionMonitoring(t *testing.T) {
-// 	// LSR and DLSR calc
-// 	// SenderReport sent and SenderReport received
-// 	rtcpReader, rtcpWriter := io.Pipe()
-// 	rtpRawReader, rtpRawWriter := io.Pipe()
-// 	rtpR, rtpW := fakeSession(1234, 9876, nil, rtpRawWriter, rtcpReader, nil)
-
-// 	rtpSess := newRTPSession(rtpR, rtpW)
-// 	rtpSess.Monitor()
-
-// 	// How to trigger RTCP with sent data
-// 	rtpSess.Write()
-// 	sr := rtcp.SenderReport{
-// 		SSRC: 10,
-// 	}
-// 	data, _ := sr.Marshal()
-// 	rtcpWriter.Write(data)
-
-// }
 
 func TestRTPSessionClose(t *testing.T) {
 	sess, err := NewMediaSession(net.IPv4(127, 0, 0, 1), 0)
@@ -422,16 +385,9 @@ func TestJitterCalc(t *testing.T) {
 
 	stats.calcJitter(now.Add(100*time.Millisecond), 160*6)
 	assert.EqualValues(t, 13, int(stats.jitter))
-
-	// Simulate a gap
-	// stats.calcJitterRFC(now.Add(5*time.Second), 640)
-	// assert.EqualValues(t, 0, int(stats.jitter))
 }
 
 func TestRTPSessionSourceLockProtection(t *testing.T) {
-	// slog.SetLogLoggerLevel(slog.LevelDebug)
-	// RTPDebug = true
-
 	rtpSessRead, rtpSessWrite := pipeRTP(9876, 1234)
 	rtpSessRead.isSourceLocked = true // Enable source locking
 

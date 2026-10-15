@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -867,8 +866,9 @@ func (d *Media) EchoContext(ctx context.Context) error {
 	return err
 }
 
-// StartPlayback creates playback for audio
-func (d *Media) StartPlayback() (*AudioPlayback, error) {
+// NewPlayback creates the playback handle for the dialog audio. Nothing is
+// streamed until one of its Play methods is called.
+func (d *Media) NewPlayback() (*AudioPlayback, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -880,8 +880,8 @@ func (d *Media) StartPlayback() (*AudioPlayback, error) {
 	return &p, nil
 }
 
-// StartPlaybackControl creates playback with controls like mute, stop, pause, resume and replay
-func (d *Media) StartPlaybackControl() (*AudioPlaybackControl, error) {
+// NewPlaybackControl creates the playback handle with controls like mute, stop, pause, resume and replay. Playing starts with Play* on the returned handle.
+func (d *Media) NewPlaybackControl() (*AudioPlaybackControl, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -911,10 +911,11 @@ func (d *Media) armPlaybackTimestampReset(p *AudioPlayback) {
 	}
 }
 
-// StartRingtone creates playback for ringtone
+// NewRingtone creates the ringtone handle. Playing starts with Play or
+// PlayBackground on the returned handle.
 //
 // Experimental
-func (d *Media) StartRingtone() (*AudioRingtone, error) {
+func (d *Media) NewRingtone() (*AudioRingtone, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -1251,29 +1252,11 @@ func (m *Media) deliverDTMF(dtmf rune, dur time.Duration) {
 	_ = dur // duration is informational for out-of-band digits
 }
 
-// Listen listens for DTMF events until dur elapses.
-//
-// Deprecated: Use ListenContext with a context deadline.
-func (d *DTMFReader) Listen(onDTMF func(dtmf rune) error, dur time.Duration) error {
-	d.setOnDTMF(onDTMF)
-	buf := make([]byte, media.RTPBufSize)
-	for {
-		if _, err := d.readDeadline(buf, dur); err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				return nil
-			}
-			return err
-		}
-	}
-}
-
 // ListenContext listens for DTMF events until the context is done. Cancellation
 // interrupts the in-flight read through the reader gate; DTMF events already
 // detected are delivered through onDTMF before the read that carries them
-// returns. Returns nil on clean cancellation.
-//
-// Unlike the deprecated Listen(dur), the dialog reader is not touched with
-// deadlines: pauses and other components do not terminate the listen.
+// returns. Returns nil on clean cancellation. The dialog reader is not touched
+// with deadlines: pauses and other components do not terminate the listen.
 func (d *DTMFReader) ListenContext(ctx context.Context, onDTMF func(dtmf rune) error) error {
 	d.setOnDTMF(onDTMF)
 	buf := make([]byte, media.RTPBufSize)

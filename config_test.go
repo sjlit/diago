@@ -205,7 +205,7 @@ func TestMediaConfigPropagation(t *testing.T) {
 	assert.True(t, ms.RTCPDebug)
 	assert.Equal(t, tracer, ms.Tracer)
 
-	pb, err := d.callMedia.StartPlayback()
+	pb, err := d.callMedia.NewPlayback()
 	require.NoError(t, err)
 	require.Same(t, httpClient, pb.httpClient)
 }

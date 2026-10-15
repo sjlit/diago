@@ -53,7 +53,7 @@ func TestSignalOptionValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := newSignalParams(tc.opt)
-			require.Error(t, err)
+			require.ErrorIs(t, err, ErrInvalidOption)
 		})
 	}
 }

@@ -100,6 +100,91 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	assert.ErrorContains(t, err, "already serving")
 }
 
+// TestShutdownUnregistersRegistrations locks that Agent.Close unregisters the
+// registrations it created while the signaling stack is still up, stops their
+// loops and refuses further registrations.
+func TestShutdownUnregistersRegistrations(t *testing.T) {
+	var unregisters atomic.Int32
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			unregisters.Add(1)
+		}
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	reg, err := dg.Register(ctx, "sip:alice@localhost")
+	require.NoError(t, err)
+	require.NoError(t, reg.WaitReady(ctx))
+
+	require.NoError(t, dg.Close(ctx))
+	assert.Equal(t, int32(1), unregisters.Load(), "Close must unregister the registrations it created")
+	select {
+	case <-reg.Done():
+	default:
+		t.Fatal("Close must stop the registration loop")
+	}
+
+	// Idempotent, and registrations are refused once the agent is closed.
+	require.NoError(t, dg.Close(ctx))
+	assert.Equal(t, int32(1), unregisters.Load())
+	_, err = dg.Register(ctx, "sip:bob@localhost")
+	assert.ErrorIs(t, err, ErrAgentClosed)
+	_, err = dg.Register(ctx, "sip:bob@localhost", WithRegistrationDetached())
+	assert.ErrorIs(t, err, ErrAgentClosed)
+}
+
+// TestShutdownKeepsDetachedRegistrations locks WithRegistrationDetached: the
+// handle keeps running after Agent.Close and its owner unregisters it.
+func TestShutdownKeepsDetachedRegistrations(t *testing.T) {
+	var unregisters atomic.Int32
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		if h := req.GetHeader("Expires"); h != nil && h.Value() == "0" {
+			unregisters.Add(1)
+		}
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	reg, err := dg.Register(ctx, "sip:alice@localhost", WithRegistrationDetached())
+	require.NoError(t, err)
+	require.NoError(t, reg.WaitReady(ctx))
+
+	require.NoError(t, dg.Close(ctx))
+	select {
+	case <-reg.Done():
+		t.Fatal("a detached registration must keep running after Agent.Close")
+	default:
+	}
+	assert.Zero(t, unregisters.Load(), "Agent.Close must not unregister a detached registration")
+
+	require.NoError(t, reg.Close(ctx))
+	assert.Equal(t, int32(1), unregisters.Load(), "the owner unregisters the detached registration")
+}
+
+// TestRegistrationUntrackedAfterLoopExit locks that a handle whose loop ended
+// on its own is no longer tracked, so the agent does not accumulate dead handles.
+func TestRegistrationUntrackedAfterLoopExit(t *testing.T) {
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		return sip.NewResponseFromRequest(req, 403, "Forbidden", nil)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	reg, err := dg.Register(ctx, "sip:alice@localhost")
+	require.NoError(t, err)
+	require.Error(t, reg.Wait())
+
+	dg.registrationsMu.Lock()
+	assert.Empty(t, dg.registrations)
+	dg.registrationsMu.Unlock()
+}
+
 // TestIntegrationDiagoShutdownServerDialog exercises the full loop: a real
 // incoming call, then the server side Close hangs the call up (BYE reaches
 // the client leg), evicts the dialog and stops the listeners.
@@ -117,7 +202,11 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 
 	require.NoError(t, dgS.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 		d.Trying(ctx)
-		require.NoError(t, d.Answer(ctx))
+		// Serve handler goroutine: return the error instead of require
+		// (FailNow would abandon the handler before it signals handlerDone).
+		if err := d.Answer(ctx); err != nil {
+			return err
+		}
 		<-d.Context().Done()
 		if handlerOnce.CompareAndSwap(false, true) {
 			close(handlerDone)

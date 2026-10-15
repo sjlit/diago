@@ -122,9 +122,9 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	require.NoError(t, d.Ringing(ctx))
 
 	// We can play some file ringtone
-	playback, err := d.StartPlayback()
+	playback, err := d.NewPlayback()
 	require.NoError(t, err)
-	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
+	_, err = playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 
 	// We can now answer
@@ -132,9 +132,9 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	require.NoError(t, err)
 
 	// New playback is needed to follow new media session
-	playback, err = d.StartPlayback()
+	playback, err = d.NewPlayback()
 	require.NoError(t, err)
-	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
+	_, err = playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	d.Hangup(context.TODO())
 
@@ -208,6 +208,10 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// The UAS serve handler runs on library goroutines: failures must be
+	// reported through a channel, never with require inside the handler.
+	handlerErr := make(chan error, 1)
+
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
@@ -231,9 +235,17 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 			WithRTPNAT(media.RTPNATSymetric),
 			WithOnMediaUpdate(func(*Media) {}),
 		)
-		require.NoError(t, err)
+		if err != nil {
+			// Serve handler goroutine: report through the channel, never
+			// through require (FailNow would abandon the handler).
+			handlerErr <- err
+			return err
+		}
 		reader, err := d.AudioReader()
-		require.NoError(t, err)
+		if err != nil {
+			handlerErr <- err
+			return err
+		}
 		go func() {
 			_, _ = reader.Read(make([]byte, 160))
 		}()
@@ -302,6 +314,12 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	ack := sip.NewRequest(sip.ACK, res.Contact().Address)
 	require.NoError(t, dialog.WriteRequest(ack))
 	dialog.Hangup(ctx)
+
+	select {
+	case err := <-handlerErr:
+		t.Fatalf("uas handler failed: %v", err)
+	default:
+	}
 }
 
 func TestIntegrationDialogServerRefer(t *testing.T) {
@@ -335,7 +353,6 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 		go func() {
 			err := dialog.Invite(ctx, WithOnRefer(func(referDialog *OutboundCall) error {
-				// referDialog.
 				if err := referDialog.Invite(ctx); err != nil {
 					return err
 				}
@@ -345,7 +362,11 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 				return referDialog.Hangup(ctx)
 			}))
-			require.NoError(t, err)
+			// Dial goroutine: Error (not require) is goroutine-safe.
+			if err != nil {
+				t.Error(err)
+				return
+			}
 
 			dialog.Ack(ctx)
 			<-dialog.Context().Done()
@@ -354,7 +375,6 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	}
 
 	// UAS that accepts REFER
-	// waitReferDialog := make(chan *InboundCall)
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
@@ -370,7 +390,6 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
 			t.Log("Call INVITE due to REFER received")
-			// waitReferDialog <- d
 			switch d.ToUser() {
 			case "busy":
 				d.Respond(sip.StatusBusyHere, "Busy Here", nil)
@@ -474,18 +493,18 @@ func TestIntegrationDialogServerPlayback(t *testing.T) {
 		},
 	}
 
-	playback, err := dialog.StartPlayback()
+	playback, err := dialog.NewPlayback()
 	require.NoError(t, err)
 
 	initTS := dialog.rtpPacketWriter.InitTimestamp()
-	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
+	_, err = playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	diffTS := dialog.rtpPacketWriter.PacketHeader.Timestamp - initTS
 	assert.Greater(t, diffTS, uint32(1000))
 
 	time.Sleep(100 * time.Millisecond) // 4 frames
 	initTS = dialog.rtpPacketWriter.InitTimestamp()
-	_, err = playback.PlayFile("testdata/files/demo-echodone.wav")
+	_, err = playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	diffTS2 := dialog.rtpPacketWriter.PacketHeader.Timestamp - initTS
 	t.Log(initTS, diffTS2)

@@ -5,6 +5,7 @@ package diago
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"sync"
@@ -54,7 +55,7 @@ func TestPlaybackDTMFInterruptAnyKey(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -91,7 +92,7 @@ func TestPlaybackDTMFInterruptKeysOnly(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -127,7 +128,7 @@ func TestPlaybackDTMFNoInterrupt(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -153,7 +154,7 @@ func TestPlaybackDTMFReplay(t *testing.T) {
 	var written int64
 	go func() {
 		var err error
-		written, err = p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		written, err = p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -203,7 +204,7 @@ func TestPlaybackDTMFOnDTMFCallback(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.Play(&slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
+		_, err := p.PlayContext(context.Background(), &slowReader{r: bytes.NewReader(data), delay: 2 * time.Millisecond}, "")
 		done <- err
 	}()
 
@@ -311,7 +312,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 		},
 	}
 
-	pb, err := dialog.StartPlaybackDTMF(WithReplayKeys("*"))
+	pb, err := dialog.NewPlaybackDTMF(WithReplayKeys("*"))
 	require.NoError(t, err)
 	defer pb.Close()
 
@@ -319,7 +320,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 	var written int64
 	go func() {
 		var err error
-		written, err = pb.PlayFile("testdata/files/demo-echodone.wav")
+		written, err = pb.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 		done <- err
 	}()
 

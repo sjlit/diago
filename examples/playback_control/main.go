@@ -63,7 +63,7 @@ func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 		return err
 	}
 
-	pb, err := inDialog.StartPlaybackControl()
+	pb, err := inDialog.NewPlaybackControl()
 	if err != nil {
 		return err
 	}

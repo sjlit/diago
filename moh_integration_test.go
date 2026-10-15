@@ -34,6 +34,10 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	mohTone := audio.Tone{Segments: []audio.ToneSegment{{Freqs: []float64{425}, On: 40 * time.Millisecond}}}
 
 	uasCh := make(chan *InboundCall, 1)
+	// The UAS handler runs on serve goroutines: Answer failures must be
+	// reported to the test instead of calling require inside the handler
+	// (FailNow there abandons the handler and hangs the test).
+	handlerErr := make(chan error, 1)
 
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
@@ -47,7 +51,10 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	)
 	require.NoError(t, err)
 	err = uas.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-		require.NoError(t, d.Answer(ctx))
+		if err := d.Answer(ctx); err != nil {
+			handlerErr <- err
+			return err
+		}
 		uasCh <- d
 		<-d.Context().Done()
 		return nil
@@ -68,7 +75,14 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	require.NoError(t, err)
 	defer dialog.Hangup(ctx)
 
-	d := <-uasCh
+	var d *InboundCall
+	select {
+	case d = <-uasCh:
+	case err := <-handlerErr:
+		t.Fatalf("uas handler failed: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("uas never received the call")
+	}
 
 	var packets atomic.Uint64
 	go func() {
@@ -105,6 +119,8 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 
 	var uasHeld atomic.Bool
 
+	// The UAS handler runs on serve goroutines: report its failures from the
+	// test goroutine instead of calling require inside the handler.
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("uas"))
 	defer ua.Close()
 
@@ -121,7 +137,9 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 				uasHeld.Store(false)
 			}
 		}
-		require.NoError(t, d.Answer(ctx, WithOnMediaUpdate(heldCb)))
+		if err := d.Answer(ctx, WithOnMediaUpdate(heldCb)); err != nil {
+			return err
+		}
 		<-d.Context().Done()
 		return nil
 	})

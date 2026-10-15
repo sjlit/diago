@@ -36,7 +36,7 @@ func WithToneLoop() ToneOption {
 func WithToneVolume(scale float64) ToneOption {
 	return func(c *toneConfig) error {
 		if scale <= 0 {
-			return fmt.Errorf("WithToneVolume: scale must be greater than 0")
+			return fmt.Errorf("%w: WithToneVolume: scale must be greater than 0", ErrInvalidOption)
 		}
 		c.volume = scale
 		return nil
