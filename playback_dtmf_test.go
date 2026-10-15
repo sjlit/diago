@@ -117,8 +117,8 @@ func TestPlaybackDTMFInterruptKeysOnly(t *testing.T) {
 		t.Fatal("play was not interrupted")
 	}
 
-	assert.Equal(t, '1', <-p.DTMF())
-	assert.Equal(t, '9', <-p.DTMF())
+	assert.Equal(t, '1', recvWithin(t, p.DTMF(), 5*time.Second))
+	assert.Equal(t, '9', recvWithin(t, p.DTMF(), 5*time.Second))
 }
 
 func TestPlaybackDTMFNoInterrupt(t *testing.T) {
@@ -142,7 +142,7 @@ func TestPlaybackDTMFNoInterrupt(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("play should not be interrupted")
 	}
-	assert.Equal(t, '1', <-p.DTMF())
+	assert.Equal(t, '1', recvWithin(t, p.DTMF(), 5*time.Second))
 }
 
 func TestPlaybackDTMFReplay(t *testing.T) {
@@ -191,8 +191,8 @@ func TestPlaybackDTMFReplay(t *testing.T) {
 	// pass (one chunk) plus a partial second pass. The fact that written
 	// exceeds the first chunk proves replay happened.
 	assert.Greater(t, written, int64(320))
-	assert.Equal(t, '*', <-p.DTMF())
-	assert.Equal(t, '#', <-p.DTMF())
+	assert.Equal(t, '*', recvWithin(t, p.DTMF(), 5*time.Second))
+	assert.Equal(t, '#', recvWithin(t, p.DTMF(), 5*time.Second))
 }
 
 func TestPlaybackDTMFOnDTMFCallback(t *testing.T) {
@@ -336,7 +336,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 	}
 	assert.Equal(t, PlaybackStatePlaying, pb.State(), "replay key must not interrupt")
 
-	// Interrupt with number key
+	// Interrupt with number key, well after the star replay was detected.
 	time.Sleep(300 * time.Millisecond)
 	sendDTMFInjection(t, injector, &sess.Laddr, new(uint16), '5')
 
@@ -346,7 +346,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("play was not interrupted")
 	}
-	assert.Equal(t, '5', <-pb.DTMF())
+	assert.Equal(t, '5', recvWithin(t, pb.DTMF(), 5*time.Second))
 	assert.Equal(t, PlaybackStateStopped, pb.State())
 	// Interrupted well before file end (full pass writes more than 15000)
 	assert.Less(t, written, int64(15000))

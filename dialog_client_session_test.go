@@ -423,6 +423,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 		defer mu.Unlock()
 		return ackCount > baseline
 	}, 2*time.Second, 10*time.Millisecond)
+	// Observation window: any second ACK would land here, not later.
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
@@ -516,6 +517,8 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 				audioReceived <- beepEncoded
 			}()
 
+			// Let the peer stream a few frames before the media is forked,
+			// so the fork interrupts an active RTP flow.
 			time.Sleep(60 * time.Millisecond)
 			var err error
 			ms := d.MediaSession().Fork()
@@ -578,7 +581,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 
 	err = dialog.Hangup(ctx)
 	require.NoError(t, err)
-	remoteAudio := <-audioReceived
+	remoteAudio := recvWithin(t, audioReceived, 5*time.Second)
 
 	select {
 	case err := <-handlerErr:

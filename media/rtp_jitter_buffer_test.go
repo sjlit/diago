@@ -234,7 +234,7 @@ func TestRTPJitterBuffer(t *testing.T) {
 
 		require.NoError(t, jb.Close())
 		require.NoError(t, jb.Close())
-		require.ErrorIs(t, <-result, io.ErrClosedPipe)
+		require.ErrorIs(t, recvWithin(t, result, 3*time.Second), io.ErrClosedPipe)
 		close(reader.packets)
 	})
 }
@@ -295,7 +295,7 @@ func TestRTPJitterBufferRealtimeSimulation(t *testing.T) {
 		t.Fatal("timed out waiting for realtime jitter buffer simulation")
 	}
 
-	<-timedProducerDone
+	recvWithin(t, timedProducerDone, 3*time.Second)
 	stats := jb.Statistics()
 	require.Equal(t, uint64(packetCount), stats.PacketsRead)
 	require.Equal(t, uint64(packetCount), stats.PacketsReleased)

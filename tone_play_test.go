@@ -86,9 +86,10 @@ func TestPlayToneLoopUntilCancel(t *testing.T) {
 		errCh <- m.PlayTone(ctx, audio.ToneDial, WithToneLoop())
 	}()
 
+	// Let the loop start emitting, then cancel it mid-tone.
 	time.Sleep(120 * time.Millisecond)
 	cancel()
-	err := <-errCh
+	err := recvWithin(t, errCh, 5*time.Second)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("looped tone must return ctx error on cancel, got %v", err)
 	}

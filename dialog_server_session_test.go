@@ -74,6 +74,11 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	}, WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
 	allResponses := []sip.Response{}
+	// The peer must observe the 183 before the 180 is sent: they travel in
+	// separate transactions, so nothing orders them on the wire. Waiting for
+	// the 183 to land keeps the recorded order deterministic without a sleep.
+	progressSeen := make(chan struct{})
+	signalProgress := sync.OnceFunc(func() { close(progressSeen) })
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -82,6 +87,9 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 			func(res *sip.Response) error {
 				t.Log("Received resp", res.StatusCode)
 				allResponses = append(allResponses, *res.Clone())
+				if res.StatusCode == sip.StatusSessionInProgress {
+					signalProgress()
+				}
 				return nil
 			},
 		))
@@ -94,13 +102,13 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 		t.Log("Dialog done")
 	}()
 
-	d := <-waitDialog
+	d := recvWithin(t, waitDialog, 5*time.Second)
 
 	err := d.ProgressMedia(ctx)
 	require.NoError(t, err)
 
-	// It is valid to also send 180
-	time.Sleep(500 * time.Millisecond)
+	// It is valid to also send 180, but only once the 183 reached the peer.
+	recvWithin(t, progressSeen, 5*time.Second)
 	require.NoError(t, d.Ringing(ctx))
 
 	// We can play some file ringtone
@@ -160,7 +168,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 		}()
 	}
 
-	d := <-waitDialog
+	d := recvWithin(t, waitDialog, 5*time.Second)
 
 	err := d.Answer(ctx)
 	require.NoError(t, err)
@@ -326,7 +334,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 	t.Run("successfull", func(t *testing.T) {
 		dialCall()
-		d := <-waitDialog
+		d := recvWithin(t, waitDialog, 5*time.Second)
 		defer d.Hangup(ctx)
 
 		err := d.Answer(ctx)
@@ -341,7 +349,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 	t.Run("unreachable refer", func(t *testing.T) {
 		dialCall()
-		d := <-waitDialog
+		d := recvWithin(t, waitDialog, 5*time.Second)
 		defer d.Hangup(ctx)
 
 		err := d.Answer(ctx)
@@ -356,7 +364,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 
 	t.Run("busy refer", func(t *testing.T) {
 		dialCall()
-		d := <-waitDialog
+		d := recvWithin(t, waitDialog, 5*time.Second)
 		defer d.Hangup(ctx)
 
 		err := d.Answer(ctx)

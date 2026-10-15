@@ -117,6 +117,7 @@ func TestPlaybackControlStopDuringPlay(t *testing.T) {
 	}()
 
 	waitPlaying(t, &p)
+	// Let a couple of frames flow before stopping mid-playback.
 	time.Sleep(10 * time.Millisecond)
 	p.Stop()
 

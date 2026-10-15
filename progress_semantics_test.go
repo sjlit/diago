@@ -41,6 +41,8 @@ func TestProgressSemantics(t *testing.T) {
 		if err := d.Progress(ctx); err != nil {
 			return err
 		}
+		// Gap between the provisional and the final response, so the client
+		// observes the early media session before the answer replaces it.
 		time.Sleep(100 * time.Millisecond)
 		return d.Answer(ctx)
 	})

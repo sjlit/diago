@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emiago/dtls/v3"
 	"github.com/sjlit/diago/v2/testdata"
@@ -44,7 +45,7 @@ func TestDTLSSetup(t *testing.T) {
 	}()
 	err = clientConn.Handshake()
 	require.NoError(t, err)
-	require.NoError(t, <-serverErr)
+	require.NoError(t, recvWithin(t, serverErr, 5*time.Second))
 }
 
 func TestDTLSFingerprint(t *testing.T) {

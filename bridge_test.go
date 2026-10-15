@@ -298,7 +298,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		}
 
 		for range len(dialogs) {
-			<-dialogExit
+			recvWithin(t, dialogExit, 5*time.Second)
 		}
 		bridge := bridgePtr.Load()
 		bridge.mu.Lock()
@@ -320,7 +320,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	t.Run("sound proxied", func(t *testing.T) {
 		defer func() {
 			for range 2 {
-				<-dialogExit
+				recvWithin(t, dialogExit, 5*time.Second)
 			}
 		}()
 

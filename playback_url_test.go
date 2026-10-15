@@ -95,6 +95,8 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 
 		go func() {
 			defer dialog.Close()
+			// Playback duration, not a wait: hold the call open so the
+			// HTTP-backed stream keeps being fetched and copied.
 			time.Sleep(10 * time.Second)
 			dialog.Hangup(ctx)
 		}()

@@ -27,6 +27,7 @@ func TestWaitAckOrGrace(t *testing.T) {
 	t.Run("late ack within grace", func(t *testing.T) {
 		ch := make(chan struct{})
 		go func() {
+			// ACK arrives after the grace window started but before it ends.
 			time.Sleep(10 * time.Millisecond)
 			close(ch)
 		}()

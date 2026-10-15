@@ -188,6 +188,9 @@ func TestMediaEchoContextCancel(t *testing.T) {
 		done <- d.EchoContext(ctx)
 	}()
 
+	// Sequencing hint, not synchronization: cancel below works whether or not
+	// the echo reached its blocking call, so the wait only makes the test
+	// cover the interesting path. The assertion after it holds either way.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
@@ -266,6 +269,7 @@ func (s *slowCtxReader) Read(b []byte) (int, error) {
 	if s.i >= len(s.r) {
 		return 0, context.Canceled
 	}
+	// Pacing of the fake source: keeps the reader loop busy in small steps.
 	time.Sleep(2 * time.Millisecond)
 	n := copy(b, s.r[s.i:s.i+min(160, len(s.r)-s.i)])
 	s.i += n

@@ -14,6 +14,7 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/icholy/digest"
+	"github.com/stretchr/testify/require"
 )
 
 // syncServerTxRecorder is siptest.NewServerTxRecorder with a mutex: the INVITE
@@ -327,11 +328,18 @@ func TestDigestAuthorizeDialogBadCredsWrites401(t *testing.T) {
 	authDone := make(chan error, 1)
 	go func() { authDone <- d.Authorize(srv, auth) }()
 
-	// Give the Authorize goroutine time to answer the transaction. The read
-	// of tx.Result below happens only after <-authDone, which synchronizes
-	// with the Respond write; polling Result concurrently would race with
-	// the transaction FSM inside the siptest recorder.
-	time.Sleep(time.Second)
+	// Wait for the 401 to land in the recorder rather than sleeping: the
+	// recorder is mutex-protected (see syncServerTxRecorder), so polling
+	// Result is race-free while the FSM goroutine writes into it. Once the
+	// response is recorded, WriteResponse only waits for ACK/TimerH.
+	require.Eventually(t, func() bool {
+		for _, r := range tx.Result() {
+			if r.StatusCode == sip.StatusUnauthorized {
+				return true
+			}
+		}
+		return false
+	}, 3*time.Second, 10*time.Millisecond, "401 was never written to the INVITE transaction")
 
 	// Terminate so the blocked WriteResponse (waiting on ACK/TimerH) returns.
 	tx.Terminate()
