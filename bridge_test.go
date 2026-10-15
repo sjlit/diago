@@ -102,6 +102,8 @@ func TestIntegrationBridging(t *testing.T) {
 	// a fixed port would make `-count>1` runs fail with address-in-use
 	// because the test never shuts its servers down.
 	var outboundPort atomic.Int32
+	// Same for the inbound leg: reported by the listener below.
+	var inboundPort int
 
 	// Create transaction users, as many as needed.
 	ua, _ := sipgo.NewUA(
@@ -112,7 +114,7 @@ func TestIntegrationBridging(t *testing.T) {
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
-			BindPort: 5090,
+			BindPort: 0,
 		},
 	))
 	require.NoError(t, err)
@@ -157,6 +159,7 @@ func TestIntegrationBridging(t *testing.T) {
 		return nil
 	})
 	assert.NoError(t, err)
+	inboundPort = tu.transports[0].BindPort
 
 	{
 		ua, _ := sipgo.NewUA()
@@ -209,7 +212,7 @@ func TestIntegrationBridging(t *testing.T) {
 		defer ua.Close()
 
 		dg := newDialer(t, ua)
-		dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: inboundPort})
 		require.NoError(t, err)
 		defer dialog.Close()
 
@@ -240,7 +243,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
-			BindPort: 5090,
+			BindPort: 0,
 		},
 	))
 	require.NoError(t, err)
@@ -274,6 +277,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		return nil
 	})
 	assert.NoError(t, err)
+	srvPort := tu.transports[0].BindPort
 
 	t.Run("bridge add remove", func(t *testing.T) {
 		ua, _ := sipgo.NewUA()
@@ -284,7 +288,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		dialogs := make([]*OutboundCall, 3)
 		for i := range 3 {
 			t.Log("Inviting", "i", i)
-			dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+			dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 			require.NoError(t, err)
 			dialogs[i] = dialog
 		}
@@ -334,11 +338,11 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 		bridgePtr.Store(bridge)
 
-		dialog1, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog1, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
 		defer dialog1.Hangup(dialog1.Context())
 
-		dialog2, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: 5090})
+		dialog2, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
 		defer dialog2.Hangup(dialog2.Context())
 

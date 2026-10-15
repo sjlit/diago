@@ -6,7 +6,9 @@ package diago
 import (
 	"context"
 	"net"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -117,12 +119,17 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	var mu sync.Mutex
 	var inviteReq *sip.Request
 	var byeReq *sip.Request
+	// Published by the test goroutine once the listener is ready, read by the
+	// serve handler when it builds the Contact (the handler can run on a SIP
+	// goroutine at any time, so the port needs an explicit synchronization
+	// edge - same pattern as bridge_test.go).
+	var srvPort atomic.Int32
 
 	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 	defer uaSrv.Close()
 
 	dgSrv, err := New(WithUserAgent(uaSrv),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 15091}),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				switch req.Method {
@@ -153,7 +160,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		customContact := &sip.ContactHeader{
 			// Reachable address so that the client can send BYE to it, but
 			// with custom user to prove the Contact was overridden
-			Address: sip.Uri{Scheme: "sip", User: "answered-custom", Host: "127.0.0.1", Port: 15091},
+			Address: sip.Uri{Scheme: "sip", User: "answered-custom", Host: "127.0.0.1", Port: int(srvPort.Load())},
 		}
 		if err := d.Answer(ctx,
 			WithContact(customContact),
@@ -169,6 +176,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+	srvPort.Store(int32(agentPort(t, dgSrv)))
 
 	uaCli, _ := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	defer uaCli.Close()
@@ -179,7 +187,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	dialog, err := dgCli.NewCall(sip.Uri{User: "server", Host: "127.0.0.1", Port: 15091})
+	dialog, err := dgCli.NewCall(sip.Uri{User: "server", Host: "127.0.0.1", Port: int(srvPort.Load())})
 	require.NoError(t, err)
 	defer dialog.Close()
 
@@ -257,7 +265,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	t.Run("server response options", func(t *testing.T) {
 		assert.Equal(t, "<ring>", ringAlertInfo)
 		// Custom contact user proves override (default would be ua name)
-		assert.Equal(t, "127.0.0.1:15091", okContact)
+		assert.Equal(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(int(srvPort.Load()))), okContact)
 		cont := dialog.InviteResponse.Contact()
 		require.NotNil(t, cont)
 		assert.Equal(t, "answered-custom", cont.Address.User)

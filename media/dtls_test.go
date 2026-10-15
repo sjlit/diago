@@ -16,25 +16,25 @@ import (
 )
 
 func TestDTLSSetup(t *testing.T) {
-	clientAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 15333}
-	serverAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 15444}
+	// Ephemeral binds: the DTLS conns need the peer address up front, so bind
+	// both listeners first and read their ports back.
+	serverListener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	defer serverListener.Close()
+	serverAddr := serverListener.LocalAddr().(*net.UDPAddr)
+
+	clientListener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	defer clientListener.Close()
+	clientAddr := clientListener.LocalAddr().(*net.UDPAddr)
+
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	listener, err := net.ListenUDP("udp", serverAddr)
-	require.NoError(t, err)
-	defer listener.Close()
-
-	serverConn, err := dtlsServer(listener, clientAddr, []tls.Certificate{testdata.ServerCertificate()})
+	serverConn, err := dtlsServer(serverListener, clientAddr, []tls.Certificate{testdata.ServerCertificate()})
 	require.NoError(t, err)
 	defer serverConn.Close()
 
-	listenerClient, err := net.ListenUDP("udp", clientAddr)
-	if err != nil {
-		panic(err)
-	}
-	defer listenerClient.Close()
-
-	clientConn, err := dtlsClient(listenerClient, serverAddr, []tls.Certificate{testdata.ClientCertificate()}, "")
+	clientConn, err := dtlsClient(clientListener, serverAddr, []tls.Certificate{testdata.ClientCertificate()}, "")
 	require.NoError(t, err)
 	defer clientConn.Close()
 

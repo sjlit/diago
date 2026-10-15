@@ -218,63 +218,57 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
-		defer ua.Close()
+	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
+	defer uaSrv.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15060,
-			},
-		))
-		require.NoError(t, err)
+	authServer := NewDigestServer()
+	// The handler runs on the library's serve goroutines and may still be
+	// running when the test returns (the client stops at early media), so
+	// it must not touch t: log through slog instead.
+	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		slog.Debug("Call received")
 
-		authServer := NewDigestServer()
-		// The handler runs on the library's serve goroutines and may still be
-		// running when the test returns (the client stops at early media), so
-		// it must not touch t: log through slog instead.
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-			slog.Debug("Call received")
-
-			err := authServer.AuthorizeDialog(d, DigestAuth{
-				Username: "test",
-				Password: "test123",
-				Realm:    "",
-				Expire:   10 * time.Second,
-			})
-			if err != nil {
-				slog.Error("Failed to authorize", "error", err)
-				return nil
-			}
-
-			d.Trying(ctx)
-			if err := d.ProgressMedia(ctx); err != nil {
-				slog.Error("Failed to progress media", "error", err)
-				return nil
-			}
-
-			// Write frame
-			w, _ := d.AudioWriter()
-			if _, err := w.Write(bytes.Repeat([]byte{0, 100}, 80)); err != nil {
-				slog.Error("Failed to write frame", "error", err)
-				return nil
-			}
-
-			if err := d.Answer(ctx); err != nil {
-				slog.Error("Failed to answer", "error", err)
-				return nil
-			}
-			// The old semantics ended the call when the handler returned;
-			// now the handler owns the teardown decision.
-			if err := d.Hangup(ctx); err != nil {
-				slog.Error("Failed to hangup", "error", err)
-			}
-			return nil
+		err := authServer.AuthorizeDialog(d, DigestAuth{
+			Username: "test",
+			Password: "test123",
+			Realm:    "",
+			Expire:   10 * time.Second,
 		})
-		require.NoError(t, err)
-	}
+		if err != nil {
+			slog.Error("Failed to authorize", "error", err)
+			return nil
+		}
+
+		d.Trying(ctx)
+		if err := d.ProgressMedia(ctx); err != nil {
+			slog.Error("Failed to progress media", "error", err)
+			return nil
+		}
+
+		// Write frame
+		w, _ := d.AudioWriter()
+		if _, err := w.Write(bytes.Repeat([]byte{0, 100}, 80)); err != nil {
+			slog.Error("Failed to write frame", "error", err)
+			return nil
+		}
+
+		if err := d.Answer(ctx); err != nil {
+			slog.Error("Failed to answer", "error", err)
+			return nil
+		}
+		// The old semantics ended the call when the handler returned;
+		// now the handler owns the teardown decision.
+		if err := d.Hangup(ctx); err != nil {
+			slog.Error("Failed to hangup", "error", err)
+		}
+		return nil
+	}, WithUserAgent(uaSrv), WithTransport(
+		Transport{
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 0,
+		},
+	))
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
@@ -285,7 +279,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15060})
+	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 	defer dialog.Close()
 
@@ -318,28 +312,23 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
-		defer ua.Close()
+	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
+	defer uaSrv.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15060,
-			},
-		))
-		require.NoError(t, err)
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-			t.Log("Call received")
-			d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
+	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		t.Log("Call received")
+		d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
 
-			}))
-			<-d.Context().Done()
-			return nil
-		})
-		require.NoError(t, err)
-	}
+		}))
+		<-d.Context().Done()
+		return nil
+	}, WithUserAgent(uaSrv), WithTransport(
+		Transport{
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 0,
+		},
+	))
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
@@ -350,7 +339,7 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15060})
+	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 
 	err = dialog.ReInvite(ctx)
@@ -373,37 +362,32 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	var mu sync.Mutex
 	var ackCount int
 
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
-		defer ua.Close()
+	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
+	defer uaSrv.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15110,
-			},
-		), WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
-			return func(req *sip.Request, tx sip.ServerTransaction) {
-				if req.Method == sip.ACK {
-					mu.Lock()
-					ackCount++
-					mu.Unlock()
-				}
-				next(req, tx)
-			}
-		}))
-		require.NoError(t, err)
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-			if err := d.Answer(ctx); err != nil {
-				t.Log("answer failed", err)
-				return nil
-			}
-			<-d.Context().Done()
+	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		if err := d.Answer(ctx); err != nil {
+			t.Log("answer failed", err)
 			return nil
-		})
-		require.NoError(t, err)
-	}
+		}
+		<-d.Context().Done()
+		return nil
+	}, WithUserAgent(uaSrv), WithTransport(
+		Transport{
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 0,
+		},
+	), WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+		return func(req *sip.Request, tx sip.ServerTransaction) {
+			if req.Method == sip.ACK {
+				mu.Lock()
+				ackCount++
+				mu.Unlock()
+			}
+			next(req, tx)
+		}
+	}))
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
@@ -414,7 +398,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15110})
+	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 
 	// dg.Invite auto-ACKs the initial INVITE; wait for that ACK to land and
@@ -454,28 +438,23 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
-		defer ua.Close()
+	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
+	defer uaSrv.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15066,
-			},
-		))
-		require.NoError(t, err)
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-			t.Log("Call received")
-			d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
+	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		t.Log("Call received")
+		d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
 
-			}))
-			<-d.Context().Done()
-			return nil
-		})
-		require.NoError(t, err)
-	}
+		}))
+		<-d.Context().Done()
+		return nil
+	}, WithUserAgent(uaSrv), WithTransport(
+		Transport{
+			Network:  "udp",
+			BindHost: "127.0.0.1",
+			BindPort: 0,
+		},
+	))
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
@@ -486,7 +465,7 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15066})
+	dialog, err := dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 
 	// Update now with full media
@@ -512,20 +491,13 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	// The serve handler runs on library goroutines: it must not call require.
 	// Failures travel back through this channel instead.
 	handlerErr := make(chan error, 1)
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
-		defer ua.Close()
+	var srvPort int
+	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
+	defer uaSrv.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15079,
-			},
-		))
-		require.NoError(t, err)
+	{
 		digServer := NewDigestServer()
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		_, srvPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 			t.Log("New INVITE")
 			if err := digServer.AuthorizeDialog(d, DigestAuth{
 				Username: "test",
@@ -569,8 +541,13 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 
 			<-ctx.Done()
 			return nil
-		})
-		require.NoError(t, err)
+		}, WithUserAgent(uaSrv), WithTransport(
+			Transport{
+				Network:  "udp",
+				BindHost: "127.0.0.1",
+				BindPort: 0,
+			},
+		))
 	}
 
 	ua, _ := sipgo.NewUA()
@@ -584,7 +561,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15079})
+	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 	err = dialog.Invite(ctx,
 		WithOnMediaUpdate(func(d *Media) {}),
@@ -656,6 +633,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 	lock := sync.Mutex{}
 	requests := []sip.Message{}
 	responses := []sip.Message{}
+	var srvPort int
 
 	{
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
@@ -666,17 +644,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 			requests = append(requests, msg)
 		})
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15060,
-			},
-		),
-		)
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		_, srvPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 			t.Log("Call received")
 			if err := d.Answer(ctx); err != nil {
 				t.Log("Error on answer", err)
@@ -684,8 +652,13 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 			}
 			<-d.Context().Done()
 			return nil
-		})
-		require.NoError(t, err)
+		}, WithUserAgent(ua), WithTransport(
+			Transport{
+				Network:  "udp",
+				BindHost: "127.0.0.1",
+				BindPort: 0,
+			},
+		))
 	}
 
 	ua, _ := sipgo.NewUA()
@@ -704,7 +677,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Media negotiaton should fail and call should be terminated
-	_, err = dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: 15060}, WithOnResponse(
+	_, err = dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort}, WithOnResponse(
 		func(res *sip.Response) error {
 			// Fake Bad SDP
 			res.SetBody([]byte("Bad SDP"))
@@ -755,21 +728,12 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var transferorPort, uasPort int
 	{
 		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 		defer ua.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15071,
-				ID:       "udp",
-			},
-		))
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		_, transferorPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 			t.Log("Call received")
 			d.Answer(ctx, WithOnRefer(func(referDialog *OutboundCall) error {
 				if err := referDialog.Invite(referDialog.Context()); err != nil {
@@ -782,8 +746,14 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 			}))
 			<-d.Context().Done()
 			return nil
-		})
-		require.NoError(t, err)
+		}, WithUserAgent(ua), WithTransport(
+			Transport{
+				Network:  "udp",
+				BindHost: "127.0.0.1",
+				BindPort: 0,
+				ID:       "udp",
+			},
+		))
 	}
 
 	// UAS that accepts REFER
@@ -791,16 +761,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 15072,
-			},
-		))
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		_, uasPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 			t.Log("Call INVITE due to REFER received")
 			switch d.ToUser() {
 			case "busy":
@@ -815,33 +776,34 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 
 			<-d.Context().Done()
 			return nil
-		})
-		require.NoError(t, err)
+		}, WithUserAgent(ua), WithTransport(
+			Transport{
+				Network:  "udp",
+				BindHost: "127.0.0.1",
+				BindPort: 0,
+			},
+		))
 	}
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := New(WithUserAgent(ua), WithTransport(
+	dg, _ := servingAgent(t, ctx, nil, WithUserAgent(ua), WithTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
-			BindPort: 15070,
+			BindPort: 0,
 		},
 	))
-	require.NoError(t, err)
-
-	err = dg.ServeBackground(ctx, nil)
-	require.NoError(t, err)
 
 	t.Run("succesfull", func(t *testing.T) {
-		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: 15071})
+		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: transferorPort})
 		require.NoError(t, err)
 		defer d.Close()
 		defer d.Hangup(d.Context())
 
 		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+		err = d.Refer(d.Context(), sip.Uri{Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
 			referState <- statusCode
 		}))
 		require.NoError(t, err)
@@ -851,13 +813,13 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	})
 
 	t.Run("unreachable refer", func(t *testing.T) {
-		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: 15071})
+		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: transferorPort})
 		require.NoError(t, err)
 		defer d.Close()
 		defer d.Hangup(d.Context())
 
 		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+		err = d.Refer(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
 			referState <- statusCode
 		}))
 		require.NoError(t, err)
@@ -867,13 +829,13 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	})
 
 	t.Run("busy refer", func(t *testing.T) {
-		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: 15071})
+		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: transferorPort})
 		require.NoError(t, err)
 		defer d.Close()
 		defer d.Hangup(d.Context())
 
 		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: 15072}, WithOnReferNotify(func(statusCode int) {
+		err = d.Refer(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
 			referState <- statusCode
 		}))
 		require.NoError(t, err)

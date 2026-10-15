@@ -43,7 +43,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	defer ua.Close()
 
 	uas, err := New(WithUserAgent(ua),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 15082}),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 		WithMediaConfig(MediaConfig{
 			Codecs:      []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 			MusicOnHold: mohTone,
@@ -60,6 +60,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+	uasPort := agentPort(t, uas)
 
 	ua2, _ := sipgo.NewUA()
 	defer ua2.Close()
@@ -71,7 +72,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 		return nil
 	}))
 
-	dialog, err := caller.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15082})
+	dialog, err := caller.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: uasPort})
 	require.NoError(t, err)
 	defer dialog.Hangup(ctx)
 
@@ -125,7 +126,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 	defer ua.Close()
 
 	uas, err := New(WithUserAgent(ua),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 15084}),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 	)
 	require.NoError(t, err)
 	err = uas.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
@@ -149,7 +150,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 	defer ua2.Close()
 	caller := newDialer(t, ua2)
 
-	dialog, err := caller.DialURI(ctx, sip.Uri{User: "bob", Host: "127.0.0.1", Port: 15084})
+	dialog, err := caller.DialURI(ctx, sip.Uri{User: "bob", Host: "127.0.0.1", Port: agentPort(t, uas)})
 	require.NoError(t, err)
 	defer dialog.Hangup(ctx)
 

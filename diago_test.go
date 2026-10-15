@@ -479,27 +479,12 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		NumChannels: 1,
 	}
 
+	var srvPort int
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(WithUserAgent(ua),
-			WithTransport(
-				Transport{
-					ID:       "tcp",
-					Network:  "tcp",
-					BindHost: "127.0.0.1",
-					BindPort: 15066,
-				},
-			),
-			WithMediaConfig(
-				MediaConfig{
-					Codecs: []media.Codec{l16Codec, media.CodecAudioAlaw},
-				},
-			))
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		_, srvPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				return err
@@ -509,8 +494,20 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
-		})
-		require.NoError(t, err)
+		}, WithUserAgent(ua),
+			WithTransport(
+				Transport{
+					ID:       "tcp",
+					Network:  "tcp",
+					BindHost: "127.0.0.1",
+					BindPort: 0,
+				},
+			),
+			WithMediaConfig(
+				MediaConfig{
+					Codecs: []media.Codec{l16Codec, media.CodecAudioAlaw},
+				},
+			))
 	}
 
 	ua, _ := sipgo.NewUA()
@@ -530,7 +527,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		))
 	require.NoError(t, err)
 
-	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15066}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	l16Audio := bytes.Repeat([]byte{0, 16, 96, 0}, l16Codec.Samples16()/4)
@@ -549,27 +546,12 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 	// TODO: USE TLS as transport for more correct test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var srvPort int
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(WithUserAgent(ua),
-			WithMediaProfile("secure", MediaConfig{
-				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
-				SRTP:   SRTPConfig{Mode: SecureRTPSDES}, // This enables SRTP
-			}),
-			WithTransport(
-				Transport{
-					ID:       "tcp",
-					Network:  "tcp",
-					BindHost: "127.0.0.1",
-					BindPort: 15443,
-					Profile:  "secure",
-				},
-			))
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+		_, srvPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 			d.Trying(ctx)
 			if err := d.Answer(ctx); err != nil {
 				return err
@@ -579,8 +561,20 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
-		})
-		require.NoError(t, err)
+		}, WithUserAgent(ua),
+			WithMediaProfile("secure", MediaConfig{
+				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				SRTP:   SRTPConfig{Mode: SecureRTPSDES}, // This enables SRTP
+			}),
+			WithTransport(
+				Transport{
+					ID:       "tcp",
+					Network:  "tcp",
+					BindHost: "127.0.0.1",
+					BindPort: 0,
+					Profile:  "secure",
+				},
+			))
 	}
 
 	ua, _ := sipgo.NewUA()
@@ -595,13 +589,13 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 				ID:       "tcp",
 				Network:  "tcp",
 				BindHost: "127.0.0.1",
-				BindPort: 15441,
+				BindPort: 0,
 				Profile:  "secure",
 			},
 		))
 	require.NoError(t, err)
 
-	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 15443}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	ulaw := make([]byte, 160)
@@ -623,11 +617,23 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 	// Enable with MediaConfig{SRTP: SRTPConfig{DTLS: media.DTLSConfig{Debug: true}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var srvPort int
 	{
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(WithUserAgent(ua),
+		_, srvPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
+			d.Trying(ctx)
+			if err := d.Answer(ctx); err != nil {
+				return err
+			}
+
+			err := d.EchoContext(ctx)
+			slog.Info("Echo finished with", "error", err)
+
+			return nil
+		}, WithUserAgent(ua),
 			WithMediaProfile("secure", MediaConfig{
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 				SRTP: SRTPConfig{ // This enables SRTP DTLS
@@ -643,24 +649,10 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 					ID:       "tcp",
 					Network:  "tcp",
 					BindHost: "127.0.0.1",
-					BindPort: 16443,
+					BindPort: 0,
 					Profile:  "secure",
 				},
 			))
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
-			d.Trying(ctx)
-			if err := d.Answer(ctx); err != nil {
-				return err
-			}
-
-			err := d.EchoContext(ctx)
-			slog.Info("Echo finished with", "error", err)
-
-			return nil
-		})
-		require.NoError(t, err)
 	}
 
 	ua, _ := sipgo.NewUA()
@@ -681,13 +673,13 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				ID:       "tcp",
 				Network:  "tcp",
 				BindHost: "127.0.0.1",
-				BindPort: 16441,
+				BindPort: 0,
 				Profile:  "secure",
 			},
 		))
 	require.NoError(t, err)
 
-	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: 16443}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, WithDialogTransport("tcp"))
 	require.NoError(t, err)
 
 	ulaw := make([]byte, 160)
@@ -696,7 +688,6 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 	reader := bytes.NewBuffer(ulaw)
 	r, _ := d.AudioReader()
 	w, _ := d.AudioWriter()
-	time.Sleep(1 * time.Second)
 	t.Log("---------------------------Writing media")
 	_, err = media.Copy(reader, w)
 	require.ErrorIs(t, err, io.EOF)

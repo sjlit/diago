@@ -48,10 +48,13 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 		wg.Wait()
 	})
 
+	// Ephemeral bind: a fixed 5060 collides with any SIP server already
+	// listening on the host (ex. a local Kamailio/Asterisk on 0.0.0.0:5060
+	// also blocks a bind on 127.1.1.100:5060).
 	tran := Transport{
 		Network:  "udp",
 		BindHost: "127.1.1.100",
-		BindPort: 5060,
+		BindPort: 0,
 	}
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
@@ -88,6 +91,8 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 		return nil
 	})
 	require.NoError(t, err)
+	srvPort := srv.transports[0].BindPort
+	require.NotZero(t, srvPort)
 
 	var maxInvitesPerSec chan struct{}
 	maxInvitesPerSec = make(chan struct{}, 100)
@@ -130,7 +135,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 						maxInvitesPerSec <- struct{}{}
 					}
 					dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					dialog, err := phone.DialURI(dialCtx, sip.Uri{Host: tran.BindHost, Port: tran.BindPort, User: "dialer"})
+					dialog, err := phone.DialURI(dialCtx, sip.Uri{Host: tran.BindHost, Port: srvPort, User: "dialer"})
 					cancel()
 
 					require.NoError(t, err)

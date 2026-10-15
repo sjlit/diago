@@ -138,28 +138,24 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 		},
 	}
 
-	for i, tc := range cases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			srvPort := 15210 + i*2
-			cliPort := srvPort + 1
-
 			uaSrv, err := sipgo.NewUA(sipgo.WithUserAgent("server"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaSrv.Close() })
-			dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
-				Network: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
-			}))
-			require.NoError(t, err)
-			require.NoError(t, dgSrv.ServeBackground(ctx, tc.handler))
+			_, srvPort := servingAgent(t, ctx, tc.handler,
+				WithUserAgent(uaSrv),
+				WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+			)
 
 			uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaCli.Close() })
 			dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
-				Network: "udp", BindHost: "127.0.0.1", BindPort: cliPort,
+				Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 			}))
 			require.NoError(t, err)
 
@@ -183,28 +179,26 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	t.Cleanup(func() { uaSrv.Close() })
 
 	handlerCtxErr := make(chan error, 1)
-	dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
-		Network: "udp", BindHost: "127.0.0.1", BindPort: 15230,
-	}))
-	require.NoError(t, err)
-	require.NoError(t, dgSrv.ServeBackground(ctx, func(hctx context.Context, d *InboundCall) error {
+	_, srvPort := servingAgent(t, ctx, func(hctx context.Context, d *InboundCall) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
 		}
 		<-hctx.Done()
 		handlerCtxErr <- hctx.Err()
 		return nil
+	}, WithUserAgent(uaSrv), WithTransport(Transport{
+		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
 	dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
-		Network: "udp", BindHost: "127.0.0.1", BindPort: 15231,
+		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
 
-	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15230})
+	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 	defer dlg.Close()
 
@@ -228,16 +222,14 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaSrv.Close() })
 
-	dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
-		Network: "udp", BindHost: "127.0.0.1", BindPort: 15240,
-	}))
-	require.NoError(t, err)
-	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
 		}
 		// The call was answered: the error must turn into BYE + Reason header.
 		return ErrBusy
+	}, WithUserAgent(uaSrv), WithTransport(Transport{
+		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 
 	var mu sync.Mutex
@@ -246,7 +238,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
 	dgCli, err := New(WithUserAgent(uaCli),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 15241}),
+		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				if req.Method == sip.BYE {
@@ -261,7 +253,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, dgCli.ServeBackground(ctx, nil))
 
-	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: 15240})
+	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
 	defer dlg.Close()
 
