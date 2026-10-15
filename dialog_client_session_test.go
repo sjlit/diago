@@ -728,126 +728,63 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var transferorPort, uasPort int
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
-		defer ua.Close()
-
-		_, transferorPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
-			t.Log("Call received")
-			d.Answer(ctx, WithOnRefer(func(referDialog *OutboundCall) error {
-				if err := referDialog.Invite(referDialog.Context()); err != nil {
-					return err
-				}
-				if err := referDialog.Ack(ctx); err != nil {
-					return err
-				}
-				return referDialog.Hangup(referDialog.Context())
-			}))
-			<-d.Context().Done()
-			return nil
-		}, WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 0,
-				ID:       "udp",
-			},
-		))
-	}
-
-	// UAS that accepts REFER
-	{
-		ua, _ := sipgo.NewUA()
-		defer ua.Close()
-
-		_, uasPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
-			t.Log("Call INVITE due to REFER received")
-			switch d.ToUser() {
-			case "busy":
-				d.Respond(sip.StatusBusyHere, "Busy Here", nil)
-				return nil
-			case "noanswer":
-				d.Ringing(ctx)
-				return nil
-			default:
-				d.Answer(ctx)
+	// Client side of the REFER flow: the transferor answers with WithOnRefer
+	// and the test issues REFER on the resulting OutboundCall.
+	env := newReferEnv(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		t.Log("Call received")
+		d.Answer(ctx, WithOnRefer(func(referDialog *OutboundCall) error {
+			if err := referDialog.Invite(referDialog.Context()); err != nil {
+				return err
 			}
-
-			<-d.Context().Done()
-			return nil
-		}, WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 0,
-			},
-		))
-	}
-
-	ua, _ := sipgo.NewUA()
-	defer ua.Close()
-
-	dg, _ := servingAgent(t, ctx, nil, WithUserAgent(ua), WithTransport(
-		Transport{
-			Network:  "udp",
-			BindHost: "127.0.0.1",
-			BindPort: 0,
-		},
-	))
+			if err := referDialog.Ack(ctx); err != nil {
+				return err
+			}
+			return referDialog.Hangup(referDialog.Context())
+		}))
+		<-d.Context().Done()
+		return nil
+	})
 
 	t.Run("succesfull", func(t *testing.T) {
-		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: transferorPort})
+		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 		defer d.Close()
 		defer d.Hangup(d.Context())
 
-		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
-			referState <- statusCode
-		}))
+		notify := newReferNotifier()
+		err = d.Refer(d.Context(), env.uasTarget(""), notify.option())
 		require.NoError(t, err)
 
-		assert.Equal(t, 100, <-referState)
-		assert.Equal(t, 200, <-referState)
+		notify.expect(t, 100, 200)
 	})
 
 	t.Run("unreachable refer", func(t *testing.T) {
-		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: transferorPort})
+		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 		defer d.Close()
 		defer d.Hangup(d.Context())
 
-		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
-			referState <- statusCode
-		}))
+		notify := newReferNotifier()
+		err = d.Refer(d.Context(), env.uasTarget("noanswer"), notify.option())
 		require.NoError(t, err)
 
-		assert.Equal(t, 100, <-referState)
-		assert.Equal(t, sip.StatusTemporarilyUnavailable, <-referState)
+		notify.expect(t, 100, sip.StatusTemporarilyUnavailable)
 	})
 
 	t.Run("busy refer", func(t *testing.T) {
-		d, err := dg.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: transferorPort})
+		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 		defer d.Close()
 		defer d.Hangup(d.Context())
 
-		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
-			referState <- statusCode
-		}))
+		notify := newReferNotifier()
+		err = d.Refer(d.Context(), env.uasTarget("busy"), notify.option())
 		require.NoError(t, err)
 
-		assert.Equal(t, 100, <-referState)
-		assert.Equal(t, sip.StatusBusyHere, <-referState)
+		notify.expect(t, 100, sip.StatusBusyHere)
 	})
 }
 
-// A malformed 2xx without Contact must not panic Refer: the missing remote
-// target is reported as an error and Referred-By falls back to the Contact of
-// our own INVITE.
 func TestOutboundCallReferMissingContact(t *testing.T) {
 	inviteReq, err := diagotestSafeNewRequest(sip.INVITE, sip.Uri{Scheme: "sip", Host: "127.0.0.1", User: "bob"})
 	require.NoError(t, err)

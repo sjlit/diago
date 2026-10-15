@@ -289,29 +289,16 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var dialer *Agent
-	// Port of the agent that receives the initial INVITE and issues the REFER.
-	var transferorPort int
-	// Port of the UAS that answers the call created by a REFER.
-	var uasPort int
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("dialer"))
-		defer ua.Close()
-
-		// Run listener to accepte reinvites, but it should not receive any request
-		dg, _ := servingAgent(t, ctx, nil, WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 0,
-				ID:       "udp",
-			},
-		))
-		dialer = dg
-	}
+	waitDialog := make(chan *InboundCall)
+	env := newReferEnv(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		t.Log("Call received")
+		waitDialog <- d
+		<-d.Context().Done()
+		return nil
+	})
 
 	dialCall := func() {
-		dialog, err := dialer.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: transferorPort})
+		dialog, err := env.dialer.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 
 		go func() {
@@ -337,52 +324,6 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		}()
 	}
 
-	// UAS that accepts REFER
-	{
-		ua, _ := sipgo.NewUA()
-		defer ua.Close()
-
-		_, uasPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
-			t.Log("Call INVITE due to REFER received")
-			switch d.ToUser() {
-			case "busy":
-				d.Respond(sip.StatusBusyHere, "Busy Here", nil)
-				return nil
-			case "noanswer":
-				d.Ringing(ctx)
-				return nil
-			default:
-				d.Answer(ctx)
-			}
-
-			<-d.Context().Done()
-			return nil
-		}, WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 0,
-			},
-		))
-	}
-
-	ua, _ := sipgo.NewUA()
-	defer ua.Close()
-
-	waitDialog := make(chan *InboundCall)
-	_, transferorPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
-		t.Log("Call received")
-		waitDialog <- d
-		<-d.Context().Done()
-		return nil
-	}, WithUserAgent(ua), WithTransport(
-		Transport{
-			Network:  "udp",
-			BindHost: "127.0.0.1",
-			BindPort: 0,
-		},
-	))
-
 	t.Run("successfull", func(t *testing.T) {
 		dialCall()
 		d := <-waitDialog
@@ -391,14 +332,11 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		err := d.Answer(ctx)
 		require.NoError(t, err)
 
-		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
-			referState <- statusCode
-		}))
+		notify := newReferNotifier()
+		err = d.Refer(d.Context(), env.uasTarget(""), notify.option())
 		require.NoError(t, err)
 
-		assert.Equal(t, 100, <-referState)
-		assert.Equal(t, 200, <-referState)
+		notify.expect(t, 100, 200)
 	})
 
 	t.Run("unreachable refer", func(t *testing.T) {
@@ -409,14 +347,11 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		err := d.Answer(ctx)
 		require.NoError(t, err)
 
-		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{User: "noanswer", Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
-			referState <- statusCode
-		}))
+		notify := newReferNotifier()
+		err = d.Refer(d.Context(), env.uasTarget("noanswer"), notify.option())
 		require.NoError(t, err)
 
-		assert.Equal(t, 100, <-referState)
-		assert.Equal(t, sip.StatusTemporarilyUnavailable, <-referState)
+		notify.expect(t, 100, sip.StatusTemporarilyUnavailable)
 	})
 
 	t.Run("busy refer", func(t *testing.T) {
@@ -427,14 +362,11 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		err := d.Answer(ctx)
 		require.NoError(t, err)
 
-		referState := make(chan int)
-		err = d.Refer(d.Context(), sip.Uri{User: "busy", Host: "127.0.0.1", Port: uasPort}, WithOnReferNotify(func(statusCode int) {
-			referState <- statusCode
-		}))
+		notify := newReferNotifier()
+		err = d.Refer(d.Context(), env.uasTarget("busy"), notify.option())
 		require.NoError(t, err)
 
-		assert.Equal(t, 100, <-referState)
-		assert.Equal(t, sip.StatusBusyHere, <-referState)
+		notify.expect(t, 100, sip.StatusBusyHere)
 	})
 }
 
@@ -472,6 +404,108 @@ func TestIntegrationDialogServerPlayback(t *testing.T) {
 // without SDP, 200 OK carrying our offer, ACK carrying the remote answer.
 // AnswerLate returns only after the ACK was processed, so media must be fully
 // negotiated (RemoteSDP applied) and monitoring started when it returns.
+// waitUDPBound blocks until a listener is up on addr. sipgo starts its
+// listeners in a background goroutine and exposes no ready signal, so tests
+// that talk to the socket right after ListenAndServe need a probe: binding the
+// same UDP address succeeds until the listener takes it.
+func waitUDPBound(t *testing.T, addr string) {
+	t.Helper()
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		conn, err := net.ListenUDP("udp", udpAddr)
+		if err != nil {
+			return true // address in use: the listener under test is up
+		}
+		conn.Close()
+		return false
+	}, 3*time.Second, 10*time.Millisecond, "no listener came up on %s", addr)
+}
+
+// lateOfferUAC is a raw sipgo user agent that drives a late-offer call: diago
+// clients always send early offers, so it sends the INVITE without a body and
+// the answer travels in the ACK it builds. The two late-offer tests need the
+// same scaffolding - listener, client, INVITE and the wait for the 200 OK - and
+// differ only in what they put into the ACK.
+type lateOfferUAC struct {
+	cli     *sipgo.Client
+	invite  *sip.Request
+	res200  *sip.Response
+	target  sip.Uri
+	addr    string
+	rtpSock *net.UDPConn
+	byeNum  atomic.Int32
+}
+
+// rtpPort is the local RTP endpoint the answer SDP must reference.
+func (u *lateOfferUAC) rtpPort() int {
+	return u.rtpSock.LocalAddr().(*net.UDPAddr).Port
+}
+
+// startLateOfferUAC starts the UAC against the agent on srvPort and returns
+// once its 200 OK carrying the offer has arrived.
+func startLateOfferUAC(t *testing.T, ctx context.Context, srvPort int, userAgent string) *lateOfferUAC {
+	t.Helper()
+	u := &lateOfferUAC{}
+
+	uacPort := freeUDPPort(t)
+	u.addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(uacPort))
+
+	ua, _ := sipgo.NewUA(sipgo.WithUserAgent(userAgent))
+	t.Cleanup(func() { ua.Close() })
+
+	srv, err := sipgo.NewServer(ua)
+	require.NoError(t, err)
+	srv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
+		u.byeNum.Add(1)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
+	})
+	go func() {
+		if err := srv.ListenAndServe(ctx, "udp", u.addr); err != nil {
+			t.Log("UAC listener stopped", err)
+		}
+	}()
+	waitUDPBound(t, u.addr)
+
+	cli, err := sipgo.NewClient(ua, sipgo.WithClientAddr(u.addr))
+	require.NoError(t, err)
+	u.cli = cli
+
+	// Our RTP endpoint referenced by the answer SDP
+	rtpSock, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	t.Cleanup(func() { rtpSock.Close() })
+	u.rtpSock = rtpSock
+
+	recipient := sip.Uri{User: "service", Host: "127.0.0.1", Port: srvPort}
+	invite := sip.NewRequest(sip.INVITE, recipient)
+	invite.AppendHeader(sip.NewHeader("Contact", "<sip:"+u.addr+">"))
+	require.NoError(t, sipgo.ClientRequestBuild(cli, invite))
+	u.invite = invite
+
+	tx, err := cli.TransactionRequest(ctx, invite)
+	require.NoError(t, err)
+
+	deadline := time.After(10 * time.Second)
+	for u.res200 == nil {
+		select {
+		case res := <-tx.Responses():
+			if res.IsSuccess() {
+				u.res200 = res
+			}
+		case <-deadline:
+			t.Fatal("no 200 OK for late offer")
+		}
+	}
+	require.NotEmpty(t, u.res200.Body(), "200 OK must carry our SDP offer")
+
+	u.target = recipient
+	if c := u.res200.Contact(); c != nil {
+		u.target = c.Address
+	}
+	return u
+}
+
 func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -479,110 +513,47 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 	waitDialog := make(chan *InboundCall, 1)
 	answerLateErr := make(chan error, 1)
 	audioGot := make(chan int, 1)
-	var srvPort int
-	// Raw sipgo UAC needs a fixed address for its listener and client.
-	uacPort := freeUDPPort(t)
 
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uas"))
-		defer ua.Close()
+	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uas"))
+	defer uaSrv.Close()
 
-		_, srvPort = servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
-			waitDialog <- d
-			// AnswerLate starts the 200 OK; WaitAck blocks until the ACK is
-			// processed (RemoteSDP applied).
-			if err := d.AnswerLate(ctx); err != nil {
-				answerLateErr <- err
-				return nil
-			}
-			answerLateErr <- d.WaitAck(ctx)
-
-			reader, err := d.AudioReader()
-			if err != nil {
-				t.Log("AudioReader failed", err)
-				return nil
-			}
-			go func() {
-				buf := make([]byte, media.RTPBufSize)
-				n, err := reader.Read(buf)
-				if err != nil {
-					return
-				}
-				audioGot <- n
-			}()
-			<-d.Context().Done()
+	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
+		waitDialog <- d
+		// AnswerLate starts the 200 OK; WaitAck blocks until the ACK is
+		// processed (RemoteSDP applied).
+		if err := d.AnswerLate(ctx); err != nil {
+			answerLateErr <- err
 			return nil
-		}, WithUserAgent(ua), WithTransport(
-			Transport{
-				Network:  "udp",
-				BindHost: "127.0.0.1",
-				BindPort: 0,
-			},
-		))
-	}
-
-	// Raw sipgo UAC: diago clients always send early offers, so the late
-	// offer flow needs INVITE without body and ACK with the answer.
-	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("lateoffer-uac"))
-	defer ua.Close()
-
-	uacAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(uacPort))
-	srv, err := sipgo.NewServer(ua)
-	require.NoError(t, err)
-	srv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
-		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
-	})
-	go func() {
-		if err := srv.ListenAndServe(ctx, "udp", uacAddr); err != nil {
-			t.Log("UAC listener stopped", err)
 		}
-	}()
-	time.Sleep(100 * time.Millisecond)
+		answerLateErr <- d.WaitAck(ctx)
 
-	cli, err := sipgo.NewClient(ua, sipgo.WithClientAddr(uacAddr))
-	require.NoError(t, err)
-
-	// Our RTP endpoint referenced by the answer SDP
-	rtpSock, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	require.NoError(t, err)
-	defer rtpSock.Close()
-	rtpPort := rtpSock.LocalAddr().(*net.UDPAddr).Port
-
-	recipient := sip.Uri{User: "service", Host: "127.0.0.1", Port: srvPort}
-	invite := sip.NewRequest(sip.INVITE, recipient)
-	invite.AppendHeader(sip.NewHeader("Contact", "<sip:"+uacAddr+">"))
-	require.NoError(t, sipgo.ClientRequestBuild(cli, invite))
-
-	tx, err := cli.TransactionRequest(ctx, invite)
-	require.NoError(t, err)
-
-	var res200 *sip.Response
-	deadline := time.After(10 * time.Second)
-	for res200 == nil {
-		select {
-		case res := <-tx.Responses():
-			if res.IsSuccess() {
-				res200 = res
+		reader, err := d.AudioReader()
+		if err != nil {
+			t.Log("AudioReader failed", err)
+			return nil
+		}
+		go func() {
+			buf := make([]byte, media.RTPBufSize)
+			n, err := reader.Read(buf)
+			if err != nil {
+				return
 			}
-		case <-deadline:
-			t.Fatal("no 200 OK received for late offer")
-		}
-	}
-	require.NotEmpty(t, res200.Body(), "200 OK must carry our SDP offer")
+			audioGot <- n
+		}()
+		<-d.Context().Done()
+		return nil
+	}, WithUserAgent(uaSrv), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+
+	uac := startLateOfferUAC(t, ctx, srvPort, "lateoffer-uac")
 
 	// Target the exact connection line from the offer (it may be a non-loopback
 	// interface IP resolved for the media session).
 	offer := sdp.SessionDescription{}
-	require.NoError(t, sdp.Unmarshal(res200.Body(), &offer))
+	require.NoError(t, sdp.Unmarshal(uac.res200.Body(), &offer))
 	offerMd, err := offer.MediaDescription("audio")
 	require.NoError(t, err)
 	offerCi, err := offer.ConnectionInformationFor("audio")
 	require.NoError(t, err)
-
-	target := recipient
-	if res200.Contact() != nil {
-		target = res200.Contact().Address
-	}
 
 	answerSDP := fmt.Sprintf(`v=0
 o=- 77 2 IN IP4 127.0.0.1
@@ -595,24 +566,24 @@ a=rtpmap:8 PCMA/8000
 a=rtpmap:101 telephone-event/8000
 a=fmtp:101 0-16
 a=sendrecv
-`, rtpPort)
+`, uac.rtpPort())
 
 	// ACK carrying the answer (same construction as sipgo's newAckRequestUAC)
-	ack := sip.NewRequest(sip.ACK, target)
-	ack.SipVersion = invite.SipVersion
-	ack.AppendHeader(sip.HeaderClone(invite.From()))
-	ack.AppendHeader(sip.HeaderClone(res200.To()))
-	ack.AppendHeader(sip.HeaderClone(invite.CallID()))
-	ack.AppendHeader(sip.HeaderClone(invite.CSeq()))
+	ack := sip.NewRequest(sip.ACK, uac.target)
+	ack.SipVersion = uac.invite.SipVersion
+	ack.AppendHeader(sip.HeaderClone(uac.invite.From()))
+	ack.AppendHeader(sip.HeaderClone(uac.res200.To()))
+	ack.AppendHeader(sip.HeaderClone(uac.invite.CallID()))
+	ack.AppendHeader(sip.HeaderClone(uac.invite.CSeq()))
 	cseq := ack.CSeq()
 	cseq.MethodName = sip.ACK
 	maxFwd := sip.MaxForwardsHeader(70)
 	ack.AppendHeader(&maxFwd)
-	ack.AppendHeader(sip.HeaderClone(invite.Contact()))
+	ack.AppendHeader(sip.HeaderClone(uac.invite.Contact()))
 	ack.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	ack.SetBody([]byte(answerSDP))
-	ack.SetTransport(invite.Transport())
-	require.NoError(t, cli.WriteRequest(ack))
+	ack.SetTransport(uac.invite.Transport())
+	require.NoError(t, uac.cli.WriteRequest(ack))
 
 	select {
 	case err := <-answerLateErr:
@@ -633,27 +604,23 @@ a=sendrecv
 		pkt.Header.Timestamp = uint32(i+1) * 160
 		data, err := pkt.Marshal()
 		require.NoError(t, err)
-		_, err = rtpSock.WriteToUDP(data, udpAddr)
+		_, err = uac.rtpSock.WriteToUDP(data, udpAddr)
 		require.NoError(t, err)
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	select {
-	case n := <-audioGot:
-		require.Equal(t, 160, n, "audio reader must receive RTP payload")
-	case <-time.After(5 * time.Second):
-		t.Fatal("no RTP payload received through audio reader")
-	}
+	n := recvWithin(t, audioGot, 5*time.Second)
+	require.Equal(t, 160, n, "audio reader must receive RTP payload")
 
 	// Terminate with BYE; the handler and the wrapper hangup unwind cleanly.
-	bye := sip.NewRequest(sip.BYE, target)
-	bye.AppendHeader(sip.HeaderClone(invite.From()))
-	bye.AppendHeader(sip.HeaderClone(res200.To()))
-	bye.AppendHeader(sip.HeaderClone(invite.CallID()))
-	byeCSeq := sip.CSeqHeader{SeqNo: invite.CSeq().SeqNo + 1, MethodName: sip.BYE}
+	bye := sip.NewRequest(sip.BYE, uac.target)
+	bye.AppendHeader(sip.HeaderClone(uac.invite.From()))
+	bye.AppendHeader(sip.HeaderClone(uac.res200.To()))
+	bye.AppendHeader(sip.HeaderClone(uac.invite.CallID()))
+	byeCSeq := sip.CSeqHeader{SeqNo: uac.invite.CSeq().SeqNo + 1, MethodName: sip.BYE}
 	bye.AppendHeader(&byeCSeq)
-	bye.SetTransport(invite.Transport())
-	require.NoError(t, cli.WriteRequest(bye))
+	bye.SetTransport(uac.invite.Transport())
+	require.NoError(t, uac.cli.WriteRequest(bye))
 }
 
 // A replayed ACK can be dispatched concurrently; notifyAck must not panic with
@@ -783,111 +750,50 @@ func TestIntegrationDialogServerLateOfferInvalidAckSDP(t *testing.T) {
 	answerErr := make(chan error, 1)
 	stateCh := make(chan sip.DialogState, 1)
 
-	srvPort := freeUDPPort(t)
-	uacPort := freeUDPPort(t)
-	uacAddr := fmt.Sprintf("127.0.0.1:%d", uacPort)
-
-	{
-		ua, _ := sipgo.NewUA(sipgo.WithUserAgent("late-ack-uas"))
-		defer ua.Close()
-
-		dg, err := New(WithUserAgent(ua), WithTransport(Transport{
-			Network: "udp", BindHost: "127.0.0.1", BindPort: srvPort,
-		}))
-		require.NoError(t, err)
-
-		err = dg.ServeBackground(ctx, func(hctx context.Context, d *InboundCall) error {
-			// AnswerLate initiates the 200 OK; WaitAck surfaces the ACK
-			// processing failure (unusable SDP answer) promptly.
-			err := d.AnswerLate(hctx)
-			if err == nil {
-				err = d.WaitAck(hctx)
-			}
-			answerErr <- err
-			stateCh <- d.LoadState()
-			select {
-			case <-d.Context().Done():
-			case <-time.After(3 * time.Second):
-			}
-			return nil
-		})
-		require.NoError(t, err)
-	}
-
-	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("late-ack-uac"))
+	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("late-ack-uas"))
 	defer ua.Close()
 
-	srv, err := sipgo.NewServer(ua)
-	require.NoError(t, err)
-	var byeCount atomic.Int32
-	srv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
-		byeCount.Add(1)
-		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
-	})
-	go func() { _ = srv.ListenAndServe(ctx, "udp", uacAddr) }()
-	time.Sleep(100 * time.Millisecond)
-
-	cli, err := sipgo.NewClient(ua, sipgo.WithClientAddr(uacAddr))
-	require.NoError(t, err)
-
-	recipient := sip.Uri{User: "service", Host: "127.0.0.1", Port: srvPort}
-	invite := sip.NewRequest(sip.INVITE, recipient)
-	invite.AppendHeader(sip.NewHeader("Contact", "<sip:"+uacAddr+">"))
-	require.NoError(t, sipgo.ClientRequestBuild(cli, invite))
-
-	tx, err := cli.TransactionRequest(ctx, invite)
-	require.NoError(t, err)
-
-	var res200 *sip.Response
-	deadline := time.After(10 * time.Second)
-	for res200 == nil {
-		select {
-		case res := <-tx.Responses():
-			if res.IsSuccess() {
-				res200 = res
-			}
-		case <-deadline:
-			t.Fatal("no 200 OK for late offer")
+	_, srvPort := servingAgent(t, ctx, func(hctx context.Context, d *InboundCall) error {
+		// AnswerLate initiates the 200 OK; WaitAck surfaces the ACK
+		// processing failure (unusable SDP answer) promptly.
+		err := d.AnswerLate(hctx)
+		if err == nil {
+			err = d.WaitAck(hctx)
 		}
-	}
-	require.NotEmpty(t, res200.Body(), "late offer must carry our SDP offer")
+		answerErr <- err
+		stateCh <- d.LoadState()
+		select {
+		case <-d.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
+		return nil
+	}, WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
-	target := recipient
-	if res200.Contact() != nil {
-		target = res200.Contact().Address
-	}
+	uac := startLateOfferUAC(t, ctx, srvPort, "late-ack-uac")
 
-	ack := sip.NewRequest(sip.ACK, target)
-	ack.SipVersion = invite.SipVersion
-	ack.AppendHeader(sip.HeaderClone(invite.From()))
-	ack.AppendHeader(sip.HeaderClone(res200.To()))
-	ack.AppendHeader(sip.HeaderClone(invite.CallID()))
-	ack.AppendHeader(sip.HeaderClone(invite.CSeq()))
+	ack := sip.NewRequest(sip.ACK, uac.target)
+	ack.SipVersion = uac.invite.SipVersion
+	ack.AppendHeader(sip.HeaderClone(uac.invite.From()))
+	ack.AppendHeader(sip.HeaderClone(uac.res200.To()))
+	ack.AppendHeader(sip.HeaderClone(uac.invite.CallID()))
+	ack.AppendHeader(sip.HeaderClone(uac.invite.CSeq()))
 	cseq := ack.CSeq()
 	cseq.MethodName = sip.ACK
 	maxFwd := sip.MaxForwardsHeader(70)
 	ack.AppendHeader(&maxFwd)
-	ack.AppendHeader(sip.HeaderClone(invite.Contact()))
+	ack.AppendHeader(sip.HeaderClone(uac.invite.Contact()))
 	ack.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	ack.SetBody([]byte("v=0\r\nthis-line-is-not-sdp\r\n"))
-	ack.SetTransport(invite.Transport())
-	require.NoError(t, cli.WriteRequest(ack))
+	ack.SetTransport(uac.invite.Transport())
+	require.NoError(t, uac.cli.WriteRequest(ack))
 
-	select {
-	case err := <-answerErr:
-		require.Error(t, err, "unusable ACK answer must surface as an error")
-	case <-time.After(8 * time.Second):
-		t.Fatal("AnswerLate must fail promptly instead of waiting out 64*T1")
-	}
+	err := recvWithin(t, answerErr, 8*time.Second)
+	require.Error(t, err, "unusable ACK answer must surface as an error")
 
-	select {
-	case st := <-stateCh:
-		require.GreaterOrEqual(t, st, sip.DialogStateConfirmed, "dialog must be confirmed")
-	case <-time.After(3 * time.Second):
-		t.Fatal("dialog state not captured")
-	}
+	st := recvWithin(t, stateCh, 3*time.Second)
+	require.GreaterOrEqual(t, st, sip.DialogStateConfirmed, "dialog must be confirmed")
 
-	require.Eventually(t, func() bool { return byeCount.Load() >= 1 }, 3*time.Second, 20*time.Millisecond,
+	require.Eventually(t, func() bool { return uac.byeNum.Load() >= 1 }, 3*time.Second, 20*time.Millisecond,
 		"peer must receive a BYE after the media failure")
 }
 

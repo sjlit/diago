@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/require"
@@ -95,6 +96,23 @@ func servingAgent(t *testing.T, ctx context.Context, h CallHandler, opts ...Agen
 	require.NoError(t, err)
 	require.NoError(t, dg.ServeBackground(ctx, h))
 	return dg, agentPort(t, dg)
+}
+
+// recvWithin receives one value from ch, failing the test instead of hanging
+// forever when the value never arrives. Use it for channels fed by library
+// callbacks: an unbuffered send there blocks the callback goroutine for the
+// rest of the test binary, and an unbounded receive stalls the test until the
+// global timeout without saying what it was waiting for.
+func recvWithin[T any](t *testing.T, ch <-chan T, d time.Duration) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(d):
+		t.Fatalf("no value received after %s", d)
+		var zero T
+		return zero
+	}
 }
 
 // canBindUDPAddr reports whether a UDP listener can bind addr. Some tests fork
