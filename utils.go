@@ -22,8 +22,8 @@ func copyWithBuf(reader io.Reader, writer io.Writer, payloadBuf []byte) (int64, 
 	return media.CopyWithBuf(reader, writer, payloadBuf)
 }
 
-func closeAndLog(log *slog.Logger, closer io.Closer, msg string) {
-	if err := closer.Close(); err != nil {
+func closeAndLog(log *slog.Logger, close func() error, msg string) {
+	if err := close(); err != nil {
 		if log == nil {
 			log = slog.Default()
 		}

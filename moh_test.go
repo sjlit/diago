@@ -109,7 +109,7 @@ func TestMusicOnHoldCloseStopsLoop(t *testing.T) {
 
 	// Close cancels the loop without waiting on it (lock-order contract):
 	// from the caller's view the loop must simply be gone afterwards.
-	require.NoError(t, m.Close())
+	require.NoError(t, m.close())
 
 	select {
 	case <-moh.Done():

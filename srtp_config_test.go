@@ -30,7 +30,7 @@ func TestTransportSecureRTPValidation(t *testing.T) {
 				Codecs: []media.Codec{media.CodecAudioUlaw},
 			})
 			require.NoError(t, err, "mode %d", mode)
-			require.NoError(t, dm.Close())
+			require.NoError(t, dm.close())
 		}
 	})
 }
@@ -76,10 +76,10 @@ func TestMediaOptionsDTLSEnablesDTLS(t *testing.T) {
 	conf := signalMediaConfig(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}}, p)
 	dm := &Media{}
 	require.NoError(t, dm.initMediaSessionFromConf(conf))
-	defer dm.Close()
+	defer dm.close()
 
 	require.NotNil(t, dm.mediaSession)
-	assert.Equal(t, int(SecureRTPDTLS), dm.mediaSession.SecureRTP)
+	assert.Equal(t, SecureRTPDTLS, dm.mediaSession.SecureRTP)
 }
 
 // TestMediaConfigDTLSAutoEnableOnSession locks that a DTLS configuration with
@@ -94,10 +94,10 @@ func TestMediaConfigDTLSAutoEnableOnSession(t *testing.T) {
 			DTLS: media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
 		},
 	}))
-	defer dm.Close()
+	defer dm.close()
 
 	require.NotNil(t, dm.mediaSession)
-	assert.Equal(t, int(SecureRTPDTLS), dm.mediaSession.SecureRTP)
+	assert.Equal(t, SecureRTPDTLS, dm.mediaSession.SecureRTP)
 }
 
 // TestIntegrationDTLSAutoNegotiation drives the auto-enabled DTLS mode through
@@ -112,7 +112,7 @@ func TestIntegrationDTLSAutoNegotiation(t *testing.T) {
 			DTLS: media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
 		},
 	}))
-	defer offerer.Close()
+	defer offerer.close()
 
 	answerer := &Media{}
 	require.NoError(t, answerer.initMediaSessionFromConf(MediaConfig{
@@ -122,7 +122,7 @@ func TestIntegrationDTLSAutoNegotiation(t *testing.T) {
 			DTLS: media.DTLSConfig{Certificates: []tls.Certificate{testdata.ClientCertificate()}},
 		},
 	}))
-	defer answerer.Close()
+	defer answerer.close()
 
 	offerSDP := offerer.MediaSession().LocalSDP()
 	require.Contains(t, string(offerSDP), "UDP/TLS/RTP/SAVP")

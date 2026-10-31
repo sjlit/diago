@@ -41,10 +41,30 @@ const RTPBufSize = 1500
 
 var rtpPortOffset = atomic.Int32{}
 
-// RTPNAT options
+// SecureRTP selects the SRTP keying mode of a media session.
+type SecureRTP int
+
 const (
-	RTPNATDisabled = 0
-	RTPNATSymetric = 1
+	// SecureRTPNone disables SRTP.
+	SecureRTPNone SecureRTP = iota
+	// SecureRTPSDES selects SDES keying.
+	SecureRTPSDES
+	// SecureRTPDTLS selects DTLS-SRTP.
+	SecureRTPDTLS
+)
+
+// SRTPAlg is an SRTP protection profile.
+type SRTPAlg uint16
+
+// RTPNATMode selects how RTP behind NAT is handled.
+type RTPNATMode int
+
+// RTPNAT options.
+const (
+	RTPNATDisabled RTPNATMode = iota
+	RTPNATLearnSource
+	// RTPNATSymetric is the historical name for RTPNATLearnSource.
+	RTPNATSymetric = RTPNATLearnSource
 )
 
 func logRTPRead(m *MediaSession, raddr net.Addr, p *rtp.Packet) {
@@ -171,9 +191,9 @@ type MediaSession struct {
 	// ExternalIP that should be used for building SDP
 	ExternalIP net.IP
 
-	SecureRTP int // 0 none, 1 - SDES, 2 - DTLS
+	SecureRTP SecureRTP // 0 none, 1 - SDES, 2 - DTLS
 	// TODO support multile for offering
-	SRTPAlg uint16
+	SRTPAlg SRTPAlg
 
 	// DTLSConf used for DTLS
 	DTLSConf DTLSConfig
@@ -193,7 +213,7 @@ type MediaSession struct {
 	srtpRemoteTag int
 
 	// RTP NAT enables handling RTP behind NAT. Checkout also MediaSession.SourceLock
-	RTPNAT          int // 0 - disabled, 1 - Learn source change (RTP Symetric)
+	RTPNAT          RTPNATMode // 0 - disabled, 1 - Learn source change (RTP Symetric)
 	learnedRTPFrom  atomic.Pointer[net.UDPAddr]
 	learnedRTCPFrom atomic.Pointer[net.UDPAddr]
 
@@ -245,7 +265,7 @@ func (s *MediaSession) Init() error {
 	}
 
 	if s.SecureRTP > 0 && s.SRTPAlg == 0 {
-		s.SRTPAlg = uint16(srtp.ProtectionProfileAes128CmHmacSha1_80)
+		s.SRTPAlg = SRTPAlg(srtp.ProtectionProfileAes128CmHmacSha1_80)
 	}
 
 	// Try to listen on this ports
@@ -733,7 +753,7 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 			}
 
 			// When this gets into array, we need to check do we want to support it
-			if s.SRTPAlg != uint16(profile) {
+			if s.SRTPAlg != SRTPAlg(profile) {
 				continue
 			}
 

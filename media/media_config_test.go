@@ -74,6 +74,6 @@ func TestMediaSessionCodecOrderPerSession(t *testing.T) {
 // TestMediaSessionNATConstantsAreConst is a compile-time guard: the NAT option
 // values must not be mutable package vars.
 func TestMediaSessionNATConstantsAreConst(t *testing.T) {
-	assert.Equal(t, 0, RTPNATDisabled)
-	assert.Equal(t, 1, RTPNATSymetric)
+	assert.EqualValues(t, 0, RTPNATDisabled)
+	assert.EqualValues(t, 1, RTPNATSymetric)
 }

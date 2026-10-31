@@ -44,7 +44,7 @@ func TestDiagoMediaProfileForTransport(t *testing.T) {
 
 	// No profile selected: the default config is used as is.
 	conf := dg.mediaConfigForTransport(&Transport{Network: "udp"})
-	assert.Equal(t, media.RTPNATSymetric, int(conf.Network.RTPNAT), "default RTPNAT must apply")
+	assert.Equal(t, media.RTPNATSymetric, conf.Network.RTPNAT, "default RTPNAT must apply")
 	assert.Equal(t, SRTPAlg(1), conf.SRTP.Alg)
 	assert.Equal(t, 16000, conf.Network.RTPPortStart)
 	assert.Equal(t, 16020, conf.Network.RTPPortEnd)

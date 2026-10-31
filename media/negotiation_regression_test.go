@@ -201,7 +201,7 @@ func TestMediaSessionForkReusesEstablishedDTLSSRTP(t *testing.T) {
 		Codecs:            []Codec{CodecAudioUlaw},
 		Mode:              sdp.ModeSendrecv,
 		SecureRTP:         2,
-		SRTPAlg:           SRTPProfileAes128CmHmacSha1_80,
+		SRTPAlg:           SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		isDTLSEstablished: true,
 		localCtxSRTP:      ctx,
 		remoteCtxSRTP:     ctx,

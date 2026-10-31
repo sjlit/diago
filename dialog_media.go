@@ -171,9 +171,10 @@ func (d *Media) checkMediaUsable() error {
 	return d.mediaGuard()
 }
 
-// Close releases the dialog media: monitors, RTP/RTCP sockets, packet
-// handles and the active media session. It is idempotent.
-func (d *Media) Close() error {
+// close releases the dialog media: monitors, RTP/RTCP sockets, packet
+// handles and the active media session. It is idempotent and owned by the
+// dialog/call lifecycle, not called directly by applications.
+func (d *Media) close() error {
 	// Any hook attached
 	// Prevent double exec
 	d.mu.Lock()
@@ -385,9 +386,9 @@ func (d *Media) initMediaSessionFromConf(conf MediaConfig) error {
 		Laddr:      net.UDPAddr{IP: bindIP, Port: 0},
 		ExternalIP: conf.Network.ExternalIP,
 		Mode:       sdp.ModeSendrecv,
-		SecureRTP:  int(conf.SRTP.Mode),
-		SRTPAlg:    uint16(conf.SRTP.Alg),
-		RTPNAT:     int(conf.Network.RTPNAT),
+		SecureRTP:  conf.SRTP.Mode,
+		SRTPAlg:    conf.SRTP.Alg,
+		RTPNAT:     conf.Network.RTPNAT,
 		DTLSConf:   conf.SRTP.DTLS,
 
 		RTPPortStart:             conf.Network.RTPPortStart,

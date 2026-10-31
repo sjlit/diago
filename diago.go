@@ -284,30 +284,28 @@ func withTransport(t Transport) agentOption {
 }
 
 // SecureRTP selects the SRTP keying mode of a media session.
-type SecureRTP int
+// SecureRTP is an alias of media.SecureRTP.
+type SecureRTP = media.SecureRTP
 
 // SecureRTPNone disables SRTP; SecureRTPSDES selects SDES keying;
 // SecureRTPDTLS selects DTLS-SRTP.
 const (
-	SecureRTPNone SecureRTP = iota
-	SecureRTPSDES
-	SecureRTPDTLS
+	SecureRTPNone = media.SecureRTPNone
+	SecureRTPSDES = media.SecureRTPSDES
+	SecureRTPDTLS = media.SecureRTPDTLS
 )
 
-// SRTPAlg is an SRTP protection profile. Values map to the
-// srtp.ProtectionProfile constants; zero selects the default profile
-// (srtp.ProtectionProfileAes128CmHmacSha1_80) when Mode is not SecureRTPNone.
-type SRTPAlg uint16
+// SRTPAlg is an alias of media.SRTPAlg.
+type SRTPAlg = media.SRTPAlg
 
-// RTPNATMode selects how RTP behind NAT is handled.
-type RTPNATMode int
+// RTPNATMode is an alias of media.RTPNATMode.
+type RTPNATMode = media.RTPNATMode
 
 // RTPNATDisabled disables RTP source learning; RTPNATLearnSource learns the
-// remote source address from incoming packets (symmetric RTP;
-// media.RTPNATSymetric).
+// remote source address from incoming packets (symmetric RTP).
 const (
-	RTPNATDisabled RTPNATMode = iota
-	RTPNATLearnSource
+	RTPNATDisabled    = media.RTPNATDisabled
+	RTPNATLearnSource = media.RTPNATLearnSource
 )
 
 // SRTPConfig groups the SRTP/DTLS settings of a media session.
@@ -721,7 +719,7 @@ func newAgent(opts ...agentOption) (*Agent, error) {
 			if err := dg.cache.server.remove(context.Background(), dWrap.sess.ID); err != nil {
 				dg.log.Error("Failed to delete server dialog", "error", err)
 			}
-			closeAndLog(dWrap.logger(), &dWrap.callMedia, "closing dialog server media returned error")
+			closeAndLog(dWrap.logger(), dWrap.callMedia.close, "closing dialog server media returned error")
 		}()
 
 		herr := dg.handler()(hctx, dWrap)
@@ -805,12 +803,12 @@ func newAgent(opts ...agentOption) (*Agent, error) {
 		// Terminate our media processing
 		// As user may stuck in playing or reading media, this unblocks that goroutine
 		if cd != nil {
-			defer closeAndLog(cd.logger(), &cd.callMedia, "failed to close client media")
+			defer closeAndLog(cd.logger(), cd.callMedia.close, "failed to close client media")
 
 			return cd.sess.ReadBye(req, tx)
 		}
 
-		defer closeAndLog(sd.logger(), &sd.callMedia, "failed to close server media")
+		defer closeAndLog(sd.logger(), sd.callMedia.close, "failed to close server media")
 		return sd.sess.ReadBye(req, tx)
 	}))
 

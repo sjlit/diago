@@ -394,7 +394,7 @@ a=sendrecv`
 			Laddr:     net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234},
 			Mode:      "sendrecv",
 			SecureRTP: 1,
-			SRTPAlg:   SRTPProfileAes128CmHmacSha1_80,
+			SRTPAlg:   SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		}
 		err := m.RemoteSDP([]byte(sd))
 		require.Error(t, err)
@@ -418,7 +418,7 @@ a=sendrecv`
 			Laddr:     net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234},
 			Mode:      "sendrecv",
 			SecureRTP: 1,
-			SRTPAlg:   SRTPProfileAes128CmHmacSha1_80,
+			SRTPAlg:   SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		}
 		err := m.RemoteSDP([]byte(sd))
 		require.NoError(t, err)
@@ -444,7 +444,7 @@ a=sendrecv`
 		Laddr:       net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
 		Mode:        "sendrecv",
 		SecureRTP:   1,
-		SRTPAlg:     SRTPProfileAes128CmHmacSha1_80,
+		SRTPAlg:     SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		SAVPDisable: true,
 	}
 	require.NoError(t, m.Init())
@@ -474,7 +474,7 @@ a=sendrecv`
 		Laddr:       net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
 		Mode:        "sendrecv",
 		SecureRTP:   1,
-		SRTPAlg:     SRTPProfileAes128CmHmacSha1_80,
+		SRTPAlg:     SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		SAVPDisable: true,
 	}
 	require.NoError(t, m.Init())
@@ -491,7 +491,7 @@ func TestMediaSRTP(t *testing.T) {
 		Laddr:     net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
 		Codecs:    []Codec{CodecAudioAlaw},
 		SecureRTP: 1,
-		SRTPAlg:   SRTPProfileAes128CmHmacSha1_80,
+		SRTPAlg:   SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		Mode:      sdp.ModeSendrecv,
 	}
 	require.NoError(t, m1.Init())
@@ -500,7 +500,7 @@ func TestMediaSRTP(t *testing.T) {
 		Laddr:     net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)},
 		Codecs:    []Codec{CodecAudioAlaw},
 		SecureRTP: 1,
-		SRTPAlg:   SRTPProfileAes128CmHmacSha1_80,
+		SRTPAlg:   SRTPAlg(SRTPProfileAes128CmHmacSha1_80),
 		Mode:      sdp.ModeSendrecv,
 	}
 	require.NoError(t, m2.Init())

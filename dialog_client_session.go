@@ -64,7 +64,7 @@ func (d *OutboundCall) release() error {
 
 // releaseUnsafe closes local resources after the caller won the closed CAS.
 func (d *OutboundCall) releaseUnsafe() error {
-	e1 := d.callMedia.Close()
+	e1 := d.callMedia.close()
 	e2 := d.sess.Close()
 	return errors.Join(e1, e2)
 }

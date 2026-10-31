@@ -33,7 +33,7 @@ func TestMediaCloseClearsDTMFReaders(t *testing.T) {
 	dm.deliverDTMF('1', 0)
 	require.EqualValues(t, 1, calls.Load())
 
-	require.NoError(t, dm.Close())
+	require.NoError(t, dm.close())
 
 	dm.mu.Lock()
 	assert.Nil(t, dm.dtmfReaders)
@@ -55,7 +55,7 @@ func TestDeliverDTMFAfterCloseNoCallback(t *testing.T) {
 		return nil
 	})
 
-	require.NoError(t, dm.Close())
+	require.NoError(t, dm.close())
 
 	dm.deliverDTMF('2', 0)
 	assert.EqualValues(t, 0, calls.Load(), "DTMF must not be delivered after Close")

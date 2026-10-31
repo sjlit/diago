@@ -19,10 +19,10 @@ func TestStereoRecording_CleanedByDialogClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// Forget rec.Close: BYE path must still reclaim spool files.
-	require.NoError(t, d.Close())
+	require.NoError(t, d.close())
 
 	entries, err := os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries)
-	require.NoError(t, d.Close(), "Media.Close idempotent")
+	require.NoError(t, d.close(), "Media.Close idempotent")
 }

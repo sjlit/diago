@@ -45,7 +45,7 @@ func TestMediaSessionReplacementDTMF(t *testing.T) {
 	d.mu.Unlock()
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		d.Close()
+		d.close()
 	})
 
 	// Active session is the new one

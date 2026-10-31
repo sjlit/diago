@@ -27,12 +27,12 @@ func TestServerClientAuthRequireCert_MapsToRequireAny(t *testing.T) {
 	require.Equal(t, int(dtls.RequireAnyClientCert), ServerClientAuthRequireCert)
 }
 
-func newDTLSTestSession(t *testing.T, secure int) *MediaSession {
+func newDTLSTestSession(t *testing.T, secure SecureRTP) *MediaSession {
 	t.Helper()
 	return newDTLSTestSessionOnPort(t, secure, 23100)
 }
 
-func newDTLSTestSessionOnPort(t *testing.T, secure, port int) *MediaSession {
+func newDTLSTestSessionOnPort(t *testing.T, secure SecureRTP, port int) *MediaSession {
 	t.Helper()
 	m := &MediaSession{
 		Codecs:    []Codec{CodecAudioUlaw, CodecAudioAlaw, CodecTelephoneEvent8000},

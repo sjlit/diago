@@ -118,7 +118,7 @@ func TestMediaGuardsNotAnswered(t *testing.T) {
 
 func TestMediaGuardsClosed(t *testing.T) {
 	d := newTestMedia(t)
-	require.NoError(t, d.Close())
+	require.NoError(t, d.close())
 
 	t.Run("audio reader", func(t *testing.T) {
 		_, err := d.AudioReader()
@@ -167,7 +167,7 @@ func TestMediaGuardsClosed(t *testing.T) {
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("close is idempotent", func(t *testing.T) {
-		assert.NoError(t, d.Close())
+		assert.NoError(t, d.close())
 	})
 }
 
@@ -285,7 +285,7 @@ func TestMediaPlaybackWithoutRTPWriterHandle(t *testing.T) {
 // again instead of leaving orphaned sockets and monitors behind.
 func TestMediaClosedRejectsInstall(t *testing.T) {
 	d := &Media{}
-	require.NoError(t, d.Close())
+	require.NoError(t, d.close())
 
 	// No listeners may be created after close.
 	err := d.initMediaSessionFromConf(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}})
@@ -306,7 +306,7 @@ func TestMediaClosedRejectsInstall(t *testing.T) {
 
 	// A late media update must not replace sessions after close either.
 	d2 := newTestMedia(t)
-	require.NoError(t, d2.Close())
+	require.NoError(t, d2.close())
 	replacement, err := media.NewMediaSession(net.ParseIP("127.0.0.1"), 0)
 	require.NoError(t, err)
 	defer replacement.Close()

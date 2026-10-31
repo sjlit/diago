@@ -215,7 +215,7 @@ func TestMediaCtxAPIsGuards(t *testing.T) {
 	assert.ErrorIs(t, unanswered.EchoContext(context.Background()), ErrDialogNotAnswered)
 
 	closed := newTestMedia(t)
-	require.NoError(t, closed.Close())
+	require.NoError(t, closed.close())
 	_, err = closed.PauseAudioRead()
 	assert.ErrorIs(t, err, ErrDialogClosed)
 	_, err = closed.PauseAudioWrite()
