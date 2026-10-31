@@ -137,6 +137,22 @@ func (d *OutboundCall) ToUser() string {
 	return d.sess.InviteRequest.To().Address.User
 }
 
+// From returns the caller URI.
+func (d *OutboundCall) From() URI {
+	if d.sess.InviteRequest == nil || d.sess.InviteRequest.From() == nil {
+		return URI{}
+	}
+	return d.sess.InviteRequest.From().Address
+}
+
+// To returns the callee URI.
+func (d *OutboundCall) To() URI {
+	if d.sess.InviteRequest == nil || d.sess.InviteRequest.To() == nil {
+		return URI{}
+	}
+	return d.sess.InviteRequest.To().Address
+}
+
 // Transport returns the transport of the dialog's INVITE request (ex. "UDP").
 func (d *OutboundCall) Transport() string {
 	return d.sess.InviteRequest.Transport()
@@ -703,7 +719,7 @@ func (d *OutboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOpti
 	}
 	// Guard before dereferencing InviteResponse: it is nil until the first
 	// response is received (dialogRefer's own check would run too late).
-	if d.SIP().LoadState() != sip.DialogStateConfirmed {
+	if d.State() != CallStateConfirmed {
 		return fmt.Errorf("refer: %w", ErrDialogNotAnswered)
 	}
 	d.mu.Lock()

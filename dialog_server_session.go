@@ -208,6 +208,22 @@ func (d *InboundCall) ToUser() string {
 	return d.sess.InviteRequest.To().Address.User
 }
 
+// From returns the caller URI.
+func (d *InboundCall) From() URI {
+	if d.sess.InviteRequest == nil || d.sess.InviteRequest.From() == nil {
+		return URI{}
+	}
+	return d.sess.InviteRequest.From().Address
+}
+
+// To returns the callee URI.
+func (d *InboundCall) To() URI {
+	if d.sess.InviteRequest == nil || d.sess.InviteRequest.To() == nil {
+		return URI{}
+	}
+	return d.sess.InviteRequest.To().Address
+}
+
 // Authorize challenges and validates the incoming INVITE with SIP digest
 // authentication (RFC 2617).
 //

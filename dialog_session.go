@@ -28,11 +28,23 @@ type Call interface {
 	FromUser() string
 	// ToUser returns the user part of the To header (the callee).
 	ToUser() string
+	// From returns the full From URI (the caller).
+	From() URI
+	// To returns the full To URI (the callee).
+	To() URI
 	// Transport returns the transport of the dialog's INVITE (ex. "UDP").
 	Transport() string
 	// Hangup terminates the dialog. Options allow customizing headers of the
 	// outgoing BYE / decline response (ex. Reason header)
 	Hangup(ctx context.Context, opts ...HangupOption) error
+	// Hold puts the dialog on hold (media sendonly).
+	Hold(ctx context.Context, opts ...HoldOption) error
+	// Unhold takes the dialog back from hold (media sendrecv).
+	Unhold(ctx context.Context, opts ...RequestOption) error
+	// ReInvite sends a re-INVITE with the current media session.
+	ReInvite(ctx context.Context, opts ...RequestOption) error
+	// Refer sends a blind transfer REFER.
+	Refer(ctx context.Context, referTo URI, opts ...ReferOption) error
 	// Media returns the media half of the dialog. It is never nil and
 	// stays valid for the dialog's lifetime.
 	Media() *Media
@@ -51,7 +63,7 @@ var (
 //
 
 func dialogRefer(ctx context.Context, d Call, recipient URI, referTo URI, refferedBy URI, params *signalParams) error {
-	if d.SIP().LoadState() != sip.DialogStateConfirmed {
+	if d.State() != CallStateConfirmed {
 		return fmt.Errorf("refer: %w", ErrDialogNotAnswered)
 	}
 

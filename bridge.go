@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2/audio"
 	"github.com/sjlit/diago/v2/media"
 )
@@ -704,8 +703,8 @@ func (b *BridgeMix) Add(d Call) error {
 		return ErrBridgeClosed
 	}
 
-	switch state := d.SIP().LoadState(); state {
-	case sip.DialogStateEstablished, sip.DialogStateConfirmed:
+	switch state := d.State(); state {
+	case CallStateAnswered, CallStateConfirmed:
 		// Answered: Established means the 2xx was sent and the ACK may still
 		// be in flight; media is already negotiated at that point.
 	default:
