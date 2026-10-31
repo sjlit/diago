@@ -217,6 +217,9 @@ func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 //
 // Scope: InviteOptions.
 //
+// By default Invite returns after the final 2xx; call Ack yourself. Set
+// InviteOptions.ACKPolicy to ACKPolicyWait to send the ACK before returning.
+//
 // Errors:
 // - *DialogResponseError
 // - ErrClientEarlyMedia
@@ -224,11 +227,18 @@ func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 // NOTE: It updates internal invite request so NOT THREAD SAFE.
 // If you pass originator it will use originator to set correct from header and avoid media transcoding
 func (d *OutboundCall) Invite(ctx context.Context, opts ...InviteOptions) error {
+	policy := inviteACKPolicy(opts...)
 	params, err := inviteSignalParamsFrom(opts...)
 	if err != nil {
 		return err
 	}
-	return d.inviteWithParams(ctx, params)
+	if err := d.inviteWithParams(ctx, params); err != nil {
+		return err
+	}
+	if policy == ACKPolicyWait {
+		return d.Ack(ctx)
+	}
+	return nil
 }
 
 // inviteWithParams performs the Invite flow using a pre-computed *signalParams.

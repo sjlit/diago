@@ -255,6 +255,18 @@ func (o ProgressMediaOptions) signalParams() (*signalParams, error) {
 	return p, o.Media.apply(p)
 }
 
+// ACKPolicy controls when Answer/AnswerLate/Invite return relative to the
+// final ACK exchange.
+type ACKPolicy uint8
+
+const (
+	// ACKPolicyAsync returns after the 2xx was handed to the transaction
+	// layer. Use WaitAck to observe the ACK. This is the zero value.
+	ACKPolicyAsync ACKPolicy = iota
+	// ACKPolicyWait blocks until the ACK is processed (or the wait fails).
+	ACKPolicyWait
+)
+
 // AnswerOptions configures Answer and AnswerLate.
 type AnswerOptions struct {
 	Headers        []Header
@@ -264,6 +276,9 @@ type AnswerOptions struct {
 	Media          MediaOptions
 	OnMediaUpdate  func(d *Media)
 	OnRefer        OnReferFunc
+	// ACKPolicy selects whether Answer returns after sending the 2xx
+	// (ACKPolicyAsync, default) or after WaitAck succeeds (ACKPolicyWait).
+	ACKPolicy ACKPolicy
 }
 
 func (o AnswerOptions) signalParams() (*signalParams, error) {
@@ -297,6 +312,9 @@ type InviteOptions struct {
 	OnResponse       func(res *Response) error
 	OnMediaUpdate    func(d *Media)
 	OnRefer          OnReferFunc
+	// ACKPolicy selects whether Invite returns after the final 2xx
+	// (ACKPolicyAsync, default) or after sending the ACK (ACKPolicyWait).
+	ACKPolicy ACKPolicy
 }
 
 func (o InviteOptions) signalParams() (*signalParams, error) {
@@ -426,8 +444,22 @@ func progressMediaSignalParams(opts ...ProgressMediaOptions) (*signalParams, err
 func answerSignalParams(opts ...AnswerOptions) (*signalParams, error) {
 	return singleSignalParams("Answer", opts, AnswerOptions.signalParams)
 }
+
+func answerACKPolicy(opts ...AnswerOptions) ACKPolicy {
+	if len(opts) > 0 {
+		return opts[0].ACKPolicy
+	}
+	return ACKPolicyAsync
+}
 func inviteSignalParamsFrom(opts ...InviteOptions) (*signalParams, error) {
 	return singleSignalParams("Invite", opts, InviteOptions.signalParams)
+}
+
+func inviteACKPolicy(opts ...InviteOptions) ACKPolicy {
+	if len(opts) > 0 {
+		return opts[0].ACKPolicy
+	}
+	return ACKPolicyAsync
 }
 func dialSignalParams(opts ...DialOptions) (*signalParams, error) {
 	return singleSignalParams("Dial", opts, DialOptions.signalParams)

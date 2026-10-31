@@ -5,6 +5,7 @@ package diago
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,4 +62,26 @@ func TestMediaNewPlaybackUnified(t *testing.T) {
 	require.NotNil(t, withDTMF.dtmfReader)
 	require.NotNil(t, withDTMF.DTMF())
 	require.NoError(t, withDTMF.Close())
+}
+
+func TestInviteACKPolicyWaitSendsAck(t *testing.T) {
+	var acks atomic.Int32
+	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
+		switch req.Method {
+		case sip.ACK:
+			acks.Add(1)
+		case sip.INVITE:
+			return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
+		}
+		return sip.NewResponseFromRequest(req, 200, "OK", nil)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	d, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
+	require.NoError(t, err)
+	defer d.release()
+
+	require.NoError(t, d.Invite(ctx, InviteOptions{ACKPolicy: ACKPolicyWait}))
+	require.EqualValues(t, 1, acks.Load(), "ACKPolicyWait must send ACK before returning")
 }

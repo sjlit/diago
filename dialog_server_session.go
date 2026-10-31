@@ -693,6 +693,7 @@ func (d *InboundCall) applyDialogCallbacks(params *signalParams) {
 // processed, media finalized) before proceeding. Calling Answer twice fails
 // with ErrAlreadyAnswered.
 func (d *InboundCall) Answer(ctx context.Context, opts ...AnswerOptions) error {
+	policy := answerACKPolicy(opts...)
 	params, err := answerSignalParams(opts...)
 	if err != nil {
 		return err
@@ -716,14 +717,26 @@ func (d *InboundCall) Answer(ctx context.Context, opts ...AnswerOptions) error {
 		// Early media session was created by ProgressMedia and never finalized.
 		// Finalize runs deferred media setup like DTLS handshake, same as answerSession.
 		// MonitorBackground is already started by ProgressMedia and must not be started twice.
-		return sess.Finalize()
+		if err := sess.Finalize(); err != nil {
+			return err
+		}
+		if policy == ACKPolicyWait {
+			return d.WaitAck(ctx)
+		}
+		return nil
 	}
 
 	rtpSess, err := d.newAnswerRTPSession(params)
 	if err != nil {
 		return err
 	}
-	return d.answerSession(ctx, rtpSess, params)
+	if err := d.answerSession(ctx, rtpSess, params); err != nil {
+		return err
+	}
+	if policy == ACKPolicyWait {
+		return d.WaitAck(ctx)
+	}
+	return nil
 }
 
 // newAnswerRTPSession creates RTP session for answering. It honors custom
@@ -827,11 +840,12 @@ func (d *InboundCall) setupRTPSession(rtpSess *media.RTPSession) error {
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
 // Scope: AnswerOptions.
 //
-// Like Answer, it returns once the 200 OK was handed to the transaction
-// layer. The ACK of a late offer carries the remote answer: call WaitAck to
-// wait for the media to be fully negotiated (RemoteSDP applied, monitoring
-// started) before reading or writing media.
+// Like Answer, it returns once the 200 OK was handed to the transaction layer
+// by default. The ACK of a late offer carries the remote answer; set
+// AnswerOptions.ACKPolicy to ACKPolicyWait (or call WaitAck) to wait for the
+// media to be fully negotiated before reading or writing media.
 func (d *InboundCall) AnswerLate(ctx context.Context, opts ...AnswerOptions) error {
+	policy := answerACKPolicy(opts...)
 	params, err := answerSignalParams(opts...)
 	if err != nil {
 		return err
@@ -871,10 +885,19 @@ func (d *InboundCall) AnswerLate(ctx context.Context, opts ...AnswerOptions) err
 	if d.sess.InviteRequest.Body() == nil {
 		// Late offer: the ACK carries the remote answer, so readAck applies
 		// the remote SDP and starts the monitor when it arrives.
+		if policy == ACKPolicyWait {
+			return d.WaitAck(ctx)
+		}
 		return nil
 	}
 	// Must be called after media and reader writer is setup
-	return rtpSess.MonitorBackground()
+	if err := rtpSess.MonitorBackground(); err != nil {
+		return err
+	}
+	if policy == ACKPolicyWait {
+		return d.WaitAck(ctx)
+	}
+	return nil
 }
 
 // readAck processes the ACK that confirms the dialog. It is unexported: ACKs
