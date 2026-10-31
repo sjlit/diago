@@ -72,8 +72,7 @@
 // RespondSDP return once the 2xx was handed to the transaction layer;
 // retransmission until the ACK and the ACK wait continue in the background
 // (RFC 3261 §13.3.1.4). Call InboundCall.WaitAck to wait for the ACK
-// to be processed (media finalized), with AckReceived/AckErr for the raw
-// outcome.
+// to be processed (media finalized).
 //
 // # Lifecycle
 //

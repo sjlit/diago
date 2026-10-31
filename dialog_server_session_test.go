@@ -842,16 +842,10 @@ func TestInboundCallAckObservation(t *testing.T) {
 
 	t.Run("no ack timeout recorded", func(t *testing.T) {
 		d := newSession(t)
+		d.sess.InitWithState(sip.DialogStateEstablished)
 		// Simulate sipgo returning after the 64*T1 window without an ACK.
 		d.finishSuccessWrite(nil)
-		require.ErrorIs(t, d.AckErr(), ErrAckTimeout)
-
-		// AckReceived must still report that no ACK was observed.
-		select {
-		case <-d.AckReceived():
-			t.Fatal("ACK channel must stay open without an ACK")
-		default:
-		}
+		require.ErrorIs(t, d.WaitAck(context.Background()), ErrAckTimeout)
 	})
 
 	t.Run("concurrent answers serialized", func(t *testing.T) {

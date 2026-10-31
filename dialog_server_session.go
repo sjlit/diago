@@ -317,7 +317,7 @@ func (d *InboundCall) respondSignal(ctx context.Context, statusCode int, reason 
 // writeSuccessAsync sends the final 2xx response and returns once it was
 // handed to the transaction layer (dialog state Established), leaving 2xx
 // retransmission and the ACK wait to a background goroutine. The ACK outcome
-// is observable through AckReceived, AckErr and WaitAck.
+// is observable through WaitAck.
 func (d *InboundCall) writeSuccessAsync(res *Response) error {
 	switch state := d.sess.LoadState(); {
 	case state == sip.DialogStateEnded:
@@ -402,7 +402,7 @@ func (d *InboundCall) finishSuccessWrite(err error) {
 			err = d.ackResult()
 		default:
 			// sipgo reports a 64*T1 timeout without an ACK as success; make
-			// the missing ACK observable to WaitAck/AckErr callers.
+			// the missing ACK observable to WaitAck callers.
 			err = fmt.Errorf("%w: %w", ErrAckTimeout, errNoAckReceived)
 		}
 	}
@@ -416,21 +416,6 @@ func (d *InboundCall) finishSuccessWrite(err error) {
 // errNoAckReceived mirrors sipgo's 64*T1 no-ACK outcome for the ErrAckTimeout
 // message; the upstream error text itself is matched by isAckWaitRaceError.
 var errNoAckReceived = errors.New("no ACK received")
-
-// AckReceived returns a channel closed when the ACK for this dialog's 2xx
-// response is delivered. It does not wait for ACK processing (media
-// finalization); use WaitAck for that. Safe from any goroutine.
-func (d *InboundCall) AckReceived() <-chan struct{} {
-	return d.ackChannel()
-}
-
-// AckErr returns the error observed while processing the 2xx ACK (for
-// example a media finalization failure surfaced by readAck) or while waiting
-// for it (ErrAckTimeout, ErrDialogEnded). It returns nil while the outcome is
-// still unknown. Safe from any goroutine.
-func (d *InboundCall) AckErr() error {
-	return d.ackResult()
-}
 
 // WaitAck blocks until the outcome of the dialog's 2xx ACK is known: the ACK
 // was delivered and processed (returning the readAck error, usually nil),

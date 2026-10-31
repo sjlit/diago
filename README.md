@@ -108,7 +108,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   points return `ErrDialogNotAnswered`/`ErrDialogClosed` instead of panicking.
 - **Answer/ACK**: `Answer`, `AnswerLate` and `RespondSDP` return once the 2xx
   was handed to the transaction layer; the ACK wait continues in the
-  background. Use `WaitAck` (or `AckReceived`/`AckErr`) when the call must be
+  background. Use `WaitAck` when the call must be
   fully established before continuing.
 - **Options**: every operation takes its own `XxxOptions` struct
   (`AnswerOptions`, `InviteOptions`, `DialOptions`, `RegisterOptions`,

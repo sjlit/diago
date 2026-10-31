@@ -60,7 +60,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - Signaling methods honor the context while sending. `Answer`, `AnswerLate`
   and `RespondSDP` return once the 2xx was handed to the transaction layer;
   the ACK wait continues in the background and is observed with
-  `WaitAck`/`AckReceived`/`AckErr`.
+  `WaitAck`.
 - Background operations either take a context, return a `StopFunc`, or return
   a handle with `Close`; the contract is documented per method.
 
