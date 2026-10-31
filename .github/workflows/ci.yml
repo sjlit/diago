@@ -36,25 +36,18 @@ jobs:
       - name: Test (race)
         run: go test -race -count=1 -timeout 15m ./...
 
-  apidiff:
-    name: API diff
+  api-baseline:
+    name: API baseline
     runs-on: ubuntu-latest
-    # Informational while the v2 API is being reshaped: prints the public API
-    # diff against the base commit. Remove continue-on-error once the API is
-    # frozen and every change should be deliberate.
-    continue-on-error: true
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
 
-      - name: Compare public API with the base branch
-        run: scripts/apidiff.sh "${{ github.event.pull_request.base.sha }}"
+      - name: Check public API against frozen baseline
+        run: scripts/api-check.sh
 
   opus-c:
     name: Build with_opus_c
