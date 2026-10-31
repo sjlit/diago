@@ -36,8 +36,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - Options are validated when the operation runs. Nil headers, empty names and
   out-of-range values are rejected instead of silently ignored; every such
   error wraps `ErrInvalidOption`.
-- Slices of options use the concrete operation type; there is no shared
-  `SignalOption` interface.
+- There is no shared option interface; pass the concrete operation struct.
 - Agent-level configuration validates in `New` and aborts construction.
 
 ## Errors
