@@ -81,7 +81,7 @@ func dtmfRelaySignal(signal string) (rune, bool) {
 // readSIPInfoDTMF handles an in-dialog INFO with application/dtmf-relay body.
 // It is shared by server and client dialog sessions: valid DTMF is answered
 // 200 OK and delivered through the same callbacks used for RTP DTMF
-// (DTMFReader listeners, AudioPlaybackDTMF channel).
+// (DTMFReader listeners and Media.NewPlayback DTMF channel).
 func readSIPInfoDTMF(media *Media, req *Request, tx ServerTransaction) error {
 	dtmf, dur, err := parseDTMFRelay(req.Body())
 	if err != nil {

@@ -25,10 +25,10 @@ func (eofReader) Read(b []byte) (int, error) {
 	return 0, io.EOF
 }
 
-func newTestDTMFPlayback(t *testing.T, w io.Writer, opts ...PlaybackDTMFOption) *AudioPlaybackDTMF {
+func newTestDTMFPlayback(t *testing.T, w io.Writer, opts ...PlaybackOptions) *Playback {
 	t.Helper()
 	codec := media.CodecAudioUlaw
-	control := NewAudioPlaybackControl(NewAudioPlayback(w, codec))
+	control := newAudioPlaybackControl(newAudioPlayback(w, codec))
 
 	// DTMF reader stub with immediately finished audio source. DTMF keys are
 	// delivered manually via handleDTMF
@@ -36,14 +36,23 @@ func newTestDTMFPlayback(t *testing.T, w io.Writer, opts ...PlaybackDTMFOption) 
 		dtmfReader: media.NewRTPDTMFReader(media.CodecTelephoneEvent8000, &media.RTPPacketReader{}, eofReader{}),
 	}
 
-	p := &AudioPlaybackDTMF{
-		AudioPlaybackControl: &control,
-		dtmfCh:               make(chan rune, dtmfChSize),
-		dtmfReader:           dtmfReader,
-		stopCh:               make(chan struct{}),
+	p := &Playback{
+		playbackControl: &control,
+		dtmfCh:          make(chan rune, dtmfChSize),
+		dtmfReader:      dtmfReader,
+		stopCh:          make(chan struct{}),
 	}
-	for _, o := range opts {
-		o(p)
+	if len(opts) > 0 {
+		o := opts[0]
+		if o.DisableInterrupt {
+			p.interruptKeys = map[rune]struct{}{}
+		} else if o.InterruptKeys != "" {
+			p.interruptKeys = parseDTMFKeys(o.InterruptKeys)
+		}
+		if o.ReplayKeys != "" {
+			p.replayKeys = parseDTMFKeys(o.ReplayKeys)
+		}
+		p.onDTMF = o.OnDTMF
 	}
 	return p
 }
@@ -59,7 +68,7 @@ func TestPlaybackDTMFInterruptAnyKey(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, p.AudioPlaybackControl)
+	waitPlaying(t, p.playbackControl)
 	require.Eventually(t, func() bool {
 		_, bytesW := cw.stats()
 		return bytesW > 320
@@ -88,7 +97,7 @@ func TestPlaybackDTMFInterruptKeysOnly(t *testing.T) {
 	data := make([]byte, 32000)
 	cw := &countWriter{}
 	// Only '9' interrupts, other keys are delivered but do not stop
-	p := newTestDTMFPlayback(t, cw, WithInterruptKeys("9"))
+	p := newTestDTMFPlayback(t, cw, PlaybackOptions{InterruptKeys: "9"})
 
 	done := make(chan error, 1)
 	go func() {
@@ -96,7 +105,7 @@ func TestPlaybackDTMFInterruptKeysOnly(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, p.AudioPlaybackControl)
+	waitPlaying(t, p.playbackControl)
 	require.Eventually(t, func() bool {
 		_, bytesW := cw.stats()
 		return bytesW > 320
@@ -124,7 +133,7 @@ func TestPlaybackDTMFInterruptKeysOnly(t *testing.T) {
 func TestPlaybackDTMFNoInterrupt(t *testing.T) {
 	data := make([]byte, 3200)
 	cw := &countWriter{}
-	p := newTestDTMFPlayback(t, cw, WithInterruptKeys(""))
+	p := newTestDTMFPlayback(t, cw, PlaybackOptions{DisableInterrupt: true})
 
 	done := make(chan error, 1)
 	go func() {
@@ -132,7 +141,7 @@ func TestPlaybackDTMFNoInterrupt(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, p.AudioPlaybackControl)
+	waitPlaying(t, p.playbackControl)
 	p.handleDTMF('1')
 
 	select {
@@ -148,7 +157,7 @@ func TestPlaybackDTMFNoInterrupt(t *testing.T) {
 func TestPlaybackDTMFReplay(t *testing.T) {
 	data := make([]byte, 3200)
 	cw := &countWriter{}
-	p := newTestDTMFPlayback(t, cw, WithReplayKeys("*"))
+	p := newTestDTMFPlayback(t, cw, PlaybackOptions{ReplayKeys: "*"})
 
 	done := make(chan error, 1)
 	var written int64
@@ -158,7 +167,7 @@ func TestPlaybackDTMFReplay(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, p.AudioPlaybackControl)
+	waitPlaying(t, p.playbackControl)
 	require.Eventually(t, func() bool {
 		_, bytesW := cw.stats()
 		return bytesW > 320
@@ -200,7 +209,7 @@ func TestPlaybackDTMFOnDTMFCallback(t *testing.T) {
 	cw := &countWriter{}
 
 	cb := &dtmfCollector{}
-	p := newTestDTMFPlayback(t, cw, WithOnDTMF(cb.append))
+	p := newTestDTMFPlayback(t, cw, PlaybackOptions{OnDTMF: cb.append})
 
 	done := make(chan error, 1)
 	go func() {
@@ -208,7 +217,7 @@ func TestPlaybackDTMFOnDTMFCallback(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, p.AudioPlaybackControl)
+	waitPlaying(t, p.playbackControl)
 	p.handleDTMF('3')
 	p.handleDTMF('4')
 	<-done
@@ -312,7 +321,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 		},
 	}
 
-	pb, err := dialog.NewPlaybackDTMF(WithReplayKeys("*"))
+	pb, err := dialog.NewPlayback(PlaybackOptions{ReplayKeys: "*"})
 	require.NoError(t, err)
 	defer pb.Close()
 
@@ -324,7 +333,7 @@ func TestIntegrationPlaybackDTMF(t *testing.T) {
 		done <- err
 	}()
 
-	waitPlaying(t, pb.AudioPlaybackControl)
+	waitPlaying(t, pb.playbackControl)
 
 	// Replay with star key
 	sendDTMFInjection(t, injector, &sess.Laddr, new(uint16), '*')

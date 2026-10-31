@@ -44,8 +44,8 @@ var playBufPool = sync.Pool{
 	},
 }
 
-// AudioPlayback streams PCM/WAV/URL audio into a dialog's audio writer.
-type AudioPlayback struct {
+// playbackStream streams PCM/WAV/URL audio into a dialog's audio writer.
+type playbackStream struct {
 	writer io.Writer
 	codec  media.Codec
 	onPlay func()
@@ -57,39 +57,39 @@ type AudioPlayback struct {
 
 	// Read only values
 	// This will influence playout sampling buffer
-	BitDepth    int
-	NumChannels int
+	bitDepth    int
+	numChannels int
 
 	totalWritten int64
 }
 
-// NewAudioPlayback creates a playback where writer is encoder/streamer to
+// newAudioPlayback creates a playback where writer is encoder/streamer to
 // media codec. Prefer dialog.NewPlayback() instead of creating playback
 // manually.
-func NewAudioPlayback(writer io.Writer, codec media.Codec) AudioPlayback {
-	return AudioPlayback{
+func newAudioPlayback(writer io.Writer, codec media.Codec) playbackStream {
+	return playbackStream{
 		writer:      writer,
 		codec:       codec,
-		BitDepth:    16,
-		NumChannels: codec.NumChannels,
+		bitDepth:    16,
+		numChannels: codec.NumChannels,
 	}
 }
 
 // Codec returns the codec the playback encodes to.
-func (p *AudioPlayback) Codec() media.Codec {
+func (p *playbackStream) Codec() media.Codec {
 	return p.codec
 }
 
 // PlayContext plays supported audio contents and stops streaming with
 // ctx.Err() when the context is canceled. An empty mimeType streams reader as
-// a raw buffer; make sure BitDepth and NumChannels are set correctly.
+// a raw buffer; make sure bitDepth and numChannels are set correctly.
 // Cancellation latency is bounded by one packet interval (the pacing wait
 // inside the writer).
-func (p *AudioPlayback) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
+func (p *playbackStream) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	return p.play(ctx, reader, mimeType)
 }
 
-func (p *AudioPlayback) play(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
+func (p *playbackStream) play(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	var written int64
 	var err error
 
@@ -123,7 +123,7 @@ func (p *AudioPlayback) play(ctx context.Context, reader io.Reader, mimeType str
 // PlayFileContext plays a wav file and closes it when finished. Cancellation
 // stops streaming and returns ctx.Err(). Call it again to play the file a
 // second time.
-func (p *AudioPlayback) PlayFileContext(ctx context.Context, filename string) (int64, error) {
+func (p *playbackStream) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return 0, err
@@ -139,7 +139,7 @@ func (p *AudioPlayback) PlayFileContext(ctx context.Context, filename string) (i
 	return p.PlayContext(ctx, fileReader, "audio/wav")
 }
 
-func (p *AudioPlayback) stream(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
+func (p *playbackStream) stream(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
 	payloadSize := p.calcPlayoutSize()
 	buf := playBufPool.Get()
 	defer playBufPool.Put(buf)
@@ -149,7 +149,7 @@ func (p *AudioPlayback) stream(ctx context.Context, body io.Reader, playWriter i
 	return written, err
 }
 
-func (p *AudioPlayback) streamPCM(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
+func (p *playbackStream) streamPCM(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
 	codec := p.codec
 	payloadSize := p.calcPlayoutSize()
 	buf := playBufPool.Get()
@@ -165,14 +165,14 @@ func (p *AudioPlayback) streamPCM(ctx context.Context, body io.Reader, playWrite
 	return written, err
 }
 
-func (p *AudioPlayback) streamWav(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
+func (p *playbackStream) streamWav(ctx context.Context, body io.Reader, playWriter io.Writer) (int64, error) {
 	codec := p.codec
 	wavReader := audio.NewWavReader(body)
 	if err := wavReader.ReadHeaders(); err != nil {
 		return 0, err
 	}
-	if wavReader.BitsPerSample != uint16(p.BitDepth) {
-		return 0, fmt.Errorf("wav file bitdepth=%d does not match expected=%d", wavReader.BitsPerSample, p.BitDepth)
+	if wavReader.BitsPerSample != uint16(p.bitDepth) {
+		return 0, fmt.Errorf("wav file bitdepth=%d does not match expected=%d", wavReader.BitsPerSample, p.bitDepth)
 	}
 	if wavReader.SampleRate != codec.SampleRate {
 		return 0, fmt.Errorf("wav file samplerate=%d does not match expected=%d", wavReader.SampleRate, codec.SampleRate)
@@ -183,7 +183,7 @@ func (p *AudioPlayback) streamWav(ctx context.Context, body io.Reader, playWrite
 
 	// We need to read and packetize to 20 ms
 	// sampleDurMS := int(codec.SampleDur.Milliseconds())
-	// payloadSize := int(dec.BitsPerSample) / 8 * int(dec.NumChannels) * int(dec.SampleRate) / 1000 * sampleDurMS
+	// payloadSize := int(dec.BitsPerSample) / 8 * int(dec.numChannels) * int(dec.SampleRate) / 1000 * sampleDurMS
 	payloadSize := p.codec.SamplesPCM(int(wavReader.BitsPerSample))
 
 	buf := playBufPool.Get()
@@ -200,12 +200,12 @@ func (p *AudioPlayback) streamWav(ctx context.Context, body io.Reader, playWrite
 	return written, err
 }
 
-func (p *AudioPlayback) calcPlayoutSize() int {
+func (p *playbackStream) calcPlayoutSize() int {
 	codec := &p.codec
 	sampleDurMS := int(codec.SampleDur.Milliseconds())
 
-	bitsPerSample := p.BitDepth
-	numChannels := p.NumChannels
+	bitsPerSample := p.bitDepth
+	numChannels := p.numChannels
 	sampleRate := codec.SampleRate
 	return int(bitsPerSample) / 8 * int(numChannels) * int(sampleRate) / 1000 * sampleDurMS
 }

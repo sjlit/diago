@@ -866,22 +866,8 @@ func (d *Media) EchoContext(ctx context.Context) error {
 	return err
 }
 
-// NewPlayback creates the playback handle for the dialog audio. Nothing is
-// streamed until one of its Play methods is called.
-func (d *Media) NewPlayback() (*AudioPlayback, error) {
-	mprops := MediaProps{}
-	w, err := d.audioWriterProps(&mprops)
-	if err != nil {
-		return nil, err
-	}
-	p := NewAudioPlayback(w, mprops.Codec)
-	p.httpClient = d.httpClient
-	d.armPlaybackTimestampReset(&p)
-	return &p, nil
-}
-
-// NewPlaybackControl creates the playback handle with controls like mute, stop, pause, resume and replay. Playing starts with Play* on the returned handle.
-func (d *Media) NewPlaybackControl() (*AudioPlaybackControl, error) {
+// newPlaybackControl creates the playback handle with controls like mute, stop, pause, resume and replay. Playing starts with Play* on the returned handle.
+func (d *Media) newPlaybackControl() (*playbackControl, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
 	if err != nil {
@@ -891,12 +877,12 @@ func (d *Media) NewPlaybackControl() (*AudioPlaybackControl, error) {
 	// Audio is controled via audio reader/writer
 	control := newAudioControl(w)
 
-	p := AudioPlaybackControl{
-		AudioPlayback: NewAudioPlayback(control, mprops.Codec),
-		control:       control,
+	p := playbackControl{
+		playbackStream: newAudioPlayback(control, mprops.Codec),
+		control:        control,
 	}
 	p.httpClient = d.httpClient
-	d.armPlaybackTimestampReset(&p.AudioPlayback)
+	d.armPlaybackTimestampReset(&p.playbackStream)
 	return &p, nil
 }
 
@@ -905,7 +891,7 @@ func (d *Media) NewPlaybackControl() (*AudioPlaybackControl, error) {
 // timeline by the elapsed wall-clock time. Custom pipelines without an RTP
 // writer handle own their timing: the hook stays nil there instead of
 // dereferencing a missing handle.
-func (d *Media) armPlaybackTimestampReset(p *AudioPlayback) {
+func (d *Media) armPlaybackTimestampReset(p *playbackStream) {
 	if w := d.RTPPacketWriter(); w != nil {
 		p.onPlay = w.ResetTimestamp
 	}

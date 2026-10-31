@@ -35,7 +35,7 @@ func TestIntegrationStreamWAV(t *testing.T) {
 		io.ReadAll(udpDump)
 	}()
 
-	p := NewAudioPlayback(rtpWriter, codec)
+	p := newAudioPlayback(rtpWriter, codec)
 
 	written, err := p.PlayContext(context.Background(), fh, "audio/wav")
 	// written, err := streamWavRTP(fh, rtpWriter, codec)
@@ -53,7 +53,7 @@ func TestIntegrationPlaybackStreamWAV(t *testing.T) {
 	codec := media.CodecAudioUlaw
 	sess.Raddr = net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999}
 
-	p := NewAudioPlayback(bytes.NewBuffer(make([]byte, 0)), codec)
+	p := newAudioPlayback(bytes.NewBuffer(make([]byte, 0)), codec)
 
 	udpDump, err := net.ListenUDP("udp4", &sess.Raddr)
 	require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestIntegrationPlaybackFile(t *testing.T) {
 	}
 
 	t.Run("with control", func(t *testing.T) {
-		playback, err := dialog.NewPlaybackControl()
+		playback, err := dialog.newPlaybackControl()
 		require.NoError(t, err)
 
 		// Stop before play is cleared when new play starts

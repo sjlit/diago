@@ -439,7 +439,7 @@ func withMediaProfile(name string, conf MediaConfig) agentOption {
 }
 
 // withHTTPClient sets the HTTP client used by URL playback
-// (AudioPlayback.PlayURL/PlayURLContext) on the dialogs of this agent. Nil is
+// (Playback.PlayURL/PlayURLContext) on the dialogs of this agent. Nil is
 // rejected. The default client has a 20s timeout; set
 // MediaConfig.HTTPClient directly when a whole config is provided.
 func withHTTPClient(client *http.Client) agentOption {

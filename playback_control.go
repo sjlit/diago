@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 )
 
-// PlaybackState represents current playback state of AudioPlaybackControl
+// PlaybackState represents current playback state of playbackControl
 type PlaybackState uint32
 
 // PlaybackStateIdle, PlaybackStatePlaying, PlaybackStatePaused and
-// PlaybackStateStopped are the states reported by AudioPlaybackControl.State.
+// PlaybackStateStopped are the states reported by playbackControl.State.
 const (
 	PlaybackStateIdle PlaybackState = iota
 	PlaybackStatePlaying
@@ -61,10 +61,10 @@ func (replaySignal) Is(target error) bool {
 	return target == io.EOF || target == ErrPlaybackReplayed
 }
 
-// AudioPlaybackControl is playback with mute, stop, pause, resume and
+// playbackControl is playback with mute, stop, pause, resume and
 // replay controls.
-type AudioPlaybackControl struct {
-	AudioPlayback
+type playbackControl struct {
+	playbackStream
 
 	control *audioControl
 }
@@ -79,36 +79,36 @@ func newAudioControl(writer io.Writer) *audioControl {
 	}
 }
 
-// NewAudioPlaybackControl wraps a playback with controls. Prefer
-// Media.NewPlaybackControl on a dialog.
-func NewAudioPlaybackControl(a AudioPlayback) AudioPlaybackControl {
+// newAudioPlaybackControl wraps a playback with controls. Prefer
+// Media.newPlaybackControl on a dialog.
+func newAudioPlaybackControl(a playbackStream) playbackControl {
 	// Replace audio playback writer with control
 	writer := a.writer
 	control := newAudioControl(writer)
 	a.writer = control
-	return AudioPlaybackControl{AudioPlayback: a, control: control}
+	return playbackControl{playbackStream: a, control: control}
 }
 
 // Mute mutes or unmutes the outgoing audio without stopping playout.
-func (p *AudioPlaybackControl) Mute(mute bool) {
+func (p *playbackControl) Mute(mute bool) {
 	p.control.Mute(mute)
 }
 
 // Stop stops playback. Ongoing Play returns error matching ErrPlaybackStopped
 // and io.EOF.
-func (p *AudioPlaybackControl) Stop() {
+func (p *playbackControl) Stop() {
 	p.control.Stop()
 }
 
 // Pause pauses playback. Playback position freezes and no RTP packets are
 // sent, which remote side experiences as silence. Use Resume to continue from
 // the same position.
-func (p *AudioPlaybackControl) Pause() {
+func (p *playbackControl) Pause() {
 	p.control.Pause()
 }
 
 // Resume resumes playback paused with Pause
-func (p *AudioPlaybackControl) Resume() {
+func (p *playbackControl) Resume() {
 	p.control.Resume()
 }
 
@@ -117,12 +117,12 @@ func (p *AudioPlaybackControl) Resume() {
 // playback is active. Ongoing PlayContext returns ErrPlaybackReplayed and the
 // playback source is restarted. Sources opened with PlayFileContext or
 // PlayURLContext can always replay; a generic reader requires io.Seeker.
-func (p *AudioPlaybackControl) Replay() error {
+func (p *playbackControl) Replay() error {
 	return p.control.Replay()
 }
 
 // State returns current playback state
-func (p *AudioPlaybackControl) State() PlaybackState {
+func (p *playbackControl) State() PlaybackState {
 	return p.control.State()
 }
 
@@ -131,13 +131,13 @@ func (p *AudioPlaybackControl) State() PlaybackState {
 // another goroutine) playback restarts if reader implements io.Seeker,
 // otherwise error ErrSourceNotReplayable is returned; use PlayFileContext or
 // PlayURLContext for non-seekable sources.
-func (p *AudioPlaybackControl) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
+func (p *playbackControl) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
 
 	var written int64
 	for {
-		n, err := p.AudioPlayback.PlayContext(ctx, reader, mimeType)
+		n, err := p.playbackStream.PlayContext(ctx, reader, mimeType)
 		written += n
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return written, ctxErr
@@ -158,7 +158,7 @@ func (p *AudioPlaybackControl) PlayContext(ctx context.Context, reader io.Reader
 // PlayFileContext plays wav file with replay support, stopping with ctx.Err()
 // when the context is canceled. On replay request the file is reopened and
 // playback restarts from the beginning.
-func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename string) (int64, error) {
+func (p *playbackControl) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
 
@@ -178,7 +178,7 @@ func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename str
 
 		// Using bufio to improve disk reading
 		fileReader := bufio.NewReaderSize(file, 64*1024)
-		n, err := p.AudioPlayback.PlayContext(ctx, fileReader, "audio/wav")
+		n, err := p.playbackStream.PlayContext(ctx, fileReader, "audio/wav")
 		written += n
 		_ = file.Close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -193,7 +193,7 @@ func (p *AudioPlaybackControl) PlayFileContext(ctx context.Context, filename str
 // PlayURLContext plays wav content from url with replay support, stopping
 // with ctx.Err() when the context is canceled. On replay request the url is
 // refetched and playback restarts from the beginning.
-func (p *AudioPlaybackControl) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
+func (p *playbackControl) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	p.control.enterPlay()
 	defer p.control.exitPlay()
 

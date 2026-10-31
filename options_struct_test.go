@@ -43,3 +43,22 @@ func TestAckOptionsHeaders(t *testing.T) {
 	require.NotNil(t, ackReq)
 	require.NotNil(t, ackReq.GetHeader("X-Ack"))
 }
+
+func TestMediaNewPlaybackUnified(t *testing.T) {
+	d := newTestMedia(t)
+
+	plain, err := d.NewPlayback()
+	require.NoError(t, err)
+	require.Nil(t, plain.dtmfReader)
+	require.NoError(t, plain.Close())
+	require.NoError(t, plain.Close(), "Playback.Close must be idempotent")
+
+	withDTMF, err := d.NewPlayback(PlaybackOptions{
+		ReplayKeys: "*",
+		OnDTMF:     func(rune) {},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, withDTMF.dtmfReader)
+	require.NotNil(t, withDTMF.DTMF())
+	require.NoError(t, withDTMF.Close())
+}

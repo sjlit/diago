@@ -27,7 +27,7 @@ const playbackURLRangeSize = 65536
 // (MediaConfig.HTTPClient / withHTTPClient). The default client carries a 20s
 // timeout; wrap the transport with withHTTPClient when request logging or
 // custom TLS is needed.
-func (p *AudioPlayback) httpClientOrDefault() *http.Client {
+func (p *playbackStream) httpClientOrDefault() *http.Client {
 	if p.httpClient != nil {
 		return p.httpClient
 	}
@@ -37,7 +37,7 @@ func (p *AudioPlayback) httpClientOrDefault() *http.Client {
 // PlayURLContext plays wav content from url. The context bounds the request
 // and the streaming; a context without a deadline keeps the legacy 10s cap on
 // the initial request.
-func (p *AudioPlayback) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
+func (p *playbackStream) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	var written int64
 	err := p.playURL(ctx, urlStr, &written)
 	if errors.Is(err, io.EOF) {
@@ -49,7 +49,7 @@ func (p *AudioPlayback) PlayURLContext(ctx context.Context, urlStr string) (int6
 	return written, err
 }
 
-func (p *AudioPlayback) playURL(ctx context.Context, urlStr string, written *int64) error {
+func (p *playbackStream) playURL(ctx context.Context, urlStr string, written *int64) error {
 	// Legacy behavior: without a caller deadline keep a 10s cap for the
 	// initial request (chunked range requests stream under the same ctx).
 	requestCtx := ctx

@@ -167,7 +167,7 @@ Breaking changes since the first v2 preview (same module path):
 | `MatchDialog` / `NewDialog` | `FindCall` / `NewCall` |
 | `HangupAndClose` | removed: `Close(ctx)` performs teardown and release |
 | `WithHeader` | removed: use the operation options `Headers` field |
-| `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `NewPlayback*` / `NewDTMF*` / `NewRingtone` |
+| `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `NewPlayback` / `NewDTMFReader` / `NewRingtone` |
 | `PlayMusicOnHold` | `StartMusicOnHold` |
 | `WithAudioReader*` / `WithAudioWriter*` | `WithReader*` / `WithWriter*` |
 | `Transport.Transport` | `Transport.Network` |

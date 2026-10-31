@@ -91,12 +91,12 @@ func (r *trackReader) consumed() int64 {
 	return r.consumN.Load()
 }
 
-func newTestControl(w io.Writer) AudioPlaybackControl {
+func newTestControl(w io.Writer) playbackControl {
 	codec := media.CodecAudioUlaw
-	return NewAudioPlaybackControl(NewAudioPlayback(w, codec))
+	return newAudioPlaybackControl(newAudioPlayback(w, codec))
 }
 
-func waitPlaying(t *testing.T, p *AudioPlaybackControl) {
+func waitPlaying(t *testing.T, p *playbackControl) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		return p.State() == PlaybackStatePlaying
@@ -332,14 +332,14 @@ func TestPlaybackControlReplayFile(t *testing.T) {
 	}
 
 	// Measure single pass first
-	single, err := dialog().NewPlaybackControl()
+	single, err := dialog().newPlaybackControl()
 	require.NoError(t, err)
 	singleWritten, err := single.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
 	require.Greater(t, singleWritten, int64(10000))
 
 	// Replay once, so at least double amount should be written
-	playback, err := dialog().NewPlaybackControl()
+	playback, err := dialog().newPlaybackControl()
 	require.NoError(t, err)
 
 	done := make(chan error, 1)

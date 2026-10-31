@@ -22,48 +22,14 @@ var (
 	dtmfChSize = 16
 )
 
-// PlaybackDTMFOption configures AudioPlaybackDTMF
-type PlaybackDTMFOption func(*AudioPlaybackDTMF) error
-
-// WithInterruptKeys sets DTMF keys that interrupt playback. Default is any
-// key interrupts. Empty string disables interrupting.
-func WithInterruptKeys(keys string) PlaybackDTMFOption {
-	return func(p *AudioPlaybackDTMF) error {
-		p.interruptKeys = parseDTMFKeys(keys)
-		return nil
-	}
-}
-
-// WithReplayKeys sets DTMF keys that replay playback from the beginning.
-// Default is no replay keys.
-func WithReplayKeys(keys string) PlaybackDTMFOption {
-	return func(p *AudioPlaybackDTMF) error {
-		p.replayKeys = parseDTMFKeys(keys)
-		return nil
-	}
-}
-
-// WithOnDTMF registers additional callback invoked on every received DTMF.
-// It is executed on RTP reading goroutine and MUST NOT block.
-func WithOnDTMF(fn func(dtmf rune)) PlaybackDTMFOption {
-	return func(p *AudioPlaybackDTMF) error {
-		if fn == nil {
-			return fmt.Errorf("%w: WithOnDTMF: fn is nil", ErrInvalidOption)
-		}
-		p.onDTMF = fn
-		return nil
-	}
-}
-
-// AudioPlaybackDTMF is playback that can be interrupted or replayed with
-// in-band RTP DTMF (telephone-event).
+// Playback streams audio into a dialog with pause, stop, resume, replay and
+// mute controls, plus optional in-band RTP DTMF handling.
 //
-// All received DTMF keys are delivered to DTMF() channel, so playback decision
-// like "which key caller pressed" can be done after play.
-//
-// PlaybackControl (Stop, Pause, Resume, Replay, Mute) can be used in parallel.
-type AudioPlaybackDTMF struct {
-	*AudioPlaybackControl
+// Create it with Media.NewPlayback. With no PlaybackOptions it streams without
+// DTMF; passing options enables DTMF interruption/replay and delivers received
+// keys through DTMF().
+type Playback struct {
+	*playbackControl
 
 	// nil interruptKeys means any key interrupts
 	interruptKeys map[rune]struct{}
@@ -89,101 +55,132 @@ type AudioPlaybackDTMF struct {
 
 // logger returns the dialog logger with the media package default as
 // fallback (manually constructed handles may not carry a dialog).
-func (p *AudioPlaybackDTMF) logger() *slog.Logger {
+func (p *Playback) logger() *slog.Logger {
 	if p.dm != nil {
 		return p.dm.logger()
 	}
 	return media.DefaultLogger()
 }
 
-// NewPlaybackDTMF creates the playback handle controlled with in-band RTP
-// DTMF. Nothing is streamed until one of its Play methods is called.
+// PlaybackOptions configures Media.NewPlayback.
+type PlaybackOptions struct {
+	// InterruptKeys lists DTMF keys that interrupt playback. Empty keeps the
+	// default (any key interrupts) when DTMF control is enabled.
+	InterruptKeys string
+	// DisableInterrupt disables DTMF interruption entirely.
+	DisableInterrupt bool
+	// ReplayKeys lists DTMF keys that replay playback from the beginning.
+	ReplayKeys string
+	// OnDTMF is invoked for every received DTMF digit. It runs on the RTP
+	// reading goroutine and must not block.
+	OnDTMF func(rune)
+}
+
+// NewPlayback creates the unified playback handle. With no options it streams
+// without DTMF control. Passing options enables DTMF interruption/replay.
 //
-// By default any DTMF key interrupts playback. Use options to customize:
-//
-//	pb, _ := dialog.NewPlaybackDTMF(
-//	    WithInterruptKeys("1234567890"), // only number keys interrupt
-//	    WithReplayKeys("*"),             // star key replays prompt
-//	)
-//	go pb.PlayFileContext(ctx, "menu.wav")
-//	dtmf := <-pb.DTMF()
-//	pb.Close()
-//
-// While playback is active DTMF keys are detected by reading audio RTP in
-// background. Other audio reading (NewDTMFReader, EchoContext, recording)
-// MUST NOT be used until Close is called.
-func (d *Media) NewPlaybackDTMF(opts ...PlaybackDTMFOption) (*AudioPlaybackDTMF, error) {
-	pb, err := d.NewPlaybackControl()
+// Nothing is streamed until one of the Play methods is called.
+func (d *Media) NewPlayback(opts ...PlaybackOptions) (*Playback, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("%w: NewPlayback accepts at most one PlaybackOptions", ErrInvalidOption)
+	}
+	control, err := d.newPlaybackControl()
 	if err != nil {
 		return nil, err
+	}
+
+	p := &Playback{
+		playbackControl: control,
+		dtmfCh:          make(chan rune, dtmfChSize),
+		dm:              d,
+	}
+	if len(opts) == 0 {
+		return p, nil
 	}
 
 	dtmfReader, err := d.NewDTMFReader()
 	if err != nil {
 		return nil, err
 	}
-
 	readCtx, readCancel := context.WithCancel(context.Background())
-	p := &AudioPlaybackDTMF{
-		AudioPlaybackControl: pb,
-		dtmfCh:               make(chan rune, dtmfChSize),
-		dtmfReader:           dtmfReader,
-		dm:                   d,
-		readCtx:              readCtx,
-		readCancel:           readCancel,
-		stopCh:               make(chan struct{}),
-	}
-	for _, o := range opts {
-		if o == nil {
-			continue
-		}
-		if err := o(p); err != nil {
-			readCancel()
-			return nil, err
-		}
-	}
+	p.dtmfReader = dtmfReader
+	p.readCtx = readCtx
+	p.readCancel = readCancel
+	p.stopCh = make(chan struct{})
 
+	o := opts[0]
+	if o.DisableInterrupt {
+		p.interruptKeys = map[rune]struct{}{}
+	} else if o.InterruptKeys != "" {
+		p.interruptKeys = parseDTMFKeys(o.InterruptKeys)
+	}
+	if o.ReplayKeys != "" {
+		p.replayKeys = parseDTMFKeys(o.ReplayKeys)
+	}
+	if o.OnDTMF != nil {
+		p.onDTMF = o.OnDTMF
+	}
 	dtmfReader.OnDTMF(p.handleDTMF)
 	return p, nil
 }
 
 // DTMF returns channel of DTMF keys received during playback. Channel has
 // buffer, on overflow keys are dropped.
-func (p *AudioPlaybackDTMF) DTMF() <-chan rune {
+func (p *Playback) DTMF() <-chan rune {
 	return p.dtmfCh
 }
 
 // PlayContext plays reader content with DTMF control, stopping with ctx.Err()
 // when the context is canceled. DTMF reading continues until Close.
-func (p *AudioPlaybackDTMF) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
+func (p *Playback) PlayContext(ctx context.Context, reader io.Reader, mimeType string) (int64, error) {
 	p.startReadLoop()
-	return p.AudioPlaybackControl.PlayContext(ctx, reader, mimeType)
+	return p.playbackControl.PlayContext(ctx, reader, mimeType)
 }
 
 // PlayFileContext plays wav file with DTMF control, stopping with ctx.Err()
 // when the context is canceled.
-func (p *AudioPlaybackDTMF) PlayFileContext(ctx context.Context, filename string) (int64, error) {
+func (p *Playback) PlayFileContext(ctx context.Context, filename string) (int64, error) {
 	p.startReadLoop()
-	return p.AudioPlaybackControl.PlayFileContext(ctx, filename)
+	return p.playbackControl.PlayFileContext(ctx, filename)
 }
 
 // PlayURLContext plays wav from url with DTMF control, stopping with
 // ctx.Err() when the context is canceled.
-func (p *AudioPlaybackDTMF) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
+func (p *Playback) PlayURLContext(ctx context.Context, urlStr string) (int64, error) {
 	p.startReadLoop()
-	return p.AudioPlaybackControl.PlayURLContext(ctx, urlStr)
+	return p.playbackControl.PlayURLContext(ctx, urlStr)
 }
 
-// Close stops DTMF reading. It should be called when DTMF playback is not
-// needed anymore, to allow other audio reading on the dialog.
-//
-// Cancellation goes through the reader gate (no conn deadlines): the
-// in-flight read is interrupted and the reader is restored afterwards.
-// dm may be nil when the struct is constructed manually (test stubs); the
-// read loop simply has no media to arm in that case.
-func (p *AudioPlaybackDTMF) Close() error {
+// PlayReader plays reader content. An empty mimeType streams it as raw PCM.
+func (p *Playback) PlayReader(ctx context.Context, reader io.Reader, mimeType string) error {
+	_, err := p.PlayContext(ctx, reader, mimeType)
+	return err
+}
+
+// PlayFile plays a WAV file.
+func (p *Playback) PlayFile(ctx context.Context, filename string) error {
+	_, err := p.PlayFileContext(ctx, filename)
+	return err
+}
+
+// PlayURL plays WAV content from a URL.
+func (p *Playback) PlayURL(ctx context.Context, urlStr string) error {
+	_, err := p.PlayURLContext(ctx, urlStr)
+	return err
+}
+
+// Close stops playback and DTMF reading, then waits for the read loop to
+// exit. It is idempotent. Cancellation goes through the reader gate (no conn
+// deadlines): the in-flight read is interrupted and the reader is restored
+// afterwards.
+func (p *Playback) Close() error {
 	p.closeOnce.Do(func() {
-		close(p.stopCh)
+		if p.playbackControl != nil {
+			p.playbackControl.Stop()
+		}
+		if p.stopCh != nil {
+			close(p.stopCh)
+		}
 		if p.readCancel != nil {
 			p.readCancel()
 		}
@@ -193,7 +190,10 @@ func (p *AudioPlaybackDTMF) Close() error {
 }
 
 // startReadLoop starts DTMF reading in background. It is idempotent.
-func (p *AudioPlaybackDTMF) startReadLoop() {
+func (p *Playback) startReadLoop() {
+	if p.dtmfReader == nil {
+		return
+	}
 	if !p.started.CompareAndSwap(false, true) {
 		return
 	}
@@ -201,7 +201,7 @@ func (p *AudioPlaybackDTMF) startReadLoop() {
 	go p.readLoop()
 }
 
-func (p *AudioPlaybackDTMF) readLoop() {
+func (p *Playback) readLoop() {
 	defer p.wg.Done()
 
 	buf := make([]byte, media.RTPBufSize)
@@ -245,7 +245,7 @@ func (p *AudioPlaybackDTMF) readLoop() {
 
 // handleDTMF routes DTMF to playback actions and DTMF channel.
 // It is executed on RTP reading goroutine and MUST NOT block.
-func (p *AudioPlaybackDTMF) handleDTMF(dtmf rune) error {
+func (p *Playback) handleDTMF(dtmf rune) error {
 	replayed := false
 	if _, ok := p.replayKeys[dtmf]; ok {
 		if err := p.control.Replay(); err != nil {

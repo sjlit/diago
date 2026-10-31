@@ -91,11 +91,11 @@ func TestMediaGuardsNotAnswered(t *testing.T) {
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create playback control", func(t *testing.T) {
-		_, err := d.NewPlaybackControl()
+		_, err := d.newPlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create playback dtmf", func(t *testing.T) {
-		_, err := d.NewPlaybackDTMF()
+		_, err := d.NewPlayback(PlaybackOptions{})
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 	})
 	t.Run("create ringtone playback", func(t *testing.T) {
@@ -143,11 +143,11 @@ func TestMediaGuardsClosed(t *testing.T) {
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create playback control", func(t *testing.T) {
-		_, err := d.NewPlaybackControl()
+		_, err := d.newPlaybackControl()
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create playback dtmf", func(t *testing.T) {
-		_, err := d.NewPlaybackDTMF()
+		_, err := d.NewPlayback(PlaybackOptions{})
 		assert.ErrorIs(t, err, ErrDialogClosed)
 	})
 	t.Run("create ringtone playback", func(t *testing.T) {
@@ -252,9 +252,9 @@ func TestMediaPlaybackTimestampResetHook(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pb.onPlay)
 
-	pbc, err := d.NewPlaybackControl()
+	pbc, err := d.newPlaybackControl()
 	require.NoError(t, err)
-	require.NotNil(t, pbc.AudioPlayback.onPlay)
+	require.NotNil(t, pbc.playbackStream.onPlay)
 }
 
 // TestMediaPlaybackWithoutRTPWriterHandle locks the custom-IO pipeline
@@ -275,9 +275,9 @@ func TestMediaPlaybackWithoutRTPWriterHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, pb.onPlay)
 
-	pbc, err := d.NewPlaybackControl()
+	pbc, err := d.newPlaybackControl()
 	require.NoError(t, err)
-	require.Nil(t, pbc.AudioPlayback.onPlay)
+	require.Nil(t, pbc.playbackStream.onPlay)
 }
 
 // TestMediaClosedRejectsInstall locks the teardown contract: once the

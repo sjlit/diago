@@ -64,7 +64,7 @@ func (t Tone) WithVolume(scale float64) Tone {
 }
 
 // ToneReader synthesizes a tone as PCM16 little endian interleaved samples.
-// The output feeds AudioPlayback ("audio/pcm") or audio.PCMEncoderWriter.
+// The output feeds playbackStream ("audio/pcm") or audio.PCMEncoderWriter.
 type ToneReader struct {
 	tone        Tone
 	sampleRate  int

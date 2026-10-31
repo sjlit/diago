@@ -63,9 +63,9 @@ func PlaybackDTMF(ctx context.Context, inDialog *diago.InboundCall) error {
 		return err
 	}
 
-	pb, err := inDialog.NewPlaybackDTMF(
-		diago.WithReplayKeys("*"),
-	)
+	pb, err := inDialog.NewPlayback(diago.PlaybackOptions{
+		ReplayKeys: "*",
+	})
 	if err != nil {
 		return err
 	}
