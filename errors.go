@@ -119,6 +119,10 @@ var (
 	ErrManagedMethod = errors.New("managed by the agent")
 	// ErrHandleAfterServe is returned by Handle once the agent is serving.
 	ErrHandleAfterServe = errors.New("must be called before Serve")
+	// ErrRawCallUnsupported is returned when an operation needs the raw sipgo
+	// dialog (for example REFER or WithOriginator) but the supplied Call does
+	// not implement RawCall.
+	ErrRawCallUnsupported = errors.New("raw SIP dialog not available")
 	// ErrBridgeNil is returned by DialBridge when the bridge is nil.
 	ErrBridgeNil = errors.New("bridge is nil")
 )

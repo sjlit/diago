@@ -48,9 +48,15 @@ type Call interface {
 	// Media returns the media half of the dialog. It is never nil and
 	// stays valid for the dialog's lifetime.
 	Media() *Media
+	Close() error
+}
+
+// RawCall exposes the underlying sipgo dialog. It is the explicit escape
+// hatch for features diago does not wrap; core call operations do not depend
+// on it.
+type RawCall interface {
 	SIP() *Dialog
 	Do(ctx context.Context, req *Request) (*Response, error)
-	Close() error
 }
 
 var (
@@ -63,6 +69,10 @@ var (
 //
 
 func dialogRefer(ctx context.Context, d Call, recipient URI, referTo URI, refferedBy URI, params *signalParams) error {
+	raw, ok := d.(RawCall)
+	if !ok {
+		return fmt.Errorf("refer: %w", ErrRawCallUnsupported)
+	}
 	if d.State() != CallStateConfirmed {
 		return fmt.Errorf("refer: %w", ErrDialogNotAnswered)
 	}
@@ -96,7 +106,7 @@ func dialogRefer(ctx context.Context, d Call, recipient URI, referTo URI, reffer
 		}
 	}
 
-	res, err := d.Do(ctx, req)
+	res, err := raw.Do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -196,6 +206,10 @@ func dialogHandleRefer(d Call, dg *Agent, req *Request, tx ServerTransaction, on
 }
 
 func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onReferDialog OnReferFunc, referReq *Request) error {
+	raw, ok := d.(RawCall)
+	if !ok {
+		return fmt.Errorf("refer: %w", ErrRawCallUnsupported)
+	}
 
 	// TODO after this we could get BYE immediately, but caller would not be able
 	// to take control over refer dialog
@@ -248,7 +262,7 @@ func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onRe
 		frag := fmt.Sprintf("SIP/2.0 %d %s", statusCode, reason)
 		req.SetBody([]byte(frag))
 
-		res, err := d.Do(ctx, req)
+		res, err := raw.Do(ctx, req)
 		if err != nil {
 			return err
 		}

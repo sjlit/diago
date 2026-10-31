@@ -269,7 +269,11 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 		// In case originator then:
 		// - check do we support this media formats by conf
 		// - if we do, then filter and pass to dial endpoint filtered
-		origInvite := originator.SIP().InviteRequest
+		origRaw, ok := originator.(RawCall)
+		if !ok {
+			return fmt.Errorf("originator: %w", ErrRawCallUnsupported)
+		}
+		origInvite := origRaw.SIP().InviteRequest
 		if fromHDR := inviteReq.From(); fromHDR == nil {
 			// From header should be preserved from originator
 			fromHDROrig := origInvite.From()
