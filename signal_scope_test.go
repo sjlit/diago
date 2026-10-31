@@ -36,7 +36,6 @@ func TestSignalOptionValidation(t *testing.T) {
 		{"WithOnResponse rejects nil", WithOnResponse(nil)},
 		{"WithOnMediaUpdate rejects nil", WithOnMediaUpdate(nil)},
 		{"WithOnRefer rejects nil", WithOnRefer(nil)},
-		{"WithOnReferNotify rejects nil", WithOnReferNotify(nil)},
 		{"WithRequestMutator rejects nil", WithRequestMutator(nil)},
 		{"WithResponseMutator rejects nil", WithResponseMutator(nil)},
 		{"WithDialogTransport rejects empty", WithDialogTransport("")},

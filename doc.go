@@ -57,12 +57,10 @@
 //
 // # Options
 //
-// Per-call behavior is configured with the With* option constructors. Most
-// APIs take the option interface for their operation (ResponseOption,
-// AnswerOption, InviteOption, DialOption, RegisterOption, ...) and each
-// constructor implements only the interfaces it is valid for: passing an
-// option an API does not consume is a compile error. Call.Close takes the
-// CloseOptions struct instead.
+// Per-call behavior is configured with the With* option constructors where
+// the operation still uses functional options (Answer, Invite, Dial, Register).
+// Ack, Response, Request, Hold, Refer and Close take their XxxOptions struct
+// instead; fields are validated when the operation runs.
 //
 // # Concurrency and contexts
 //

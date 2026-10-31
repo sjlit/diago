@@ -6,6 +6,7 @@ package diago
 import (
 	"fmt"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
@@ -13,24 +14,19 @@ import (
 	"github.com/sjlit/diago/v2/media"
 )
 
-// SignalOption is implemented by every option constructor. APIs take the
-// interface matching their operation (for example AnswerOption for Answer), so
-// an option that the operation does not consume fails to compile instead of
-// being silently ignored.
+// SignalOption is implemented by option constructors used by APIs that still
+// take functional options (for example AnswerOption for Answer). Ack, Response,
+// Request, Hold, Refer and Close take their XxxOptions struct instead, so an
+// option that the operation does not consume fails to compile.
 type SignalOption interface {
 	applySignal(*signalParams) error
 }
 
-// The per-operation option interfaces below define the valid option set of
-// each API. They are implemented only by the With* constructors of this
-// package (the marker methods are unexported), so compiling an API call is the
-// option-scope check.
+// The remaining per-operation option interfaces below define the valid option
+// set of APIs that still use functional options. They are implemented only by
+// the With* constructors of this package (the marker methods are unexported),
+// so compiling an API call is the option-scope check.
 type (
-	// ResponseOption configures Trying, Ringing, Progress and RespondSDP.
-	ResponseOption interface {
-		SignalOption
-		isResponseOption()
-	}
 	// ProgressMediaOption configures ProgressMedia (183 with early media).
 	ProgressMediaOption interface {
 		SignalOption
@@ -40,27 +36,6 @@ type (
 	AnswerOption interface {
 		SignalOption
 		isAnswerOption()
-	}
-	// RequestOption configures in-dialog requests without media negotiation:
-	// ReInvite and Unhold.
-	RequestOption interface {
-		SignalOption
-		isRequestOption()
-	}
-	// HoldOption configures Hold (a ReInvite with optional hold music).
-	HoldOption interface {
-		SignalOption
-		isHoldOption()
-	}
-	// AckOption configures the final ACK of an outbound call.
-	AckOption interface {
-		SignalOption
-		isAckOption()
-	}
-	// ReferOption configures REFER on both caller and callee dialogs.
-	ReferOption interface {
-		SignalOption
-		isReferOption()
 	}
 	// InviteOption configures the initial INVITE of an outbound call.
 	InviteOption interface {
@@ -130,6 +105,129 @@ func closeSignalParams(opts ...CloseOptions) (*signalParams, error) {
 		return nil, fmt.Errorf("%w: Close accepts at most one CloseOptions", ErrInvalidOption)
 	}
 	return opts[0].signalParams()
+}
+
+// AckOptions configures the final ACK of an outbound call.
+type AckOptions struct {
+	Headers       []Header
+	Contact       *ContactHeader
+	MutateRequest func(req *Request) error
+}
+
+func (o AckOptions) signalParams() (*signalParams, error) {
+	return messageSignalParams(o.Headers, o.Contact, nil, o.MutateRequest, nil)
+}
+
+// ResponseOptions configures Trying, Ringing, Progress and RespondSDP.
+type ResponseOptions struct {
+	Headers        []Header
+	Contact        *ContactHeader
+	MutateResponse func(res *Response) error
+}
+
+func (o ResponseOptions) signalParams() (*signalParams, error) {
+	return messageSignalParams(o.Headers, o.Contact, nil, nil, o.MutateResponse)
+}
+
+// RequestOptions configures in-dialog requests without media negotiation:
+// ReInvite and Unhold.
+type RequestOptions struct {
+	Headers       []Header
+	Contact       *ContactHeader
+	Body          []byte
+	MutateRequest func(req *Request) error
+}
+
+func (o RequestOptions) signalParams() (*signalParams, error) {
+	return messageSignalParams(o.Headers, o.Contact, o.Body, o.MutateRequest, nil)
+}
+
+// HoldOptions configures Hold (a re-INVITE with optional hold music).
+type HoldOptions struct {
+	Headers       []Header
+	Contact       *ContactHeader
+	Body          []byte
+	MutateRequest func(req *Request) error
+	MusicOnHold   *audio.Tone
+}
+
+func (o HoldOptions) signalParams() (*signalParams, error) {
+	p, err := messageSignalParams(o.Headers, o.Contact, o.Body, o.MutateRequest, nil)
+	if err != nil {
+		return nil, err
+	}
+	if o.MusicOnHold != nil {
+		p.Media.MusicOnHold = o.MusicOnHold
+	}
+	return p, nil
+}
+
+// ReferOptions configures REFER on both caller and callee dialogs.
+type ReferOptions struct {
+	Headers       []Header
+	Contact       *ContactHeader
+	MutateRequest func(req *Request) error
+	OnReferNotify func(statusCode int)
+}
+
+func (o ReferOptions) signalParams() (*signalParams, error) {
+	p, err := messageSignalParams(o.Headers, o.Contact, nil, o.MutateRequest, nil)
+	if err != nil {
+		return nil, err
+	}
+	if o.OnReferNotify != nil {
+		p.Dialog.OnReferNotify = o.OnReferNotify
+	}
+	return p, nil
+}
+
+func messageSignalParams(headers []Header, contact *ContactHeader, body []byte, mutateReq func(*Request) error, mutateResp func(*Response) error) (*signalParams, error) {
+	p := &signalParams{}
+	for _, h := range headers {
+		if h == nil {
+			return nil, fmt.Errorf("%w: nil header provided", ErrInvalidOption)
+		}
+	}
+	p.Msg.Headers = slices.Clone(headers)
+	if contact != nil {
+		p.Msg.Contact = contact
+	}
+	if body != nil {
+		p.Msg.Body = slices.Clone(body)
+	}
+	if mutateReq != nil {
+		p.Msg.MutateRequest = mutateReq
+	}
+	if mutateResp != nil {
+		p.Msg.MutateResponse = mutateResp
+	}
+	return p, nil
+}
+
+func singleSignalParams[T any](name string, opts []T, apply func(T) (*signalParams, error)) (*signalParams, error) {
+	if len(opts) == 0 {
+		return &signalParams{}, nil
+	}
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("%w: %s accepts at most one options value", ErrInvalidOption, name)
+	}
+	return apply(opts[0])
+}
+
+func ackSignalParams(opts ...AckOptions) (*signalParams, error) {
+	return singleSignalParams("Ack", opts, AckOptions.signalParams)
+}
+func responseSignalParams(opts ...ResponseOptions) (*signalParams, error) {
+	return singleSignalParams("Response", opts, ResponseOptions.signalParams)
+}
+func requestSignalParams(opts ...RequestOptions) (*signalParams, error) {
+	return singleSignalParams("Request", opts, RequestOptions.signalParams)
+}
+func holdSignalParams(opts ...HoldOptions) (*signalParams, error) {
+	return singleSignalParams("Hold", opts, HoldOptions.signalParams)
+}
+func referSignalParams(opts ...ReferOptions) (*signalParams, error) {
+	return singleSignalParams("Refer", opts, ReferOptions.signalParams)
 }
 
 // signalParams carries per-call signaling customizations applied by the With*
@@ -482,10 +580,9 @@ func WithMediaSession(m *media.MediaSession) mediaSessionOption {
 	}
 }
 
-// WithMusicOnHold sets the hold music played by Hold for this call, replacing
-// the dialog-level MediaConfig.MusicOnHold. A zero tone (no segments)
-// explicitly disables hold music for the call. On Invite/Answer it becomes
-// the dialog-level default; on Hold it applies to that hold only.
+// WithMusicOnHold sets the dialog-level hold music used by Answer/Invite and
+// ProgressMedia. Hold uses HoldOptions.MusicOnHold per call. A zero tone (no
+// segments) explicitly disables hold music for the call.
 func WithMusicOnHold(tone audio.Tone) musicOnHoldOption {
 	return func(p *signalParams) error {
 		t := tone
@@ -523,19 +620,6 @@ func WithOnRefer(fn OnReferFunc) onReferOption {
 			return fmt.Errorf("%w: WithOnRefer: fn is nil", ErrInvalidOption)
 		}
 		p.Dialog.OnRefer = fn
-		return nil
-	}
-}
-
-// WithOnReferNotify sets the callback receiving the transfer status
-// (NOTIFY sipfrag code) of an outgoing REFER sent with Refer.
-// Refer only.
-func WithOnReferNotify(fn func(statusCode int)) onReferNotifyOption {
-	return func(p *signalParams) error {
-		if fn == nil {
-			return fmt.Errorf("%w: WithOnReferNotify: fn is nil", ErrInvalidOption)
-		}
-		p.Dialog.OnReferNotify = fn
 		return nil
 	}
 }
@@ -712,13 +796,8 @@ func WithRegistrationDetached() registrationDetachedOption {
 type headersOption func(*signalParams) error
 
 func (o headersOption) applySignal(p *signalParams) error { return o(p) }
-func (headersOption) isResponseOption()                   {}
 func (headersOption) isProgressMediaOption()              {}
 func (headersOption) isAnswerOption()                     {}
-func (headersOption) isRequestOption()                    {}
-func (headersOption) isHoldOption()                       {}
-func (headersOption) isAckOption()                        {}
-func (headersOption) isReferOption()                      {}
 func (headersOption) isInviteOption()                     {}
 func (headersOption) isDialOption()                       {}
 func (headersOption) isRegisterAttemptOption()            {}
@@ -728,13 +807,8 @@ func (headersOption) isRegisterOption()                   {}
 type contactOption func(*signalParams) error
 
 func (o contactOption) applySignal(p *signalParams) error { return o(p) }
-func (contactOption) isResponseOption()                   {}
 func (contactOption) isProgressMediaOption()              {}
 func (contactOption) isAnswerOption()                     {}
-func (contactOption) isRequestOption()                    {}
-func (contactOption) isHoldOption()                       {}
-func (contactOption) isAckOption()                        {}
-func (contactOption) isReferOption()                      {}
 func (contactOption) isInviteOption()                     {}
 func (contactOption) isDialOption()                       {}
 func (contactOption) isRegisterAttemptOption()            {}
@@ -747,8 +821,6 @@ type bodyOption func(*signalParams) error
 func (o bodyOption) applySignal(p *signalParams) error { return o(p) }
 func (bodyOption) isProgressMediaOption()              {}
 func (bodyOption) isAnswerOption()                     {}
-func (bodyOption) isRequestOption()                    {}
-func (bodyOption) isHoldOption()                       {}
 func (bodyOption) isInviteOption()                     {}
 func (bodyOption) isDialOption()                       {}
 
@@ -821,7 +893,6 @@ type musicOnHoldOption func(*signalParams) error
 func (o musicOnHoldOption) applySignal(p *signalParams) error { return o(p) }
 func (musicOnHoldOption) isProgressMediaOption()              {}
 func (musicOnHoldOption) isAnswerOption()                     {}
-func (musicOnHoldOption) isHoldOption()                       {}
 func (musicOnHoldOption) isInviteOption()                     {}
 func (musicOnHoldOption) isDialOption()                       {}
 
@@ -849,20 +920,10 @@ func (onReferOption) isAnswerOption()                     {}
 func (onReferOption) isInviteOption()                     {}
 func (onReferOption) isDialOption()                       {}
 
-// onReferNotifyOption is the concrete type returned by WithOnReferNotify.
-type onReferNotifyOption func(*signalParams) error
-
-func (o onReferNotifyOption) applySignal(p *signalParams) error { return o(p) }
-func (onReferNotifyOption) isReferOption()                      {}
-
 // requestMutatorOption is the concrete type returned by WithRequestMutator.
 type requestMutatorOption func(*signalParams) error
 
 func (o requestMutatorOption) applySignal(p *signalParams) error { return o(p) }
-func (requestMutatorOption) isRequestOption()                    {}
-func (requestMutatorOption) isHoldOption()                       {}
-func (requestMutatorOption) isAckOption()                        {}
-func (requestMutatorOption) isReferOption()                      {}
 func (requestMutatorOption) isInviteOption()                     {}
 func (requestMutatorOption) isDialOption()                       {}
 func (requestMutatorOption) isRegisterAttemptOption()            {}
@@ -872,7 +933,6 @@ func (requestMutatorOption) isRegisterOption()                   {}
 type responseMutatorOption func(*signalParams) error
 
 func (o responseMutatorOption) applySignal(p *signalParams) error { return o(p) }
-func (responseMutatorOption) isResponseOption()                   {}
 func (responseMutatorOption) isProgressMediaOption()              {}
 func (responseMutatorOption) isAnswerOption()                     {}
 

@@ -98,13 +98,13 @@ func newReferNotifier() *referNotifier {
 	return &referNotifier{states: make(chan int, 8)}
 }
 
-func (n *referNotifier) option() ReferOption {
-	return WithOnReferNotify(func(statusCode int) {
+func (n *referNotifier) option() ReferOptions {
+	return ReferOptions{OnReferNotify: func(statusCode int) {
 		select {
 		case n.states <- statusCode:
 		default:
 		}
-	})
+	}}
 }
 
 // expect reads one NOTIFY code per wanted code and compares them in order.

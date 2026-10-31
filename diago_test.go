@@ -222,7 +222,6 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 // introduced with the SignalOption unification.
 func TestRegisterOptionValidation(t *testing.T) {
 	p := &signalParams{}
-	assert.Error(t, WithOnReferNotify(nil)(p))
 	assert.Error(t, WithOnRegistered(nil)(p))
 	assert.Error(t, WithRegisterProxyHost("")(p))
 

@@ -153,7 +153,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 			t.Error(err)
 			return nil
 		}
-		if err := d.Ringing(ctx, WithHeaders(sip.NewHeader("Alert-Info", "<ring>"))); err != nil {
+		if err := d.Ringing(ctx, ResponseOptions{Headers: []Header{sip.NewHeader("Alert-Info", "<ring>")}}); err != nil {
 			t.Error(err)
 			return nil
 		}

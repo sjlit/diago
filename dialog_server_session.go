@@ -532,9 +532,9 @@ func (d *InboundCall) byeSignal(ctx context.Context, params *signalParams) error
 }
 
 // Trying sends 100 Trying.
-// Scope: WithHeaders, WithContact, WithResponseMutator.
-func (d *InboundCall) Trying(ctx context.Context, opts ...ResponseOption) error {
-	params, err := newSignalParams(opts...)
+// Scope: ResponseOptions.
+func (d *InboundCall) Trying(ctx context.Context, opts ...ResponseOptions) error {
+	params, err := responseSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -544,9 +544,9 @@ func (d *InboundCall) Trying(ctx context.Context, opts ...ResponseOption) error 
 // Progress sends 183 Session Progress without SDP. It does not negotiate
 // early media; use ProgressMedia when the caller must receive an SDP answer
 // and early media in the 183.
-// Scope: WithHeaders, WithContact, WithResponseMutator.
-func (d *InboundCall) Progress(ctx context.Context, opts ...ResponseOption) error {
-	params, err := newSignalParams(opts...)
+// Scope: ResponseOptions.
+func (d *InboundCall) Progress(ctx context.Context, opts ...ResponseOptions) error {
+	params, err := responseSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -601,9 +601,9 @@ func (d *InboundCall) setupProgressMedia(params *signalParams) (*media.RTPSessio
 }
 
 // Ringing sends 180 Ringing.
-// Scope: WithHeaders, WithContact, WithResponseMutator.
-func (d *InboundCall) Ringing(ctx context.Context, opts ...ResponseOption) error {
-	params, err := newSignalParams(opts...)
+// Scope: ResponseOptions.
+func (d *InboundCall) Ringing(ctx context.Context, opts ...ResponseOptions) error {
+	params, err := responseSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -660,13 +660,13 @@ func (d *InboundCall) RemoteContact() *ContactHeader {
 
 // RespondSDP responds with 200 OK and provided SDP body.
 // Options can customize status headers and Contact of the response.
-// Scope: WithHeaders, WithContact, WithResponseMutator (use the body argument).
+// Scope: ResponseOptions (the body is a separate argument).
 //
 // Like Answer, it returns once the 200 OK was handed to the transaction
 // layer; 2xx retransmission and the ACK wait continue in the background. Use
 // WaitAck when the call must be fully established before proceeding.
-func (d *InboundCall) RespondSDP(ctx context.Context, body []byte, opts ...ResponseOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) RespondSDP(ctx context.Context, body []byte, opts ...ResponseOptions) error {
+	params, err := responseSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -990,7 +990,7 @@ func (d *InboundCall) startMonitorForAnswer() error {
 // returned — declining succeeded).
 // Options allow customizing headers (ex. Reason), Contact and body of the
 // outgoing message.
-// Scope: WithHeaders, WithContact, WithRequestMutator (BYE).
+// Scope: CloseOptions.
 //
 // The BYE waits for the peer's 200 and honors ctx. The 480 decline of an
 // unconfirmed INVITE is sent even when ctx is already canceled: the caller
@@ -1013,12 +1013,12 @@ func (d *InboundCall) hangup(ctx context.Context, opts ...CloseOptions) error {
 }
 
 // ReInvite sends a re-INVITE with the current media session.
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator; media options
+// Scope: RequestOptions; media options
 // are rejected.
 // The exchange (491 retry, 2xx ACK) is driven by reInviteExchange, shared
 // with the client dialog.
-func (d *InboundCall) ReInvite(ctx context.Context, opts ...RequestOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) ReInvite(ctx context.Context, opts ...RequestOptions) error {
+	params, err := requestSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -1148,12 +1148,12 @@ func (d *InboundCall) remoteContactUnsafe() *ContactHeader {
 
 // Refer tries todo refer (blind transfer) on call.
 // Options allow customizing headers of the REFER request and receiving the
-// transfer status via WithOnReferNotify.
-// Scope: WithHeaders, WithContact, WithRequestMutator, WithOnReferNotify.
+// transfer status via ReferOptions.OnReferNotify.
+// Scope: ReferOptions.
 //
 // NOTE: It is expected that after calling this you are hanguping call to send BYE
-func (d *InboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOptions) error {
+	params, err := referSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -1224,8 +1224,8 @@ func (d *InboundCall) readSIPInfoDTMF(req *Request, tx ServerTransaction) error 
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator, WithMusicOnHold.
-// WithMusicOnHold selects the hold music started automatically after the
+// Scope: HoldOptions.
+// HoldOptions.MusicOnHold selects the hold music started automatically after the
 // re-INVITE succeeds (falling back to MediaConfig.MusicOnHold); other media
 // overrides are rejected.
 //
@@ -1233,8 +1233,8 @@ func (d *InboundCall) readSIPInfoDTMF(req *Request, tx ServerTransaction) error 
 // typically carries the re-INVITE timeout) until Unhold, Stop/StopMusicOnHold,
 // or dialog Close; when the dialog-level default is unset (no MusicOnHold
 // configured anywhere) Hold behaves as before and plays nothing.
-func (d *InboundCall) Hold(ctx context.Context, opts ...HoldOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) Hold(ctx context.Context, opts ...HoldOptions) error {
+	params, err := holdSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -1252,10 +1252,10 @@ func (d *InboundCall) Hold(ctx context.Context, opts ...HoldOption) error {
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator. The music
+// Scope: RequestOptions. The music
 // started automatically by Hold is stopped on success; media options are rejected.
-func (d *InboundCall) Unhold(ctx context.Context, opts ...RequestOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) Unhold(ctx context.Context, opts ...RequestOptions) error {
+	params, err := requestSignalParams(opts...)
 	if err != nil {
 		return err
 	}

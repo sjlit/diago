@@ -100,10 +100,10 @@ func (d *OutboundCall) ID() string {
 //   - confirmed: BYE, waits for 200
 //   - already ended: returns nil silently
 //
-// Hangup ends the signaling; local resources are released with Close (the
+// hangup ends the signaling; local resources are released with Close (the
 // framework also releases them when the dialog ends).
 //
-// Scope: WithHeaders, WithContact, WithRequestMutator.
+// Scope: CloseOptions.
 func (d *OutboundCall) hangup(ctx context.Context, opts ...CloseOptions) error {
 	params, err := closeSignalParams(opts...)
 	if err != nil {
@@ -558,12 +558,11 @@ func (d *OutboundCall) applyRemoteSDP(med *Media, remoteSDP []byte) error {
 	return rtpSess.MonitorBackground()
 }
 
-// Ack acknowledgeds media
-// Before Ack normally you want to setup more stuff like bridging
-// Options allow customizing headers of the ACK request.
-// Scope: WithHeaders, WithContact, WithRequestMutator.
-func (d *OutboundCall) Ack(ctx context.Context, opts ...AckOption) error {
-	params, err := newSignalParams(opts...)
+// Ack acknowledges media.
+// Before Ack normally you want to setup more stuff like bridging.
+// Scope: AckOptions.
+func (d *OutboundCall) Ack(ctx context.Context, opts ...AckOptions) error {
+	params, err := ackSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -613,9 +612,9 @@ func (d *OutboundCall) ack(ctx context.Context, remoteTarget URI, body []byte, p
 
 // ReInvite sends new invite based on current media session
 // Options allow customizing Contact, headers, SDP body and to mutate the final request.
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator.
-func (d *OutboundCall) ReInvite(ctx context.Context, opts ...RequestOption) error {
-	params, err := newSignalParams(opts...)
+// Scope: RequestOptions.
+func (d *OutboundCall) ReInvite(ctx context.Context, opts ...RequestOptions) error {
+	params, err := requestSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -729,12 +728,12 @@ func (d *OutboundCall) reInviteKeepAlive(ctx context.Context) error {
 
 // Refer tries todo refer (blind transfer) on call.
 // Options allow customizing headers of the REFER request and receiving the
-// transfer status via WithOnReferNotify.
-// Scope: WithHeaders, WithContact, WithRequestMutator, WithOnReferNotify.
+// transfer status via ReferOptions.OnReferNotify.
+// Scope: ReferOptions.
 //
 // NOTE: It is expected that after calling this you are hanguping call to send BYE
-func (d *OutboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOption) error {
-	params, err := newSignalParams(opts...)
+func (d *OutboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOptions) error {
+	params, err := referSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -832,8 +831,8 @@ func (d *OutboundCall) readSIPInfoDTMF(req *Request, tx ServerTransaction) error
 }
 
 // Hold puts dialog on hold (media sendonly). Options allow customizing the re-INVITE.
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator, WithMusicOnHold.
-// WithMusicOnHold selects the hold music started automatically after the
+// Scope: HoldOptions.
+// HoldOptions.MusicOnHold selects the hold music started automatically after the
 // re-INVITE succeeds (falling back to MediaConfig.MusicOnHold); other media
 // overrides are rejected.
 //
@@ -841,8 +840,8 @@ func (d *OutboundCall) readSIPInfoDTMF(req *Request, tx ServerTransaction) error
 // typically carries the re-INVITE timeout) until Unhold, Stop/StopMusicOnHold,
 // or dialog Close; when the dialog-level default is unset (no MusicOnHold
 // configured anywhere) Hold behaves as before and plays nothing.
-func (d *OutboundCall) Hold(ctx context.Context, opts ...HoldOption) error {
-	params, err := newSignalParams(opts...)
+func (d *OutboundCall) Hold(ctx context.Context, opts ...HoldOptions) error {
+	params, err := holdSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -860,10 +859,10 @@ func (d *OutboundCall) Hold(ctx context.Context, opts ...HoldOption) error {
 }
 
 // Unhold takes dialog back from hold (media sendrecv). Options allow customizing the re-INVITE.
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator. The music
+// Scope: RequestOptions. The music
 // started automatically by Hold is stopped on success; media options are rejected.
-func (d *OutboundCall) Unhold(ctx context.Context, opts ...RequestOption) error {
-	params, err := newSignalParams(opts...)
+func (d *OutboundCall) Unhold(ctx context.Context, opts ...RequestOptions) error {
+	params, err := requestSignalParams(opts...)
 	if err != nil {
 		return err
 	}

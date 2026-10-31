@@ -35,13 +35,13 @@ type Call interface {
 	// Transport returns the transport of the dialog's INVITE (ex. "UDP").
 	Transport() string
 	// Hold puts the dialog on hold (media sendonly).
-	Hold(ctx context.Context, opts ...HoldOption) error
+	Hold(ctx context.Context, opts ...HoldOptions) error
 	// Unhold takes the dialog back from hold (media sendrecv).
-	Unhold(ctx context.Context, opts ...RequestOption) error
+	Unhold(ctx context.Context, opts ...RequestOptions) error
 	// ReInvite sends a re-INVITE with the current media session.
-	ReInvite(ctx context.Context, opts ...RequestOption) error
+	ReInvite(ctx context.Context, opts ...RequestOptions) error
 	// Refer sends a blind transfer REFER.
-	Refer(ctx context.Context, referTo URI, opts ...ReferOption) error
+	Refer(ctx context.Context, referTo URI, opts ...ReferOptions) error
 	// Media returns the media half of the dialog. It is never nil and
 	// stays valid for the dialog's lifetime.
 	Media() *Media
