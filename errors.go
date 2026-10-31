@@ -109,8 +109,8 @@ var (
 	// ErrTransportNotFound is returned when no configured transport matches the
 	// requested network or ID.
 	ErrTransportNotFound = errors.New("transport not found")
-	// ErrAgentServing is returned by Serve and ServeBackground while the agent
-	// is already serving.
+	// ErrAgentServing is returned by Serve and Start while the agent is already
+	// serving.
 	ErrAgentServing = errors.New("already serving")
 	// ErrAgentClosed is returned by Serve, Register and Handle after Close.
 	ErrAgentClosed = errors.New("agent is shut down")
