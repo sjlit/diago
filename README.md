@@ -187,9 +187,10 @@ Behavioral notes:
   is canceled (or `Registration.Close`).
 - Server `Close` on a still-pending INVITE sends the 480 decline even when the
   passed ctx is already canceled.
-- `Agent.Close` unregisters the REGISTER handles created by `Register` and
-  `StartRegistrationURI` (opt out with `RegisterOptions{Detached: true}`). Registering
-  after `Close` returns `ErrAgentClosed`.
+- `Agent.Close` unregisters the REGISTER handles created by
+  `StartRegistration` and `StartRegistrationURI` (opt out with
+  `RegisterOptions{Detached: true}`). Registering after `Close` returns
+  `ErrAgentClosed`.
 
 ## License
 

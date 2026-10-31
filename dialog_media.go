@@ -28,8 +28,8 @@ import (
 // each at a time; re-INVITEs and media updates replace them under mu, while
 // the RTPPacketReader and RTPPacketWriter accessors expose stable handles
 // whose internals are hot-swapped on every update. Code that needs
-// media-session services (deadlines, codecs) must resolve them through
-// Media at use time and never capture a *media.MediaSession pointer.
+// media-session services (deadlines, codecs) must use the Media accessors at
+// use time and never capture the underlying sessions.
 //
 // Concurrency contract: all mutable media state is
 // guarded by mu; accessor methods (AudioReader, AudioWriter, RTPPacketReader,
@@ -619,7 +619,7 @@ func (d *Media) rtpSessionHandle() *media.RTPSession {
 //
 // NOTE: AudioReader must be called after negotiation is finished, like Answer()
 // Reading buffer should be equal or bigger of media.RTPBufSize
-// Use AuidioListen for optimized reading.
+// Use ListenContext for context-driven reading.
 func (d *Media) AudioReader(opts ...ReaderOptions) (io.Reader, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1107,8 +1107,8 @@ func (m *Media) dtmfCodec() media.Codec {
 	return media.CodecTelephoneEvent8000
 }
 
-// NewDTMFReader is DTMF over RTP. It reads audio and provides hook for dtmf while listening for audio
-// Use Listen or OnDTMF after this call
+// NewDTMFReader is DTMF over RTP. It reads audio and provides a hook for DTMF
+// while listening for audio. Use ListenContext or OnDTMF after this call.
 //
 // Unlike ReaderOptions.DTMF, the returned reader is NOT installed
 // into the dialog audio pipeline: it wraps the current audio reader chain at
