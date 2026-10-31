@@ -89,12 +89,12 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 
 		dialog, err := phone.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
-		defer dialog.Close()
+		defer dialog.release()
 
 		rtpReader := dialog.rtpPacketReader
 
 		go func() {
-			defer dialog.Close()
+			defer dialog.release()
 			// Playback duration, not a wait: hold the call open so the
 			// HTTP-backed stream keeps being fetched and copied.
 			time.Sleep(10 * time.Second)

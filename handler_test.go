@@ -202,7 +202,7 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 
 	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
-	defer dlg.Close()
+	defer dlg.release()
 
 	require.NoError(t, dlg.Hangup(ctx))
 
@@ -257,7 +257,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 
 	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
-	defer dlg.Close()
+	defer dlg.release()
 
 	deadline := time.After(5 * time.Second)
 	for {
@@ -398,10 +398,10 @@ func TestHangupCloseClient(t *testing.T) {
 
 	require.NoError(t, d.Hangup(ctx))
 	assert.EqualValues(t, 1, byeCount.Load(), "Hangup must send BYE")
-	require.NoError(t, d.Close())
+	require.NoError(t, d.release())
 	assert.Equal(t, 0, cacheCountClientDialogs(dg), "Close must evict the dialog")
 
 	// Both are idempotent.
 	require.NoError(t, d.Hangup(ctx))
-	require.NoError(t, d.Close())
+	require.NoError(t, d.release())
 }

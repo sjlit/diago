@@ -215,7 +215,7 @@ func TestReaderWriterWithProps(t *testing.T) {
 
 	d, err := dg.DialURI(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
-	defer d.Close()
+	defer d.release()
 
 	r, rprops, err := d.ReaderWithProps()
 	require.NoError(t, err)

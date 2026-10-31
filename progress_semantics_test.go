@@ -70,7 +70,7 @@ func TestProgressSemantics(t *testing.T) {
 	require.NoError(t, err)
 	defer func() {
 		d.Hangup(ctx)
-		d.Close()
+		d.release()
 	}()
 
 	mu.Lock()

@@ -185,17 +185,34 @@ func (d *InboundCall) ID() string {
 	return d.sess.ID
 }
 
-// Close frees local resources (media stack and dialog cleanup hooks).
-// It is idempotent and does NOT send any SIP message. Server dialogs are
-// closed by the framework when the dialog ends (BYE, CANCEL, decline or
-// Close), not when the serve handler returns.
-func (d *InboundCall) Close() error {
+// release frees local resources without sending SIP.
+func (d *InboundCall) release() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
+	return d.releaseUnsafe()
+}
+
+// releaseUnsafe closes local resources after the caller won the closed CAS.
+func (d *InboundCall) releaseUnsafe() error {
 	e1 := d.callMedia.Close()
 	e2 := d.sess.Close()
 	return errors.Join(e1, e2)
+}
+
+// Close terminates the dialog (decline, BYE or no-op depending on its state)
+// and releases local resources. It is idempotent and honors ctx for the
+// signaling part.
+func (d *InboundCall) Close(ctx context.Context, opts ...CloseOption) error {
+	if !d.closed.CompareAndSwap(0, 1) {
+		return nil
+	}
+	var errs []error
+	if d.State() != CallStateEnded {
+		errs = append(errs, d.Hangup(ctx, opts...))
+	}
+	errs = append(errs, d.releaseUnsafe())
+	return errors.Join(errs...)
 }
 
 // FromUser returns the caller user part of the dialog's From header.

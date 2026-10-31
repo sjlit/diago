@@ -97,7 +97,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 			t.Log("Failed to dial", err)
 			return
 		}
-		defer dialog.Close()
+		defer dialog.release()
 		<-dialog.Context().Done()
 		t.Log("Dialog done")
 	}()
@@ -235,7 +235,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 
 	dialog, err := peer.DialURI(ctx, sip.Uri{User: "service", Host: "127.0.0.1", Port: uasPort})
 	require.NoError(t, err)
-	defer dialog.Close()
+	defer dialog.release()
 	require.Contains(t, string(dialog.sess.InviteRequest.Body()), " 0 8 101")
 
 	// The initial peer offer contains PCMU, PCMA and telephone-event. The

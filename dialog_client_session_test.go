@@ -148,7 +148,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		// Answered call
 		dialog, err = phone.DialURI(context.TODO(), sip.Uri{User: "alice", Host: "127.0.0.1", Port: 5060})
 		require.NoError(t, err)
-		defer dialog.Close()
+		defer dialog.release()
 
 		// Confirm media traveling
 		audioR, err := dialog.AudioReader()
@@ -281,7 +281,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 
 	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
-	defer dialog.Close()
+	defer dialog.release()
 
 	err = dialog.Invite(ctx, WithEarlyMediaDetect(), WithAuthCredentials("test", "test123"))
 	require.ErrorIs(t, err, ErrClientEarlyMedia)
@@ -751,7 +751,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	t.Run("succesfull", func(t *testing.T) {
 		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
-		defer d.Close()
+		defer d.release()
 		defer d.Hangup(d.Context())
 
 		notify := newReferNotifier()
@@ -764,7 +764,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	t.Run("unreachable refer", func(t *testing.T) {
 		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
-		defer d.Close()
+		defer d.release()
 		defer d.Hangup(d.Context())
 
 		notify := newReferNotifier()
@@ -777,7 +777,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	t.Run("busy refer", func(t *testing.T) {
 		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
-		defer d.Close()
+		defer d.release()
 		defer d.Hangup(d.Context())
 
 		notify := newReferNotifier()

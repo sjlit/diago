@@ -78,7 +78,7 @@ func BridgeCall(ctx context.Context, d *diago.Agent, inDialog *diago.InboundCall
 	if err != nil {
 		return err
 	}
-	defer outDialog.Close()
+	defer outDialog.Close(context.Background())
 	outCtx := outDialog.Context()
 
 	defer inDialog.Hangup(inCtx)

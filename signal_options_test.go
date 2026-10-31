@@ -189,7 +189,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 
 	dialog, err := dgCli.NewCall(sip.Uri{User: "server", Host: "127.0.0.1", Port: int(srvPort.Load())})
 	require.NoError(t, err)
-	defer dialog.Close()
+	defer dialog.release()
 
 	var ringAlertInfo string
 	var okContact string

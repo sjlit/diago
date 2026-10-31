@@ -721,7 +721,7 @@ func newAgent(opts ...agentOption) (*Agent, error) {
 			if err := dg.cache.server.remove(context.Background(), dWrap.sess.ID); err != nil {
 				dg.log.Error("Failed to delete server dialog", "error", err)
 			}
-			closeAndLog(dWrap.logger(), dWrap, "closing dialog server returned error")
+			closeAndLog(dWrap.logger(), &dWrap.callMedia, "closing dialog server media returned error")
 		}()
 
 		herr := dg.handler()(hctx, dWrap)
@@ -1391,10 +1391,7 @@ func shutdownDialog(ctx context.Context, id string, d Call) []error {
 	var errs []error
 	hctx, cancel := context.WithTimeout(ctx, shutdownDialogHangupTimeout)
 	defer cancel()
-	if err := d.Hangup(hctx); err != nil {
-		errs = append(errs, fmt.Errorf("hangup dialog %q: %w", id, err))
-	}
-	if err := d.Close(); err != nil {
+	if err := d.Close(hctx); err != nil {
 		errs = append(errs, fmt.Errorf("close dialog %q: %w", id, err))
 	}
 	return errs
@@ -1466,7 +1463,7 @@ func teardownOutbound(d *OutboundCall) error {
 		_ = d.Hangup(tctx)
 		cancel()
 	}
-	return d.Close()
+	return d.release()
 }
 
 // parseTargetURI parses a dial target string into a private URI copy.

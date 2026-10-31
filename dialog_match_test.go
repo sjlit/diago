@@ -140,7 +140,7 @@ func TestDiagoMatchDialog_RealClientDialog(t *testing.T) {
 	ctx := context.Background()
 	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { d.release() })
 
 	// d is confirmed and stored in client cache under d.ID (DialogIDFromResponse).
 	// An in-dialog request from the remote (From=remote tag, To=our tag) with same Call-ID

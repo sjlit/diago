@@ -48,7 +48,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer d.Close()
+	defer d.Close(context.Background())
 	defer d.Hangup(d.Context())
 
 	ulaw := make([]byte, 160)

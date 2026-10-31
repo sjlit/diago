@@ -214,7 +214,7 @@ func TestIntegrationBridging(t *testing.T) {
 		dg := newDialer(t, ua)
 		dialog, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: inboundPort})
 		require.NoError(t, err)
-		defer dialog.Close()
+		defer dialog.release()
 
 		w, _ := dialog.AudioWriter()
 		_, err = w.Write([]byte("1234"))
@@ -294,7 +294,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		}
 		for _, dialog := range dialogs {
 			dialog.Hangup(ctx)
-			dialog.Close()
+			dialog.release()
 		}
 
 		for range len(dialogs) {

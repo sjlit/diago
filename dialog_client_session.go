@@ -54,17 +54,34 @@ func (d *OutboundCall) Do(ctx context.Context, req *Request) (*Response, error) 
 	return d.sess.Do(ctx, req)
 }
 
-// Close frees local resources (media stack and dialog cleanup hooks).
-// It is idempotent and does NOT send any SIP message: closing without Hangup
-// leaves the remote leg up. Signaling teardown is the caller's responsibility
-// on client dialogs.
-func (d *OutboundCall) Close() error {
+// release frees local resources without sending SIP.
+func (d *OutboundCall) release() error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
+	return d.releaseUnsafe()
+}
+
+// releaseUnsafe closes local resources after the caller won the closed CAS.
+func (d *OutboundCall) releaseUnsafe() error {
 	e1 := d.callMedia.Close()
 	e2 := d.sess.Close()
 	return errors.Join(e1, e2)
+}
+
+// Close terminates the dialog (CANCEL/BYE or no-op depending on its state)
+// and releases local resources. It is idempotent and honors ctx for the
+// signaling part.
+func (d *OutboundCall) Close(ctx context.Context, opts ...CloseOption) error {
+	if !d.closed.CompareAndSwap(0, 1) {
+		return nil
+	}
+	var errs []error
+	if d.State() != CallStateEnded {
+		errs = append(errs, d.Hangup(ctx, opts...))
+	}
+	errs = append(errs, d.releaseUnsafe())
+	return errors.Join(errs...)
 }
 
 // ID returns the dialog identifier (Call-ID, tags and tags-derived hash).

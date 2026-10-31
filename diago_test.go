@@ -256,7 +256,7 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	ctx := context.TODO()
 	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, runOnceOption{runs: &runs})
 	require.NoError(t, err)
-	defer d.Close()
+	defer d.release()
 
 	assert.Equal(t, int32(1), runs.Load(), "user option must execute exactly once per Agent.Dial")
 	require.NoError(t, d.Hangup(d.Context()))
@@ -276,7 +276,7 @@ func TestDiagoDialBridgeOptionsRunOnce(t *testing.T) {
 	ctx := context.TODO()
 	d, err := dg.DialBridgeURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge, runOnceOption{runs: &runs})
 	require.NoError(t, err)
-	defer d.Close()
+	defer d.release()
 
 	assert.Equal(t, int32(1), runs.Load(), "user option must execute exactly once per Agent.DialBridge")
 	require.NoError(t, d.Hangup(d.Context()))
@@ -426,13 +426,13 @@ func TestDiagoNewDialog(t *testing.T) {
 	t.Run("close no error", func(t *testing.T) {
 		dialog, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
-		dialog.Close()
+		dialog.release()
 	})
 
 	t.Run("full dialog", func(t *testing.T) {
 		dialog, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
-		defer dialog.Close()
+		defer dialog.release()
 
 		err = dialog.Invite(ctx)
 		require.NoError(t, err)

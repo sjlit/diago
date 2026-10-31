@@ -92,7 +92,7 @@ func TestDiagoDialStringTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, d)
 	require.NoError(t, d.Hangup(ctx))
-	require.NoError(t, d.Close())
+	require.NoError(t, d.release())
 
 	_, err = dg.Dial(ctx, "sip:")
 	require.ErrorIs(t, err, ErrInvalidTarget)

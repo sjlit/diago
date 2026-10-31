@@ -122,7 +122,7 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 	call, err := client.Dial(ctx, "sip:alice@127.0.0.1:"+strconv.Itoa(port))
 	require.NoError(t, err)
 	require.NoError(t, call.Hangup(ctx))
-	require.NoError(t, call.Close())
+	require.NoError(t, call.release())
 }
 
 // TestNewCallerOwnedUserAgent locks the shared-UA path: withUserAgent keeps
@@ -195,7 +195,7 @@ func TestMediaConfigPropagation(t *testing.T) {
 
 	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
-	defer d.Close()
+	defer d.release()
 
 	require.Same(t, httpClient, d.callMedia.httpClient)
 

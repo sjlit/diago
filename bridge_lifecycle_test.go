@@ -41,9 +41,9 @@ func (f *fakeBridgeDialog) ReInvite(ctx context.Context, opts ...RequestOption) 
 func (f *fakeBridgeDialog) Refer(ctx context.Context, referTo URI, opts ...ReferOption) error {
 	return nil
 }
-func (f *fakeBridgeDialog) Media() *Media      { return f.dm }
-func (f *fakeBridgeDialog) SIP() *sipgo.Dialog { return nil }
-func (f *fakeBridgeDialog) Close() error       { return nil }
+func (f *fakeBridgeDialog) Media() *Media                                        { return f.dm }
+func (f *fakeBridgeDialog) SIP() *sipgo.Dialog                                   { return nil }
+func (f *fakeBridgeDialog) Close(ctx context.Context, opts ...CloseOption) error { return nil }
 func (f *fakeBridgeDialog) Do(ctx context.Context, req *sip.Request) (*sip.Response, error) {
 	return nil, nil
 }

@@ -173,7 +173,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 						clientHangup = true
 					case <-dialog.Context().Done():
 					}
-					dialog.Close()
+					dialog.release()
 					assert.Empty(t, outoforder, "Out of order media detected")
 					assert.True(t, clientHangup)
 					assert.Greater(t, mediapkts, int(2*time.Second/(20*time.Millisecond))-10, "Not enough received packets")

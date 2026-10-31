@@ -101,6 +101,10 @@ type (
 	}
 )
 
+// CloseOption configures Close. It is currently the same set as HangupOption:
+// headers (for example Reason), Contact and a final request mutator.
+type CloseOption = HangupOption
+
 // signalParams carries per-call signaling customizations applied by the With*
 // options. It is constructed by the library (newSignalParams); user code
 // customizes it through the constructors. A nil *signalParams means "use

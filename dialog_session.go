@@ -34,9 +34,6 @@ type Call interface {
 	To() URI
 	// Transport returns the transport of the dialog's INVITE (ex. "UDP").
 	Transport() string
-	// Hangup terminates the dialog. Options allow customizing headers of the
-	// outgoing BYE / decline response (ex. Reason header)
-	Hangup(ctx context.Context, opts ...HangupOption) error
 	// Hold puts the dialog on hold (media sendonly).
 	Hold(ctx context.Context, opts ...HoldOption) error
 	// Unhold takes the dialog back from hold (media sendrecv).
@@ -48,7 +45,9 @@ type Call interface {
 	// Media returns the media half of the dialog. It is never nil and
 	// stays valid for the dialog's lifetime.
 	Media() *Media
-	Close() error
+	// Close terminates the dialog (CANCEL/BYE/decline as appropriate) and
+	// releases local resources. It is idempotent.
+	Close(ctx context.Context, opts ...CloseOption) error
 }
 
 // RawCall exposes the underlying sipgo dialog. It is the explicit escape
@@ -164,7 +163,7 @@ func dialogHandleReferNotify(d Call, req *Request, tx ServerTransaction) {
 	if onNot != nil {
 		onNot(code)
 	} else if code >= 200 {
-		_ = d.Hangup(context.TODO())
+		_ = d.Close(context.TODO())
 	}
 }
 
@@ -291,7 +290,7 @@ func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onRe
 	if err != nil {
 		return err
 	}
-	defer func() { _ = referDialog.Close() }()
+	defer func() { _ = referDialog.release() }()
 
 	if h := referReq.GetHeader("referred-by"); h != nil {
 		referDialog.sess.InviteRequest.AppendHeader(sip.HeaderClone(h))

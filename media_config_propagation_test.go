@@ -135,7 +135,7 @@ func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 
 	d, err := dg.DialURI(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
-	defer d.Close()
+	defer d.release()
 
 	ms := d.callMedia.mediaSession
 	require.NotNil(t, ms)
@@ -159,7 +159,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 
 		d, err := dg.DialURI(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
-		defer d.Close()
+		defer d.release()
 
 		ms := d.callMedia.mediaSession
 		require.NotNil(t, ms)
@@ -176,7 +176,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 
 		d, err := dg.DialURI(context.TODO(), sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
-		defer d.Close()
+		defer d.release()
 
 		ms := d.callMedia.mediaSession
 		require.NotNil(t, ms)

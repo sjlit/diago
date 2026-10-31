@@ -223,7 +223,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 
 	d, err := dgC.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
 	require.NoError(t, err)
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { d.release() })
 
 	// Wait for the server dialog to reach Confirmed (ACK processed), so
 	// Close exercises the BYE path instead of racing the 200/ACK
