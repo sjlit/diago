@@ -110,11 +110,10 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   was handed to the transaction layer; the ACK wait continues in the
   background. Use `WaitAck` (or `AckReceived`/`AckErr`) when the call must be
   fully established before continuing.
-- **Options**: Answer/Invite/Dial/Register still take the option interface
-  for their operation (`AnswerOption`, `InviteOption`, `DialOption`,
-  `RegisterOption`, ...); passing an option an API does not consume is a
-  compile error. Ack/Response/Request/Hold/Refer/Close take their
-  `XxxOptions` struct instead.
+- **Options**: every operation takes its own `XxxOptions` struct
+  (`AnswerOptions`, `InviteOptions`, `DialOptions`, `RegisterOptions`,
+  `CloseOptions`, ...). Zero values select the defaults; fields are validated
+  when the operation runs.
 - **Configuration**: construction-time media settings live in `MediaConfig`
   (`Codecs`, `SRTP`, `Network`, `SDP`, `MusicOnHold`, `Logger`, `Debug`,
   `Tracer`, `HTTPClient`). Transports can select a complete named profile with
@@ -123,7 +122,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 - **REGISTER**: `Agent.Register` returns a `*Registration` handle
   (`WaitReady`/`Wait`/`Close`) that keeps the registration refreshed and
   unregisters on `Close`; `Agent.Close` does the same for every registration
-  it created unless `WithRegistrationDetached` is passed. `RegisterTransaction`
+  it created unless `RegisterOptions{Detached: true}` is passed. `RegisterTransaction`
   exposes single attempts (`Register`/`Qualify`/`Unregister`).
 - **sipgo interop**: sipgo types in signatures are aliases (`diago.URI`,
   `diago.Header`, `diago.Request`, `diago.Response`, ...), so importing sipgo
@@ -147,10 +146,10 @@ v1 imported `github.com/sjlit/diago`; v2 is `github.com/sjlit/diago/v2`.
 | `ServeDialogFunc func(d)` | `CallHandler func(ctx, *InboundCall) error` (error → SIP response) |
 | `HandleFunc(f)` | handler is passed to `Serve`/`Start` |
 | `Invite` / `InviteBridge` | `Dial` / `DialBridge` (string target; `DialURI` for a parsed URI) |
-| `WithAuth` | removed (was unused); use `WithAuthCredentials` or `DigestAuthServer` |
-| `InviteOptions` / `NewDialogOptions` / `ProgressMediaOptions` / `AnswerOptions` | removed; per-operation option interfaces |
+| `WithAuth` | removed (was unused); use `RegisterOptions` credentials or `DigestAuthServer` |
+| `InviteOptions` / `NewDialogOptions` / `ProgressMediaOptions` / `AnswerOptions` | `InviteOptions` / `AnswerOptions` / `ProgressMediaOptions` structs |
 | `Answer/Progress/...` without ctx | all signaling methods take `ctx` |
-| `WaitAnswer(ctx, sipgo.AnswerOptions)` | `WaitAnswer(ctx, ...WaitAnswerOption)` |
+| `WaitAnswer(ctx, sipgo.AnswerOptions)` | `WaitAnswer(ctx, ...WaitAnswerOptions)` |
 | `MediaConfig.SecureRTP/SecureRTPAlg/BindIP/ExternalIP/RTPNAT/DTLSConf/...` | grouped into `MediaConfig.SRTP/Network/SDP` |
 | `Transport.MediaSRTP/MediaExternalIP/MediaDTLSConf` | `Config.MediaProfiles` + `Transport.Profile` |
 | `AudioStereoRecordingCreate` | `Media.StartStereoRecording` |
@@ -167,28 +166,28 @@ Breaking changes since the first v2 preview (same module path):
 | `DialogMedia` / `DialogHandler` | `Media` / `CallHandler` |
 | `MatchDialog` / `NewDialog` | `FindCall` / `NewCall` |
 | `HangupAndClose` | removed: `Close(ctx)` performs teardown and release |
-| `WithHeader` | removed: `WithHeaders(sip.NewHeader(name, value))` |
+| `WithHeader` | removed: use the operation options `Headers` field |
 | `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `NewPlayback*` / `NewDTMF*` / `NewRingtone` |
 | `PlayMusicOnHold` | `StartMusicOnHold` |
 | `WithAudioReader*` / `WithAudioWriter*` | `WithReader*` / `WithWriter*` |
 | `Transport.Transport` | `Transport.Network` |
-| runtime option scope (`UnsupportedOptionError`) | compile-time option interfaces |
+| runtime option scope (`UnsupportedOptionError`) | per-operation options structs |
 | handler return hangs up the call | answering then returning keeps it alive |
 | `Answer` blocks until ACK | returns after the 2xx; `WaitAck` opt-in |
 | `Register(...) error` | `Register(...) (*Registration, error)` |
 
 Behavioral notes:
 
-- `WithOnRefer`/`WithOnMediaUpdate` are accepted by `Answer`, `AnswerLate`,
-  `Invite` and `Dial`.
+- `AnswerOptions.OnRefer`/`OnMediaUpdate` and the equivalent `InviteOptions`
+  fields install the callbacks.
 - REGISTER: 423 Interval Too Brief is retried with `Min-Expires`; transient
   failures honor `Retry-After` once; transport failures are retried until ctx
   is canceled (or `Registration.Close`).
 - Server `Close` on a still-pending INVITE sends the 480 decline even when the
   passed ctx is already canceled.
 - `Agent.Close` unregisters the REGISTER handles created by `Register` and
-  `RegisterURI` (opt out with `WithRegistrationDetached`). Registering after
-  `Close` returns `ErrAgentClosed`.
+  `RegisterURI` (opt out with `RegisterOptions{Detached: true}`). Registering
+  after `Close` returns `ErrAgentClosed`.
 
 ## License
 

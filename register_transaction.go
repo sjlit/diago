@@ -179,8 +179,8 @@ func (t *RegisterTransaction) cloneOrigin() (*Request, error) {
 // extra headers and the final request of this registration attempt.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials;
 // credentials fall back to the transaction ones when not provided via options.
-func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAttemptOption) error {
-	params, err := newSignalParams(opts...)
+func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAttemptOptions) error {
+	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -405,8 +405,8 @@ func shouldRetryRegister(code int) bool {
 
 // Unregister unregisters the contact. Options allow customizing the request.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
-func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAttemptOption) error {
-	params, err := newSignalParams(opts...)
+func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAttemptOptions) error {
+	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -428,8 +428,8 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAt
 
 // Qualify refreshes the registration. Options allow customizing the request.
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
-func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...RegisterAttemptOption) error {
-	params, err := newSignalParams(opts...)
+func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...RegisterAttemptOptions) error {
+	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
 		return err
 	}

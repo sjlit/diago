@@ -1815,7 +1815,7 @@ func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 // Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials,
 // WithRegisterExpiry, WithRegisterRetryInterval, WithRegisterAllowHeaders,
 // WithRegisterProxyHost, WithOnRegistered, WithRegistrationDetached.
-func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOption) (*Registration, error) {
+func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOptions) (*Registration, error) {
 	uri, err := parseTargetURI(target)
 	if err != nil {
 		return nil, err
@@ -1824,8 +1824,8 @@ func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOp
 }
 
 // RegisterURI is Register for an already parsed SIP URI.
-func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...RegisterOption) (*Registration, error) {
-	params, err := newSignalParams(opts...)
+func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...RegisterOptions) (*Registration, error) {
+	params, err := registerSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1849,8 +1849,8 @@ func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...Registe
 // WithAuthCredentials, WithRegisterExpiry, WithRegisterRetryInterval,
 // WithRegisterAllowHeaders, WithRegisterProxyHost, WithOnRegistered.
 // WithRegistrationDetached is rejected: a transaction runs no registration loop.
-func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ...RegisterOption) (*RegisterTransaction, error) {
-	params, err := newSignalParams(opts...)
+func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ...RegisterOptions) (*RegisterTransaction, error) {
+	params, err := registerSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}

@@ -41,9 +41,9 @@ func main() {
 		return
 	}
 
-	var regOpts []diago.RegisterOption
+	var regOpts []diago.RegisterOptions
 	if *fUsername != "" || *fPassword != "" {
-		regOpts = append(regOpts, diago.WithAuthCredentials(*fUsername, *fPassword))
+		regOpts = append(regOpts, diago.RegisterOptions{Username: *fUsername, Password: *fPassword})
 	}
 	err := start(ctx, recipientUri, *fUsername, regOpts...)
 	if err != nil {
@@ -51,7 +51,7 @@ func main() {
 	}
 }
 
-func start(ctx context.Context, recipientURI string, username string, regOpts ...diago.RegisterOption) error {
+func start(ctx context.Context, recipientURI string, username string, regOpts ...diago.RegisterOptions) error {
 	// Setup our main transaction user
 	useragent := username
 	if useragent == "" {

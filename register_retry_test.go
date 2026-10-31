@@ -114,7 +114,7 @@ func TestRegisterRetryIntervalBeatsRetryAfter(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"},
-		WithRegisterRetryInterval(3*time.Millisecond))
+		RegisterOptions{RetryInterval: 3 * time.Millisecond})
 	require.NoError(t, err)
 	require.ErrorIs(t, reg.Wait(), context.Canceled)
 

@@ -84,7 +84,7 @@ func TestAgentSentinels(t *testing.T) {
 	_, err = dg.Dial(ctx, "sip:bob@localhost", DialOptions{Headers: []Header{nil}})
 	assert.ErrorIs(t, err, ErrInvalidOption)
 
-	_, err = dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"}, WithRegistrationDetached())
+	_, err = dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"}, RegisterOptions{Detached: true})
 	assert.ErrorIs(t, err, ErrInvalidOption)
 
 	_, err = dg.DialBridge(ctx, "sip:bob@localhost", nil)

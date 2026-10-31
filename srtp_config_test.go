@@ -67,11 +67,11 @@ func TestMediaConfigDTLSAutoEnable(t *testing.T) {
 // TestWithMediaDTLSOptionEnablesDTLS locks the per-call path end to end:
 // WithMediaDTLS must not only store the DTLS config, it must also flip the
 // session to DTLS-SRTP (the old behavior silently kept plain RTP).
-func TestWithMediaDTLSOptionEnablesDTLS(t *testing.T) {
-	p, err := newTestParams([]SignalOption{WithMediaDTLS(media.DTLSConfig{
+func TestMediaOptionsDTLSEnablesDTLS(t *testing.T) {
+	p := &signalParams{}
+	require.NoError(t, (MediaOptions{DTLS: &media.DTLSConfig{
 		Certificates: []tls.Certificate{testdata.ServerCertificate()},
-	})})
-	require.NoError(t, err)
+	}}).apply(p))
 
 	conf := signalMediaConfig(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}}, p)
 	dm := &Media{}

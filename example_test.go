@@ -84,9 +84,10 @@ func ExampleAgent_Register() {
 	defer agent.Close(context.Background())
 
 	ctx := context.Background()
-	reg, err := agent.Register(ctx, "sip:alice@example.com",
-		diago.WithAuthCredentials("alice", "secret"),
-	)
+	reg, err := agent.Register(ctx, "sip:alice@example.com", diago.RegisterOptions{
+		Username: "alice",
+		Password: "secret",
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

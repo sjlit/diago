@@ -57,10 +57,10 @@
 //
 // # Options
 //
-// Per-call behavior is configured with the With* option constructors where
-// the operation still uses functional options (Answer, Invite, Dial, Register).
-// Ack, Response, Request, Hold, Refer and Close take their XxxOptions struct
-// instead; fields are validated when the operation runs.
+// Per-call behavior is configured with the per-operation XxxOptions structs
+// (AnswerOptions, InviteOptions, DialOptions, RegisterOptions, CloseOptions,
+// ...). Fields are validated when the operation runs; zero values select the
+// documented defaults.
 //
 // # Concurrency and contexts
 //
@@ -84,7 +84,7 @@
 // registrations created by Register, stops the listeners started by Serve and
 // then closes the private UserAgent. In-flight handlers keep running
 // concurrently with the dialog teardown (the framework closes each dialog when
-// it ends). Registrations created with WithRegistrationDetached are
+// it ends). Registrations created with RegisterOptions{Detached: true} are
 // caller-owned: stop them with Registration.Close (or cancel their context).
 //
 // The sipgo types in public signatures are aliased in aliases.go (URI, Header,

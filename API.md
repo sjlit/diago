@@ -8,7 +8,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - Call legs are `InboundCall` (UAS) and `OutboundCall` (UAC); the shared
   contract is the `Call` interface. Do not re-introduce `Dialog*` types.
 - The engine is `Agent`, constructed by `New`. Options are per-domain types
-  (`Config`, `SignalOption`, `MediaConfig`, `ReaderOption`, ...).
+  (`Config`, `AnswerOptions`, `MediaConfig`, `ReaderOption`, ...).
 - Methods follow one verb per intent:
   - `New*` constructs an object or a media handle (`New`, `NewCall`,
     `NewBridge`, `NewPlayback`, `NewDTMFReader`, ...). A playback handle
@@ -29,18 +29,15 @@ Conventions used by the public API. New code (and reviews) should follow them;
 
 ## Options
 
-- Most option constructors are `WithX` and return a concrete (unexported)
-  type. APIs that still use functional options take the per-operation
-  interface for what they consume (`AnswerOption`, `InviteOption`,
-  `DialOption`, `RegisterOption`, ...); passing an option an API does not
-  consume is a compile error. `Ack`, `Response`, `Request`, `Hold`, `Refer`
-  and `Close` take their XxxOptions struct instead.
-- Option constructors validate their own input and return an error from the
-  option function (surfaced by the API call). Nil callbacks, empty names and
+- Every operation takes its own `XxxOptions` struct (`AnswerOptions`,
+  `InviteOptions`, `DialOptions`, `RegisterOptions`, `CloseOptions`, ...).
+  Zero values select the documented defaults; at most one options value is
+  accepted per call.
+- Options are validated when the operation runs. Nil headers, empty names and
   out-of-range values are rejected instead of silently ignored; every such
   error wraps `ErrInvalidOption`.
-- Nil options are skipped; slices of options must use the operation's
-  interface type (`[]diago.RegisterOption`, not `[]diago.SignalOption`).
+- Slices of options use the concrete operation type; there is no shared
+  `SignalOption` interface.
 - Agent-level configuration validates in `New` and aborts construction.
 
 ## Errors
@@ -79,7 +76,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
   created (`Register`/`RegisterURI`), stops listeners and closes the private
   UserAgent. A UserAgent supplied with `Config.UserAgent` stays caller-owned.
 - Caller-owned resources are explicit: the UserAgent (when supplied),
-  registrations created with `WithRegistrationDetached`, REGISTER
+  registrations created with `RegisterOptions{Detached: true}`, REGISTER
   transactions, outgoing calls that never got a response, bridge objects.
 
 ## Configuration

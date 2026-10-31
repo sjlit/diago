@@ -132,7 +132,7 @@ func TestShutdownUnregistersRegistrations(t *testing.T) {
 	assert.Equal(t, int32(1), unregisters.Load())
 	_, err = dg.Register(ctx, "sip:bob@localhost")
 	assert.ErrorIs(t, err, ErrAgentClosed)
-	_, err = dg.Register(ctx, "sip:bob@localhost", WithRegistrationDetached())
+	_, err = dg.Register(ctx, "sip:bob@localhost", RegisterOptions{Detached: true})
 	assert.ErrorIs(t, err, ErrAgentClosed)
 }
 
@@ -150,7 +150,7 @@ func TestShutdownKeepsDetachedRegistrations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	reg, err := dg.Register(ctx, "sip:alice@localhost", WithRegistrationDetached())
+	reg, err := dg.Register(ctx, "sip:alice@localhost", RegisterOptions{Detached: true})
 	require.NoError(t, err)
 	require.NoError(t, reg.WaitReady(ctx))
 
