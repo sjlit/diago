@@ -72,12 +72,13 @@ func NewDigestServer() *DigestAuthServer {
 }
 
 // Close stops the nonce expiry timers. The server can not be reused.
-func (s *DigestAuthServer) Close() {
+func (s *DigestAuthServer) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, v := range s.cache {
 		v.expireTimer.Stop()
 	}
+	return nil
 }
 
 var (

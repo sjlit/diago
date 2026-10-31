@@ -68,11 +68,11 @@
 // otherwise. Media entry points return ErrDialogNotAnswered/ErrDialogClosed
 // before media exists or after teardown.
 //
-// Most signaling methods honor ctx while sending. Answer, AnswerLate and
-// RespondSDP return once the 2xx was handed to the transaction layer;
+// Most signaling methods honor ctx while sending. By default Answer, AnswerLate
+// and RespondSDP return once the 2xx was handed to the transaction layer;
 // retransmission until the ACK and the ACK wait continue in the background
-// (RFC 3261 §13.3.1.4). Call InboundCall.WaitAck to wait for the ACK
-// to be processed (media finalized).
+// (RFC 3261 §13.3.1.4). Set AnswerOptions.ACKPolicy to ACKPolicyWait or call
+// InboundCall.WaitAck to wait for the ACK to be processed (media finalized).
 //
 // # Lifecycle
 //

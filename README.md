@@ -106,10 +106,10 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   `SendDTMF`, `PlayTone`, ...) resolve the reader/writer at use time, so re-INVITEs
   hot-swap the internals without replacing installed handles. Media entry
   points return `ErrDialogNotAnswered`/`ErrDialogClosed` instead of panicking.
-- **Answer/ACK**: `Answer`, `AnswerLate` and `RespondSDP` return once the 2xx
-  was handed to the transaction layer; the ACK wait continues in the
-  background. Use `WaitAck` when the call must be
-  fully established before continuing.
+- **Answer/ACK**: by default `Answer`, `AnswerLate` and `RespondSDP` return
+  once the 2xx was handed to the transaction layer; the ACK wait continues in
+  the background. Set `AnswerOptions.ACKPolicy` to `ACKPolicyWait` (or call
+  `WaitAck`) when the call must be fully established before continuing.
 - **Options**: every operation takes its own `XxxOptions` struct
   (`AnswerOptions`, `InviteOptions`, `DialOptions`, `RegisterOptions`,
   `CloseOptions`, ...). Zero values select the defaults; fields are validated
