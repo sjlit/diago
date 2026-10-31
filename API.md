@@ -62,8 +62,9 @@ Conventions used by the public API. New code (and reviews) should follow them;
   transaction layer; the ACK wait continues in the background and is observed
   with `WaitAck`. `AnswerOptions.ACKPolicy = ACKPolicyWait` makes `Answer` and
   `AnswerLate` wait for the ACK.
-- Background operations either take a context, return a `StopFunc`, or return
-  a handle with `Close`; the contract is documented per method.
+- Background operations either take a context, return a `StopFunc`, return a
+  plain release `func()` (pause gates), or return a handle with `Close`; the
+  contract is documented per method.
 
 ## Lifecycle
 

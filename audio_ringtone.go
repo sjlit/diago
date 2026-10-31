@@ -51,9 +51,7 @@ func (a *AudioRingtone) PlayBackground() (StopFunc, error) {
 			return err
 		}
 		wg.Wait()
-		if releaseErr := release(); releaseErr != nil {
-			return errors.Join(playErr, releaseErr)
-		}
+		release()
 
 		if errors.Is(playErr, media.ErrWritePaused) {
 			return nil

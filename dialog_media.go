@@ -918,9 +918,8 @@ func (d *Media) IsRemoteHeld() bool {
 // PauseAudioRead pauses the dialog audio reader: reads through the audio
 // pipeline return media.ErrReadPaused until the returned release is called.
 // Pause is refcounted, so concurrent pausers can not resume each other; the
-// returned release must be called exactly once. The StopFunc always reports a
-// nil error.
-func (d *Media) PauseAudioRead() (StopFunc, error) {
+// returned release must be called exactly once.
+func (d *Media) PauseAudioRead() (func(), error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -930,18 +929,15 @@ func (d *Media) PauseAudioRead() (StopFunc, error) {
 		return nil, ErrDialogNotAnswered
 	}
 	release := d.rtpPacketReader.PauseRead()
-	return func() error {
-		release()
-		return nil
-	}, nil
+	return release, nil
 }
 
 // PauseAudioWrite pauses the dialog audio writer: writes through the audio
 // pipeline return media.ErrWritePaused until the returned release is called.
 // Refcounted like PauseAudioRead. An in-flight write completes first, so
-// pause latency is bounded by one packet interval. The StopFunc always reports
-// a nil error.
-func (d *Media) PauseAudioWrite() (StopFunc, error) {
+// pause latency is bounded by one packet interval. The returned release must
+// be called exactly once.
+func (d *Media) PauseAudioWrite() (func(), error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -951,10 +947,7 @@ func (d *Media) PauseAudioWrite() (StopFunc, error) {
 		return nil, ErrDialogNotAnswered
 	}
 	release := d.rtpPacketWriter.PauseWrite()
-	return func() error {
-		release()
-		return nil
-	}, nil
+	return release, nil
 }
 
 // DiscardQueuedRTP drops any RTP datagrams already queued on the dialog's
@@ -1060,9 +1053,7 @@ func (d *Media) ListenBackground() (stop StopFunc, err error) {
 			return err
 		}
 		wg.Wait() // This makes sure we have exited reading
-		if releaseErr := release(); releaseErr != nil {
-			return errors.Join(readErr, releaseErr)
-		}
+		release()
 		if errors.Is(readErr, media.ErrReadPaused) {
 			return nil
 		}

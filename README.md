@@ -127,9 +127,9 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   `diago.Header`, `diago.Request`, `diago.Response`, ...), so importing sipgo
   is optional. Escape hatches: `Config.UserAgent`, `Config.Server`, `Config.Client`,
   `Agent.Server`, `Agent.UA`, `call.SIP`.
-- **Background helpers**: `ListenBackground`, `AudioRingtone.PlayBackground`,
-  `PauseAudioRead/Write` and `Bridge.ProxyMediaControl` return `StopFunc`
-  (`func() error`).
+- **Background helpers**: `ListenBackground`, `AudioRingtone.PlayBackground`
+  and `Bridge.ProxyMediaControl` return `StopFunc` (`func() error`).
+  `PauseAudioRead/Write` return a plain `func()` release.
 
 Package docs: `go doc github.com/sjlit/diago/v2`; API conventions:
 [API.md](API.md).

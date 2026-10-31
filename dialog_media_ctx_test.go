@@ -127,7 +127,7 @@ func TestMediaListenBackgroundStopContention(t *testing.T) {
 	_, err = audioReader.Read(buf)
 	assert.ErrorIs(t, err, media.ErrReadPaused, "ListenBackground stop must not clear a foreign pause")
 
-	require.NoError(t, externalRelease())
+	externalRelease()
 	send(160)
 	readOk := make(chan error, 1)
 	go func() {

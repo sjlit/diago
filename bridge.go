@@ -303,16 +303,14 @@ func (b *Bridge) Remove(d Call) error {
 	snapshot := slices.Clone(b.dialogs)
 	b.mu.Unlock()
 
-	var releases []StopFunc
-	var releaseErr error
 	if running {
-		releases = interruptBridgeProxy(snapshot)
+		releases := interruptBridgeProxy(snapshot)
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
 		}
 		for _, release := range releases {
-			releaseErr = errors.Join(releaseErr, release())
+			release()
 		}
 	}
 
@@ -331,7 +329,7 @@ func (b *Bridge) Remove(d Call) error {
 			b.originator = nil
 		}
 	}
-	return releaseErr
+	return nil
 }
 
 // Close stops any running proxy and clears the bridge. ctx bounds the wait for
@@ -350,7 +348,6 @@ func (b *Bridge) Close(ctx context.Context) error {
 	snapshot := slices.Clone(b.dialogs)
 	b.mu.Unlock()
 
-	var releaseErr error
 	if running {
 		releases := interruptBridgeProxy(snapshot)
 		select {
@@ -358,7 +355,7 @@ func (b *Bridge) Close(ctx context.Context) error {
 		case <-ctx.Done():
 		}
 		for _, release := range releases {
-			releaseErr = errors.Join(releaseErr, release())
+			release()
 		}
 	}
 
@@ -366,14 +363,14 @@ func (b *Bridge) Close(ctx context.Context) error {
 	defer b.mu.Unlock()
 	b.dialogs = nil
 	b.originator = nil
-	return releaseErr
+	return nil
 }
 
 // interruptBridgeProxy pauses writers to surface media.ErrWritePaused in the
 // proxy copy loop. Callers must call the returned releases after the proxy
 // exits (or times out) to restore writers.
-func interruptBridgeProxy(dialogs []Call) []StopFunc {
-	var releases []StopFunc
+func interruptBridgeProxy(dialogs []Call) []func() {
+	var releases []func()
 	for _, d := range dialogs {
 		release, err := d.Media().PauseAudioWrite()
 		if err != nil {
@@ -463,7 +460,7 @@ func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
 			dialogs := slices.Clone(b.dialogs)
 			b.mu.Unlock()
 
-			rels := make([]StopFunc, 0, len(dialogs))
+			rels := make([]func(), 0, len(dialogs))
 			var pauseErrs error
 			for _, d := range dialogs {
 				release, err := d.Media().PauseAudioWrite()
@@ -477,7 +474,7 @@ func (b *Bridge) ProxyMediaControl() (StopFunc, error) {
 			// Wait goroutine termination
 			err := <-proxyErr
 			for _, release := range rels {
-				pauseErrs = errors.Join(pauseErrs, release())
+				release()
 			}
 			stopErr = errors.Join(pauseErrs, err)
 		})
@@ -651,7 +648,7 @@ type BridgeMix struct {
 	mixState int
 	// pauseReleases holds reader gate releases taken by mixStop, applied by
 	// mixStopWait after the mix goroutines rejoin. Guarded by mu.
-	pauseReleases []StopFunc
+	pauseReleases []func()
 
 	waitDialogsNum int
 	realtimeReader bool
@@ -877,7 +874,7 @@ func (b *BridgeMix) mixStopWait() error {
 	// Release read pauses (mixStop paused the dialogs to stop the mix)
 	var allErros error
 	for _, release := range b.pauseReleases {
-		allErros = errors.Join(allErros, release())
+		release()
 	}
 	b.pauseReleases = nil
 	if stopErr != nil {
