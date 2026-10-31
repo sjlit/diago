@@ -203,7 +203,7 @@ func (s *DigestAuthServer) AuthorizeDialog(d *InboundCall, auth DigestAuth) erro
 		// the initial challenge (err == nil), bad credentials, unknown or
 		// expired nonces (fresh challenge), malformed credentials (400) and
 		// digest errors (403). Without the write the caller hangs until the
-		// framework falls through to Hangup and answers 480 instead.
+		// framework falls through to Close and answers 480 instead.
 		if err == nil {
 			err = fmt.Errorf("not authorized")
 		}

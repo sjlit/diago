@@ -923,7 +923,7 @@ func (d *InboundCall) readAck(req *Request, tx ServerTransaction) error {
 
 	// Apply the late-offer SDP under the lock, resolving the media session
 	// for Finalize which must run outside it: Finalize performs the DTLS
-	// handshake, a network operation that would block Answer/Hangup and SIP
+	// handshake, a network operation that would block Answer/Close and SIP
 	// handling on d.mu for its duration.
 	sess, err := func() (*media.MediaSession, error) {
 		d.mu.Lock()
@@ -955,7 +955,7 @@ func (d *InboundCall) readAck(req *Request, tx ServerTransaction) error {
 	}
 	if err != nil {
 		// The peer acknowledged the 2xx, so the dialog is confirmed from its
-		// point of view: advance sipgo state first (Hangup would otherwise
+		// point of view: advance sipgo state first (close would otherwise
 		// try to decline an already-answered INVITE, which cannot be put on
 		// the wire) and then send a real BYE. Record the failure before the
 		// state change so a waiting respondSignal surfaces it.
@@ -985,7 +985,7 @@ func (d *InboundCall) startMonitorForAnswer() error {
 	return rtpSess.MonitorBackground()
 }
 
-// Hangup terminates dialog. When a final 2xx response was sent (dialog
+// hangup terminates dialog. When a final 2xx response was sent (dialog
 // Established or Confirmed) BYE is sent — sipgo waits for the ACK first, per
 // RFC 3261 §15. Otherwise the INVITE is declined with 480 (and nil is
 // returned — declining succeeded).

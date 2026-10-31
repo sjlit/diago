@@ -710,7 +710,7 @@ func newAgent(opts ...agentOption) (*Agent, error) {
 				// down so media and transaction state do not leak.
 				tctx, tcancel := context.WithTimeout(context.Background(), 10*time.Second)
 				if err := dWrap.hangup(tctx); err != nil {
-					dg.log.Warn("Hangup on dialog teardown failed", "error", err, "dialog", dWrap.ID())
+					dg.log.Warn("Dialog teardown failed", "error", err, "dialog", dWrap.ID())
 				}
 				tcancel()
 			}
@@ -1219,10 +1219,10 @@ func (dg *Agent) serve(ctx context.Context, h CallHandler, readyCh func()) error
 	return errors.Join(errs...)
 }
 
-// shutdownDialogHangupTimeout bounds the per-dialog Hangup during Close.
+// shutdownDialogTimeout bounds the per-dialog Close during shutdown.
 // context.WithTimeout takes the earlier deadline when the passed ctx already
 // has one.
-const shutdownDialogHangupTimeout = 3 * time.Second
+const shutdownDialogTimeout = 3 * time.Second
 
 // Close gracefully stops the Agent instance:
 //
@@ -1247,7 +1247,7 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //     Registration.Close (or cancel its context).
 //
 // In-flight serve handlers keep running concurrently with phase 1; their own
-// Hangup/Close on an already-torn-down dialog is a tolerated no-op path.
+// Close on an already-torn-down dialog is a tolerated no-op path.
 // Close is idempotent. After Close, Serve/Start and
 // StartRegistration/StartRegistrationURI return ErrAgentClosed.
 //
@@ -1387,7 +1387,7 @@ func (dg *Agent) shutdownRegistrations(ctx context.Context) []error {
 
 func shutdownDialog(ctx context.Context, id string, d Call) []error {
 	var errs []error
-	hctx, cancel := context.WithTimeout(ctx, shutdownDialogHangupTimeout)
+	hctx, cancel := context.WithTimeout(ctx, shutdownDialogTimeout)
 	defer cancel()
 	if err := d.Close(hctx); err != nil {
 		errs = append(errs, fmt.Errorf("close dialog %q: %w", id, err))

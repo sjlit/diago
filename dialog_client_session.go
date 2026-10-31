@@ -89,7 +89,7 @@ func (d *OutboundCall) ID() string {
 	return d.sess.ID
 }
 
-// Hangup terminates dialog with BYE.
+// hangup terminates dialog with BYE.
 // Options allow customizing headers of the BYE request (ex. Reason header),
 // Contact and to mutate the final request.
 //
