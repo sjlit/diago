@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
 
@@ -111,9 +110,7 @@ func dialogRefer(ctx context.Context, d Call, recipient URI, referTo URI, reffer
 	}
 
 	if res.StatusCode != sip.StatusAccepted {
-		return sipgo.ErrDialogResponse{
-			Res: res,
-		}
+		return newDialogResponseError(res)
 	}
 	return nil
 }
@@ -323,9 +320,9 @@ func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onRe
 	if err := onReferDialog(referDialog); err != nil {
 		// DO notify?
 		dg.log.Info("OnReferDialog handling failed with", "error", err)
-		var resErr *sipgo.ErrDialogResponse
+		var resErr *DialogResponseError
 		if errors.As(err, &resErr) {
-			return sendNotify(ctx, resErr.Res.StatusCode, resErr.Res.Reason, subState{
+			return sendNotify(ctx, resErr.StatusCode(), resErr.Response().Reason, subState{
 				state:  "terminated",
 				reason: "noresource",
 			})
@@ -383,9 +380,7 @@ func reInviteExchange(ctx context.Context, t reInviteExchangeTransport, req *Req
 				}
 			}
 
-			return nil, sipgo.ErrDialogResponse{
-				Res: res,
-			}
+			return nil, newDialogResponseError(res)
 		}
 
 		// ACK the 2xx at its Contact (RFC 3261 §13.2.1). A 2xx without Contact

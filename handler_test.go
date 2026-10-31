@@ -62,17 +62,12 @@ func TestDialogReasonHeader(t *testing.T) {
 }
 
 // requireDialogResponseError asserts err carries an INVITE final response and
-// returns it. sipgo returns both values and pointers in different paths.
+// returns it.
 func requireDialogResponseError(t *testing.T, err error) *sip.Response {
 	t.Helper()
-
-	var ptr *sipgo.ErrDialogResponse
-	if errors.As(err, &ptr) {
-		return ptr.Res
-	}
-	var val sipgo.ErrDialogResponse
-	require.ErrorAs(t, err, &val)
-	return val.Res
+	var resErr *DialogResponseError
+	require.ErrorAs(t, err, &resErr)
+	return resErr.Response()
 }
 
 func TestIntegrationHandlerErrorMapping(t *testing.T) {

@@ -218,7 +218,7 @@ func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 // Scope: InviteOptions.
 //
 // Errors:
-// - sipgo.ErrDialogResponse
+// - *DialogResponseError
 // - ErrClientEarlyMedia
 //
 // NOTE: It updates internal invite request so NOT THREAD SAFE.
@@ -405,16 +405,15 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 		return nil
 	})
 	if err != nil {
-		// sess.Close()
-		return err
+		return normalizeDialogResponseError(err)
 	}
 	ansOpts := answerOptionsFromParams(params)
 
 	if params.Dialog.EarlyMediaDetect {
-		return d.waitAnswerEarly(ctx, med, ansOpts)
+		return normalizeDialogResponseError(d.waitAnswerEarly(ctx, med, ansOpts))
 	}
 
-	return d.waitAnswer(ctx, med, ansOpts)
+	return normalizeDialogResponseError(d.waitAnswer(ctx, med, ansOpts))
 }
 
 // answerOptionsFromParams extracts the sipgo-level answer options from parsed
@@ -508,7 +507,7 @@ func (d *OutboundCall) waitAnswerEarly(ctx context.Context, med *Media, opts sip
 
 func (d *OutboundCall) waitAnswer(ctx context.Context, med *Media, opts sipgo.AnswerOptions) error {
 	if err := d.sess.WaitAnswer(ctx, opts); err != nil {
-		return err
+		return normalizeDialogResponseError(err)
 	}
 
 	remoteSDP := d.sess.InviteResponse.Body()

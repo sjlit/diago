@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/emiago/sipgo"
 )
 
 // Lifecycle sentinels for dialog media operations. All media entry points
@@ -126,6 +128,56 @@ var (
 	// ErrBridgeNil is returned by DialBridge when the bridge is nil.
 	ErrBridgeNil = errors.New("bridge is nil")
 )
+
+// DialogResponseError reports a non-2xx final response for an outbound INVITE
+// or in-dialog request.
+type DialogResponseError struct {
+	response *Response
+}
+
+func newDialogResponseError(res *Response) *DialogResponseError {
+	return &DialogResponseError{response: res}
+}
+
+func (e *DialogResponseError) Error() string {
+	if e == nil || e.response == nil {
+		return "dialog response error"
+	}
+	return e.response.StartLine()
+}
+
+// Response returns the final SIP response.
+func (e *DialogResponseError) Response() *Response {
+	if e == nil {
+		return nil
+	}
+	return e.response
+}
+
+// StatusCode returns the SIP status code, or zero when no response is present.
+func (e *DialogResponseError) StatusCode() int {
+	if e == nil || e.response == nil {
+		return 0
+	}
+	return e.response.StatusCode
+}
+
+// normalizeDialogResponseError converts sipgo's dialog response error into the
+// diago type so callers do not need to import sipgo.
+func normalizeDialogResponseError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ptr *sipgo.ErrDialogResponse
+	if errors.As(err, &ptr) {
+		return newDialogResponseError(ptr.Res)
+	}
+	var val sipgo.ErrDialogResponse
+	if errors.As(err, &val) {
+		return newDialogResponseError(val.Res)
+	}
+	return err
+}
 
 // ResponseError lets a CallHandler map an error to an arbitrary final SIP
 // response. Code must be a final non-2xx status; values below 300 are rejected
