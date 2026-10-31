@@ -618,6 +618,7 @@ func (b *Bridge) proxyMediaWithDTMF(m1 *Media, m2 *Media) error {
 type BridgeMix struct {
 	mu      sync.Mutex
 	dialogs []Call
+	closed  bool
 
 	// mixMutateMu serializes Add/Remove across the stop-wait-restart cycle.
 	// mixStopWait releases b.mu while waiting for the mix to drain, so without
@@ -699,6 +700,10 @@ func (b *BridgeMix) Add(d Call) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.closed {
+		return ErrBridgeClosed
+	}
+
 	switch state := d.SIP().LoadState(); state {
 	case sip.DialogStateEstablished, sip.DialogStateConfirmed:
 		// Answered: Established means the 2xx was sent and the ACK may still
@@ -742,6 +747,9 @@ func (b *BridgeMix) Remove(d Call) error {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return ErrBridgeClosed
+	}
 	dialogID := d.ID()
 
 	var dialog Call
@@ -776,6 +784,24 @@ func (b *BridgeMix) Remove(d Call) error {
 		return errors.Join(mixStopErr, err)
 	}
 	return mixStopErr
+}
+
+// Close stops the mixer and removes every dialog. It is idempotent; Add and
+// Remove after Close return ErrBridgeClosed.
+func (b *BridgeMix) Close() error {
+	b.ensureInit()
+	b.mixMutateMu.Lock()
+	defer b.mixMutateMu.Unlock()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil
+	}
+	b.closed = true
+	err := b.mixStopWait()
+	b.dialogs = nil
+	return err
 }
 
 func (b *BridgeMix) stateWrite(s int) {

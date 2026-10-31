@@ -193,3 +193,14 @@ func TestBridgeMixZeroValueUsable(t *testing.T) {
 	require.Error(t, b.Remove(nil))
 	require.NoError(t, b.mixStart())
 }
+
+func TestBridgeMixClose(t *testing.T) {
+	b := NewBridgeMix()
+	require.NoError(t, b.Close())
+	require.NoError(t, b.Close())
+
+	// Add/Remove are rejected once the mixer is closed, before any dialog
+	// state or media is touched.
+	require.ErrorIs(t, b.Add(newBridgeTestDialog("late")), ErrBridgeClosed)
+	require.ErrorIs(t, b.Remove(newBridgeTestDialog("late")), ErrBridgeClosed)
+}
