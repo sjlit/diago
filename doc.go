@@ -57,10 +57,12 @@
 //
 // # Options
 //
-// Per-call behavior is configured with the per-operation XxxOptions structs
-// (AnswerOptions, InviteOptions, DialOptions, RegisterOptions, CloseOptions,
-// ...). Fields are validated when the operation runs; zero values select the
-// documented defaults.
+// Most per-call behavior is configured with the per-operation XxxOptions
+// structs (AnswerOptions, InviteOptions, DialOptions, RegisterOptions,
+// CloseOptions, ...). Fields are validated when the operation runs; zero values
+// select the documented defaults. The media tuning APIs PlayTone, SendDTMF,
+// StartMusicOnHold and StartStereoRecording keep functional options because
+// they validate immediately and carry non-zero defaults.
 //
 // # Concurrency and contexts
 //
@@ -80,7 +82,7 @@
 // one and Close closes it. A UserAgent, Server or Client supplied through
 // Config stays caller-owned and is not closed.
 // Close hangs up and closes every tracked dialog, unregisters and stops the
-// registrations created by Register, stops the listeners started by Serve and
+// registrations created by StartRegistration, stops the listeners started by Serve and
 // then closes the private UserAgent. In-flight handlers keep running
 // concurrently with the dialog teardown (the framework closes each dialog when
 // it ends). Registrations created with RegisterOptions{Detached: true} are

@@ -110,10 +110,12 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   once the 2xx was handed to the transaction layer; the ACK wait continues in
   the background. Set `AnswerOptions.ACKPolicy` to `ACKPolicyWait` (or call
   `WaitAck`) when the call must be fully established before continuing.
-- **Options**: every operation takes its own `XxxOptions` struct
+- **Options**: most operations take their own `XxxOptions` struct
   (`AnswerOptions`, `InviteOptions`, `DialOptions`, `RegisterOptions`,
   `CloseOptions`, ...). Zero values select the defaults; fields are validated
-  when the operation runs.
+  when the operation runs. A few media tuning APIs (`PlayTone`, `SendDTMF`,
+  `StartMusicOnHold`, `StartStereoRecording`) use functional options because
+  they encode non-zero defaults and immediate validation.
 - **Configuration**: construction-time media settings live in `MediaConfig`
   (`Codecs`, `SRTP`, `Network`, `SDP`, `MusicOnHold`, `Logger`, `Debug`,
   `Tracer`, `HTTPClient`). Transports can select a complete named profile with
@@ -129,7 +131,8 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   `Agent.Server`, `Agent.UA`, `call.SIP`.
 - **Background helpers**: `ListenBackground`, `AudioRingtone.PlayBackground`
   and `Bridge.ProxyMediaControl` return `StopFunc` (`func() error`).
-  `PauseAudioRead/Write` return a plain `func()` release.
+  For a cancellable foreground read use `ListenContext`; `PauseAudioRead/Write`
+  return a plain `func()` release.
 
 Package docs: `go doc github.com/sjlit/diago/v2`; API conventions:
 [API.md](API.md).

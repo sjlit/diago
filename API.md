@@ -29,10 +29,13 @@ Conventions used by the public API. New code (and reviews) should follow them;
 
 ## Options
 
-- Every operation takes its own `XxxOptions` struct (`AnswerOptions`,
+- Most operations take their own `XxxOptions` struct (`AnswerOptions`,
   `InviteOptions`, `DialOptions`, `RegisterOptions`, `CloseOptions`, ...).
   Zero values select the documented defaults; at most one options value is
-  accepted per call.
+  accepted per call. The media tuning APIs `PlayTone`, `SendDTMF`,
+  `StartMusicOnHold` and `StartStereoRecording` keep functional options
+  (`ToneOption`, `DTMFSendOption`, `MoHOption`, `RecordingOption`) because
+  they validate immediately and carry non-zero defaults.
 - Options are validated when the operation runs. Nil headers, empty names and
   out-of-range values are rejected instead of silently ignored; every such
   error wraps `ErrInvalidOption`.
@@ -99,7 +102,9 @@ Conventions used by the public API. New code (and reviews) should follow them;
   `OutboundCall.Invite` updates the invite request and is not thread safe).
 - Re-INVITE swaps media internals behind stable handles
   (`RTPPacketReader`/`RTPPacketWriter`): components must resolve them per use
-  instead of capturing sessions.
+  instead of capturing sessions. `Media` does not expose the underlying
+  `media.MediaSession` or `media.RTPSession`; use `call.SIP()` for SIP-level
+  details and `ReaderOptions.RTPStats`/`WriterOptions.RTPStats` for statistics.
 - Single-writer rule: one component writes audio at a time (playback, MoH,
   bridge, recording tap). Pause gates (`PauseAudioRead/Write`) are refcounted
   and their release must be called exactly once.
