@@ -81,8 +81,8 @@ func BridgeCall(ctx context.Context, d *diago.Agent, inDialog *diago.InboundCall
 	defer outDialog.Close(context.Background())
 	outCtx := outDialog.Context()
 
-	defer inDialog.Hangup(inCtx)
-	defer outDialog.Hangup(outCtx)
+	defer inDialog.Close(inCtx)
+	defer outDialog.Close(outCtx)
 
 	// You can even easily detect who hangups
 	select {

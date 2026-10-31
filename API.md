@@ -17,9 +17,8 @@ Conventions used by the public API. New code (and reviews) should follow them;
   - `Start*` starts background work (`StartMusicOnHold`,
     `StartStereoRecording`).
   - `Play*`/`Send*` perform a blocking action (`PlayTone`, `SendDTMF`).
-  - `Close` releases local resources and, except for `Agent.Close`
-    unregistering its registrations, never sends SIP; `Hangup` performs
-    the signaling teardown.
+  - `Close` terminates the signaling (BYE, CANCEL or decline as appropriate)
+    and releases local resources. Local-only resource release is internal.
 - No stutter: prefer `Transport.Network` over `Transport.Transport`,
   `call.Media()` over `call.DialogMedia()`, `call.SIP()` over
   `call.DialogSIP()`.
@@ -73,8 +72,8 @@ Conventions used by the public API. New code (and reviews) should follow them;
 
 ## Lifecycle
 
-- `Hangup` tears down signaling; `Close` releases local resources; `Close` is
-  idempotent everywhere.
+- `Call.Close(ctx)` tears down signaling and releases local resources; `Close`
+  is idempotent everywhere.
 - Server dialogs are owned by the framework from the incoming INVITE: a handler
   that answers and returns keeps the call alive; the framework closes the
   dialog (media, cache entry) when it ends.

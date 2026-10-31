@@ -95,7 +95,7 @@ func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 			slog.Info("Play finished", "error", err)
 			// The call stays alive after the handler returns (v3
 			// semantics); end it after playback.
-			if herr := inDialog.Hangup(ctx); herr != nil {
+			if herr := inDialog.Close(ctx); herr != nil {
 				slog.Error("Hangup failed", "error", herr)
 			}
 			return nil

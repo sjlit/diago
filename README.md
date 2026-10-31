@@ -74,7 +74,7 @@ defer call.Close()
 
 // ... use call.Media() for playback, DTMF, recording, ...
 
-if err := call.Hangup(ctx); err != nil {
+if err := call.Close(ctx); err != nil {
 	return err
 }
 ```
@@ -94,8 +94,8 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   handler already wrote its own final response.
 - **Calls**: `InboundCall` (UAS) and `OutboundCall` (UAC) share the `Call`
   interface. `Dial` accepts a SIP URI string; `DialURI` takes a `diago.URI`.
-  `Hangup` performs the signaling teardown, `Close` releases local resources
-  (Close is idempotent; Hangup on an already ended dialog is a no-op).
+  `Close` performs the signaling teardown (BYE/CANCEL/decline as appropriate)
+  and releases local resources; it is idempotent.
 - **Lifecycle**: `Agent.Close` hangs up tracked dialogs, unregisters the
   registrations it created, stops the listeners
   started by `Serve`/`Start` and closes the private UserAgent. A
@@ -166,7 +166,7 @@ Breaking changes since the first v2 preview (same module path):
 | `DialogClientSession` / `DialogServerSession` | `OutboundCall` / `InboundCall` |
 | `DialogMedia` / `DialogHandler` | `Media` / `CallHandler` |
 | `MatchDialog` / `NewDialog` | `FindCall` / `NewCall` |
-| `HangupAndClose` | removed: `Hangup` + `Close` |
+| `HangupAndClose` | removed: `Close(ctx)` performs teardown and release |
 | `WithHeader` | removed: `WithHeaders(sip.NewHeader(name, value))` |
 | `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `NewPlayback*` / `NewDTMF*` / `NewRingtone` |
 | `PlayMusicOnHold` | `StartMusicOnHold` |
@@ -184,7 +184,7 @@ Behavioral notes:
 - REGISTER: 423 Interval Too Brief is retried with `Min-Expires`; transient
   failures honor `Retry-After` once; transport failures are retried until ctx
   is canceled (or `Registration.Close`).
-- Server `Hangup` on a still-pending INVITE sends the 480 decline even when the
+- Server `Close` on a still-pending INVITE sends the 480 decline even when the
   passed ctx is already canceled.
 - `Agent.Close` unregisters the REGISTER handles created by `Register` and
   `RegisterURI` (opt out with `WithRegistrationDetached`). Registering after

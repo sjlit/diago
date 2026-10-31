@@ -88,12 +88,12 @@ func PlaybackDTMF(ctx context.Context, inDialog *diago.InboundCall) error {
 
 	if dtmf != '*' {
 		slog.Info("Finishing call", "dtmf", string(dtmf))
-		return inDialog.Hangup(ctx)
+		return inDialog.Close(ctx)
 	}
 
 	// Playback is being replayed with * key. Wait next caller decision
 	slog.Info("Prompt replayed. Press any key to continue")
 	dtmf = <-pb.DTMF()
 	slog.Info("Caller pressed", "dtmf", string(dtmf))
-	return inDialog.Hangup(ctx)
+	return inDialog.Close(ctx)
 }

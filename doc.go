@@ -30,8 +30,9 @@
 //
 // Inbound dialogs are delivered to a CallHandler as *InboundCall; outbound
 // calls are created with Dial("sip:user@host") (or NewCall+Invite for full
-// control) and are *OutboundCall. Hangup ends the signaling; Close releases
-// local resources. The framework closes a dialog when it ends.
+// control) and are *OutboundCall. Close terminates the signaling (BYE, CANCEL
+// or decline as appropriate) and releases local resources. The framework
+// closes a dialog when it ends.
 //
 // # Media model
 //
