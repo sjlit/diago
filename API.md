@@ -31,8 +31,8 @@ Conventions used by the public API. New code (and reviews) should follow them;
 
 - Most operations take their own `XxxOptions` struct (`AnswerOptions`,
   `InviteOptions`, `DialOptions`, `RegisterOptions`, `CloseOptions`, ...).
-  Zero values select the documented defaults; at most one options value is
-  accepted per call. The media tuning APIs `PlayTone`, `SendDTMF`,
+  Zero values select the documented defaults; struct-based APIs accept at
+  most one options value per call. The media tuning APIs `PlayTone`, `SendDTMF`,
   `StartMusicOnHold` and `StartStereoRecording` keep functional options
   (`ToneOption`, `DTMFSendOption`, `MoHOption`, `RecordingOption`) because
   they validate immediately and carry non-zero defaults.
@@ -86,8 +86,9 @@ Conventions used by the public API. New code (and reviews) should follow them;
 ## Configuration
 
 - No package-level mutable configuration: settings live in `Config`,
-  `MediaConfig`, `media.MediaSession` fields or per-call options. Tracers,
-  debug switches, loggers and HTTP clients are per instance.
+  `MediaConfig`, the `media.MediaSession` supplied with `MediaOptions.Session`,
+  or per-call options. Tracers, debug switches, loggers and HTTP clients are
+  per instance.
 - Media configs are complete values; `Transport.Profile` selects a named
   profile registered in `Config.MediaProfiles` and there is no field-level merge
   between profiles. Transport-derived bind/advertise addresses only fill
