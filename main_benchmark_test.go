@@ -84,7 +84,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 			return nil
 		}
 
-		err = d.Hangup(ctx)
+		err = d.Close(ctx)
 		if err != nil {
 			t.Log(err.Error())
 		}
@@ -169,7 +169,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 					select {
 					// Audio is 2 sec long
 					case <-time.After(3 * time.Second):
-						dialog.Hangup(context.TODO())
+						dialog.Close(context.TODO())
 						clientHangup = true
 					case <-dialog.Context().Done():
 					}

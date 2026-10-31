@@ -24,7 +24,7 @@ func TestOptionInterfaceMatrix(t *testing.T) {
 		"response":        func(o SignalOption) bool { _, ok := o.(ResponseOption); return ok },
 		"progressMedia":   func(o SignalOption) bool { _, ok := o.(ProgressMediaOption); return ok },
 		"answer":          func(o SignalOption) bool { _, ok := o.(AnswerOption); return ok },
-		"hangup":          func(o SignalOption) bool { _, ok := o.(HangupOption); return ok },
+		"close":           func(o SignalOption) bool { _, ok := o.(CloseOption); return ok },
 		"request":         func(o SignalOption) bool { _, ok := o.(RequestOption); return ok },
 		"hold":            func(o SignalOption) bool { _, ok := o.(HoldOption); return ok },
 		"ack":             func(o SignalOption) bool { _, ok := o.(AckOption); return ok },
@@ -42,8 +42,8 @@ func TestOptionInterfaceMatrix(t *testing.T) {
 		opt      SignalOption
 		families []string
 	}{
-		{"WithHeaders", WithHeaders(sip.NewHeader("X", "1")), []string{"response", "progressMedia", "answer", "hangup", "request", "hold", "ack", "refer", "invite", "dial", "registerAttempt", "register"}},
-		{"WithContact", WithContact(&sip.ContactHeader{Address: sip.Uri{Host: "127.0.0.1"}}), []string{"response", "progressMedia", "answer", "hangup", "request", "hold", "ack", "refer", "invite", "dial", "registerAttempt", "register", "newCall"}},
+		{"WithHeaders", WithHeaders(sip.NewHeader("X", "1")), []string{"response", "progressMedia", "answer", "close", "request", "hold", "ack", "refer", "invite", "dial", "registerAttempt", "register"}},
+		{"WithContact", WithContact(&sip.ContactHeader{Address: sip.Uri{Host: "127.0.0.1"}}), []string{"response", "progressMedia", "answer", "close", "request", "hold", "ack", "refer", "invite", "dial", "registerAttempt", "register", "newCall"}},
 		{"WithBody", WithBody([]byte("v=0")), []string{"progressMedia", "answer", "request", "hold", "invite", "dial"}},
 		{"WithCodecs", WithCodecs(media.CodecAudioAlaw), []string{"progressMedia", "answer", "invite", "dial"}},
 		{"WithRTPNAT", WithRTPNAT(1), []string{"progressMedia", "answer", "invite", "dial"}},
@@ -57,7 +57,7 @@ func TestOptionInterfaceMatrix(t *testing.T) {
 		{"WithOnMediaUpdate", WithOnMediaUpdate(func(d *Media) {}), []string{"answer", "invite", "dial"}},
 		{"WithOnRefer", WithOnRefer(func(d *OutboundCall) error { return nil }), []string{"answer", "invite", "dial"}},
 		{"WithOnReferNotify", WithOnReferNotify(func(statusCode int) {}), []string{"refer"}},
-		{"WithRequestMutator", WithRequestMutator(func(req *sip.Request) error { return nil }), []string{"hangup", "request", "hold", "ack", "refer", "invite", "dial", "registerAttempt", "register"}},
+		{"WithRequestMutator", WithRequestMutator(func(req *sip.Request) error { return nil }), []string{"close", "request", "hold", "ack", "refer", "invite", "dial", "registerAttempt", "register"}},
 		{"WithResponseMutator", WithResponseMutator(func(res *sip.Response) error { return nil }), []string{"response", "progressMedia", "answer"}},
 		{"WithDialogTransport", WithDialogTransport("udp"), []string{"dial", "newCall"}},
 		{"WithDialogTransportID", WithDialogTransportID("tr-1"), []string{"dial", "newCall"}},

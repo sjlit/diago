@@ -209,7 +209,7 @@ func (d *InboundCall) Close(ctx context.Context, opts ...CloseOption) error {
 	}
 	var errs []error
 	if d.State() != CallStateEnded {
-		errs = append(errs, d.Hangup(ctx, opts...))
+		errs = append(errs, d.hangup(ctx, opts...))
 	}
 	errs = append(errs, d.releaseUnsafe())
 	return errors.Join(errs...)
@@ -960,7 +960,7 @@ func (d *InboundCall) readAck(req *Request, tx ServerTransaction) error {
 		// state change so a waiting respondSignal surfaces it.
 		d.setAckError(err)
 		aerr := d.sess.ReadAck(req, tx)
-		herr := d.Hangup(d.Context())
+		herr := d.hangup(d.Context())
 		return errors.Join(err, aerr, herr)
 	}
 
@@ -996,7 +996,7 @@ func (d *InboundCall) startMonitorForAnswer() error {
 // unconfirmed INVITE is sent even when ctx is already canceled: the caller
 // asked to terminate and the peer is still waiting for a final response, so
 // skipping the decline would hang the INVITE transaction.
-func (d *InboundCall) Hangup(ctx context.Context, opts ...HangupOption) error {
+func (d *InboundCall) hangup(ctx context.Context, opts ...CloseOption) error {
 	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err

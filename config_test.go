@@ -121,7 +121,7 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 
 	call, err := client.Dial(ctx, "sip:alice@127.0.0.1:"+strconv.Itoa(port))
 	require.NoError(t, err)
-	require.NoError(t, call.Hangup(ctx))
+	require.NoError(t, call.Close(ctx))
 	require.NoError(t, call.release())
 }
 

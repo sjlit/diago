@@ -67,7 +67,7 @@ func ExampleAgent_Dial() {
 	}
 	defer call.Close(context.Background())
 
-	if err := call.Hangup(context.Background()); err != nil {
+	if err := call.Close(context.Background()); err != nil {
 		log.Fatal(err)
 	}
 }

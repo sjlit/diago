@@ -20,17 +20,14 @@ type fakeBridgeDialog struct {
 	dm *Media
 }
 
-func (f *fakeBridgeDialog) ID() string               { return f.id }
-func (f *fakeBridgeDialog) Context() context.Context { return context.Background() }
-func (f *fakeBridgeDialog) State() CallState         { return CallStateConfirmed }
-func (f *fakeBridgeDialog) FromUser() string         { return "fake-from" }
-func (f *fakeBridgeDialog) ToUser() string           { return "fake-to" }
-func (f *fakeBridgeDialog) From() URI                { return URI{User: "fake-from"} }
-func (f *fakeBridgeDialog) To() URI                  { return URI{User: "fake-to"} }
-func (f *fakeBridgeDialog) Transport() string        { return "UDP" }
-func (f *fakeBridgeDialog) Hangup(ctx context.Context, opts ...HangupOption) error {
-	return nil
-}
+func (f *fakeBridgeDialog) ID() string                                         { return f.id }
+func (f *fakeBridgeDialog) Context() context.Context                           { return context.Background() }
+func (f *fakeBridgeDialog) State() CallState                                   { return CallStateConfirmed }
+func (f *fakeBridgeDialog) FromUser() string                                   { return "fake-from" }
+func (f *fakeBridgeDialog) ToUser() string                                     { return "fake-to" }
+func (f *fakeBridgeDialog) From() URI                                          { return URI{User: "fake-from"} }
+func (f *fakeBridgeDialog) To() URI                                            { return URI{User: "fake-to"} }
+func (f *fakeBridgeDialog) Transport() string                                  { return "UDP" }
 func (f *fakeBridgeDialog) Hold(ctx context.Context, opts ...HoldOption) error { return nil }
 func (f *fakeBridgeDialog) Unhold(ctx context.Context, opts ...RequestOption) error {
 	return nil

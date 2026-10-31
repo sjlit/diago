@@ -78,7 +78,7 @@ func (d *OutboundCall) Close(ctx context.Context, opts ...CloseOption) error {
 	}
 	var errs []error
 	if d.State() != CallStateEnded {
-		errs = append(errs, d.Hangup(ctx, opts...))
+		errs = append(errs, d.hangup(ctx, opts...))
 	}
 	errs = append(errs, d.releaseUnsafe())
 	return errors.Join(errs...)
@@ -104,7 +104,7 @@ func (d *OutboundCall) ID() string {
 // framework also releases them when the dialog ends).
 //
 // Scope: WithHeaders, WithContact, WithRequestMutator.
-func (d *OutboundCall) Hangup(ctx context.Context, opts ...HangupOption) error {
+func (d *OutboundCall) hangup(ctx context.Context, opts ...CloseOption) error {
 	params, err := newSignalParams(opts...)
 	if err != nil {
 		return err

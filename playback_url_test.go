@@ -65,7 +65,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		}
 
 		t.Log("Done playing", urlStr)
-		in.Hangup(in.Context())
+		in.Close(in.Context())
 		return nil
 	})
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 			// Playback duration, not a wait: hold the call open so the
 			// HTTP-backed stream keeps being fetched and copied.
 			time.Sleep(10 * time.Second)
-			dialog.Hangup(ctx)
+			dialog.Close(ctx)
 		}()
 		b := bytes.NewBuffer([]byte{})
 		written, err := media.CopyWithBuf(rtpReader, b, make([]byte, media.RTPBufSize))

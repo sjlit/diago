@@ -204,7 +204,7 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 	require.NoError(t, err)
 	defer dlg.release()
 
-	require.NoError(t, dlg.Hangup(ctx))
+	require.NoError(t, dlg.Close(ctx))
 
 	select {
 	case err := <-handlerCtxErr:
@@ -360,7 +360,7 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 	assert.EqualValues(t, 0, serverBye.Load(), "peer has not hung up yet")
 
 	// The owner ends the call; the client leg observes the BYE.
-	require.NoError(t, dlg.Hangup(ctx))
+	require.NoError(t, dlg.Close(ctx))
 	select {
 	case <-dlg.Context().Done():
 	case <-time.After(5 * time.Second):
@@ -396,12 +396,12 @@ func TestHangupCloseClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, cacheCountClientDialogs(dg))
 
-	require.NoError(t, d.Hangup(ctx))
+	require.NoError(t, d.Close(ctx))
 	assert.EqualValues(t, 1, byeCount.Load(), "Hangup must send BYE")
 	require.NoError(t, d.release())
 	assert.Equal(t, 0, cacheCountClientDialogs(dg), "Close must evict the dialog")
 
 	// Both are idempotent.
-	require.NoError(t, d.Hangup(ctx))
+	require.NoError(t, d.Close(ctx))
 	require.NoError(t, d.release())
 }

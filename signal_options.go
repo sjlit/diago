@@ -41,10 +41,10 @@ type (
 		SignalOption
 		isAnswerOption()
 	}
-	// HangupOption configures Hangup on both caller and callee dialogs.
-	HangupOption interface {
+	// CloseOption configures Close on both caller and callee dialogs.
+	CloseOption interface {
 		SignalOption
-		isHangupOption()
+		isCloseOption()
 	}
 	// RequestOption configures in-dialog requests without media negotiation:
 	// ReInvite and Unhold.
@@ -101,10 +101,6 @@ type (
 	}
 )
 
-// CloseOption configures Close. It is currently the same set as HangupOption:
-// headers (for example Reason), Contact and a final request mutator.
-type CloseOption = HangupOption
-
 // signalParams carries per-call signaling customizations applied by the With*
 // options. It is constructed by the library (newSignalParams); user code
 // customizes it through the constructors. A nil *signalParams means "use
@@ -128,7 +124,7 @@ type signalMsgParams struct {
 
 	// Contact replaces the default Contact header:
 	// - on server responses (Trying/Ringing/ProgressMedia/Answer/AnswerLate/RespondSDP...)
-	// - on client requests (Invite/ReInvite/Ack/Hangup...)
+	// - on client requests (Invite/ReInvite/Ack/Close...)
 	// When set, the library default Contact header is NOT added.
 	Contact *ContactHeader
 
@@ -688,7 +684,7 @@ func (o headersOption) applySignal(p *signalParams) error { return o(p) }
 func (headersOption) isResponseOption()                   {}
 func (headersOption) isProgressMediaOption()              {}
 func (headersOption) isAnswerOption()                     {}
-func (headersOption) isHangupOption()                     {}
+func (headersOption) isCloseOption()                      {}
 func (headersOption) isRequestOption()                    {}
 func (headersOption) isHoldOption()                       {}
 func (headersOption) isAckOption()                        {}
@@ -705,7 +701,7 @@ func (o contactOption) applySignal(p *signalParams) error { return o(p) }
 func (contactOption) isResponseOption()                   {}
 func (contactOption) isProgressMediaOption()              {}
 func (contactOption) isAnswerOption()                     {}
-func (contactOption) isHangupOption()                     {}
+func (contactOption) isCloseOption()                      {}
 func (contactOption) isRequestOption()                    {}
 func (contactOption) isHoldOption()                       {}
 func (contactOption) isAckOption()                        {}
@@ -834,7 +830,7 @@ func (onReferNotifyOption) isReferOption()                      {}
 type requestMutatorOption func(*signalParams) error
 
 func (o requestMutatorOption) applySignal(p *signalParams) error { return o(p) }
-func (requestMutatorOption) isHangupOption()                     {}
+func (requestMutatorOption) isCloseOption()                      {}
 func (requestMutatorOption) isRequestOption()                    {}
 func (requestMutatorOption) isHoldOption()                       {}
 func (requestMutatorOption) isAckOption()                        {}

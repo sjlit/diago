@@ -259,7 +259,7 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	defer d.release()
 
 	assert.Equal(t, int32(1), runs.Load(), "user option must execute exactly once per Agent.Dial")
-	require.NoError(t, d.Hangup(d.Context()))
+	require.NoError(t, d.Close(d.Context()))
 
 	req := <-reqCh
 	assert.NotNil(t, req.GetHeader("X-Test-Run"), "option-applied header must be present on the INVITE")
@@ -279,7 +279,7 @@ func TestDiagoDialBridgeOptionsRunOnce(t *testing.T) {
 	defer d.release()
 
 	assert.Equal(t, int32(1), runs.Load(), "user option must execute exactly once per Agent.DialBridge")
-	require.NoError(t, d.Hangup(d.Context()))
+	require.NoError(t, d.Close(d.Context()))
 }
 
 // Regression: a typed-nil *Bridge/*BridgeMix stored in the Bridger interface

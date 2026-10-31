@@ -184,7 +184,7 @@ func TestDialogClientGuardsNotAnswered(t *testing.T) {
 		assert.ErrorIs(t, d.ReInvite(context.Background()), ErrDialogNotAnswered)
 	})
 	t.Run("hangup without response", func(t *testing.T) {
-		err := d.Hangup(context.Background())
+		err := d.Close(context.Background())
 		assert.ErrorIs(t, err, ErrDialogNotAnswered)
 		assert.ErrorContains(t, err, "bye:")
 	})

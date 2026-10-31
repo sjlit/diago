@@ -711,7 +711,7 @@ func newAgent(opts ...agentOption) (*Agent, error) {
 				// (plain Serve ctx cancellation, not Close). Tear the call
 				// down so media and transaction state do not leak.
 				tctx, tcancel := context.WithTimeout(context.Background(), 10*time.Second)
-				if err := dWrap.Hangup(tctx); err != nil {
+				if err := dWrap.hangup(tctx); err != nil {
 					dg.log.Warn("Hangup on dialog teardown failed", "error", err, "dialog", dWrap.ID())
 				}
 				tcancel()
@@ -743,7 +743,7 @@ func newAgent(opts ...agentOption) (*Agent, error) {
 		case state < sip.DialogStateEstablished:
 			// The handler returned without answering or otherwise sending a
 			// final response: decline the still-pending INVITE.
-			if err := dWrap.Hangup(ctx); err != nil {
+			if err := dWrap.hangup(ctx); err != nil {
 				if errors.Is(ctx.Err(), context.Canceled) {
 					// Already hangup
 					return nil
@@ -1460,7 +1460,7 @@ func teardownOutbound(d *OutboundCall) error {
 	}
 	if d.sess.LoadState() == sip.DialogStateConfirmed {
 		tctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = d.Hangup(tctx)
+		_ = d.hangup(tctx)
 		cancel()
 	}
 	return d.release()

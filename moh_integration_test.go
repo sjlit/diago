@@ -74,7 +74,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 
 	dialog, err := caller.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: uasPort})
 	require.NoError(t, err)
-	defer dialog.Hangup(ctx)
+	defer dialog.Close(ctx)
 
 	var d *InboundCall
 	select {
@@ -152,7 +152,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 
 	dialog, err := caller.DialURI(ctx, sip.Uri{User: "bob", Host: "127.0.0.1", Port: agentPort(t, uas)})
 	require.NoError(t, err)
-	defer dialog.Hangup(ctx)
+	defer dialog.Close(ctx)
 
 	require.NoError(t, dialog.Hold(ctx))
 	require.Eventually(t, uasHeld.Load, 3*time.Second, 20*time.Millisecond,

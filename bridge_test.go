@@ -145,7 +145,7 @@ func TestIntegrationBridging(t *testing.T) {
 		outCtx := out.Context()
 		defer func() {
 			hctx, hcancel := context.WithTimeout(outCtx, 5*time.Second)
-			out.Hangup(hctx)
+			out.Close(hctx)
 			hcancel()
 		}()
 
@@ -226,7 +226,7 @@ func TestIntegrationBridging(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Log("Hanguping")
-		dialog.Hangup(ctx)
+		dialog.Close(ctx)
 	}
 }
 
@@ -293,7 +293,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 			dialogs[i] = dialog
 		}
 		for _, dialog := range dialogs {
-			dialog.Hangup(ctx)
+			dialog.Close(ctx)
 			dialog.release()
 		}
 
@@ -340,11 +340,11 @@ func TestIntegrationBridgingMix(t *testing.T) {
 
 		dialog1, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
-		defer dialog1.Hangup(dialog1.Context())
+		defer dialog1.Close(dialog1.Context())
 
 		dialog2, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})
 		require.NoError(t, err)
-		defer dialog2.Hangup(dialog2.Context())
+		defer dialog2.Close(dialog2.Context())
 
 		// Write sound on dialog 1 and make sure it is read on dialog2
 		sound := []byte("123450")

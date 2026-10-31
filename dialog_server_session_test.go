@@ -126,7 +126,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	require.NoError(t, err)
 	_, err = playback.PlayFileContext(context.Background(), "testdata/files/demo-echodone.wav")
 	require.NoError(t, err)
-	d.Hangup(context.TODO())
+	d.Close(context.TODO())
 
 	wg.Wait()
 	require.Len(t, allResponses, 3)
@@ -175,7 +175,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 	err = d.ReInvite(d.Context())
 	require.NoError(t, err)
 
-	d.Hangup(context.TODO())
+	d.Close(context.TODO())
 }
 
 func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
@@ -284,7 +284,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	// Complete the re-INVITE transaction from the peer/UAC side.
 	ack := sip.NewRequest(sip.ACK, res.Contact().Address)
 	require.NoError(t, dialog.sess.WriteRequest(ack))
-	dialog.Hangup(ctx)
+	dialog.Close(ctx)
 
 	select {
 	case err := <-handlerErr:
@@ -318,7 +318,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 					return err
 				}
 
-				return referDialog.Hangup(ctx)
+				return referDialog.Close(ctx)
 			}))
 			// Dial goroutine: Error (not require) is goroutine-safe.
 			if err != nil {
@@ -335,7 +335,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	t.Run("successfull", func(t *testing.T) {
 		dialCall()
 		d := recvWithin(t, waitDialog, 5*time.Second)
-		defer d.Hangup(ctx)
+		defer d.Close(ctx)
 
 		err := d.Answer(ctx)
 		require.NoError(t, err)
@@ -350,7 +350,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	t.Run("unreachable refer", func(t *testing.T) {
 		dialCall()
 		d := recvWithin(t, waitDialog, 5*time.Second)
-		defer d.Hangup(ctx)
+		defer d.Close(ctx)
 
 		err := d.Answer(ctx)
 		require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 	t.Run("busy refer", func(t *testing.T) {
 		dialCall()
 		d := recvWithin(t, waitDialog, 5*time.Second)
-		defer d.Hangup(ctx)
+		defer d.Close(ctx)
 
 		err := d.Answer(ctx)
 		require.NoError(t, err)

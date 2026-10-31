@@ -74,7 +74,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		if d.ToUser() == "hanguper" {
 			d.Trying(ctx)
 			d.Answer(ctx)
-			d.Hangup(d.Context())
+			d.Close(d.Context())
 			return nil
 		}
 
@@ -160,7 +160,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		writeN, _ := audioW.Write([]byte("my audio"))
 		readN, _ := audioR.Read(make([]byte, 100))
 		assert.Equal(t, writeN, readN, "media echo failed")
-		dialog.Hangup(ctx)
+		dialog.Close(ctx)
 	})
 }
 
@@ -258,7 +258,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 		}
 		// The old semantics ended the call when the handler returned;
 		// now the handler owns the teardown decision.
-		if err := d.Hangup(ctx); err != nil {
+		if err := d.Close(ctx); err != nil {
 			slog.Error("Failed to hangup", "error", err)
 		}
 		return nil
@@ -345,7 +345,7 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	err = dialog.ReInvite(ctx)
 	require.NoError(t, err)
 
-	dialog.Hangup(ctx)
+	dialog.Close(ctx)
 }
 
 // TestIntegrationDialogClientReinviteSingleAck guards the double-ACK
@@ -431,7 +431,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	mu.Unlock()
 	assert.Equal(t, 1, got, "re-INVITE must be acknowledged by exactly one ACK")
 
-	require.NoError(t, dialog.Hangup(ctx))
+	require.NoError(t, dialog.Close(ctx))
 }
 
 func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
@@ -473,7 +473,7 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 	err = dialog.reInviteKeepAlive(ctx)
 	require.NoError(t, err)
 
-	dialog.Hangup(ctx)
+	dialog.Close(ctx)
 }
 
 func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
@@ -579,7 +579,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	_, err = pb.PlayContext(context.Background(), bytes.NewBuffer(beep), "audio/pcm")
 	require.NoError(t, err)
 
-	err = dialog.Hangup(ctx)
+	err = dialog.Close(ctx)
 	require.NoError(t, err)
 	remoteAudio := recvWithin(t, audioReceived, 5*time.Second)
 
@@ -742,7 +742,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 			if err := referDialog.Ack(ctx); err != nil {
 				return err
 			}
-			return referDialog.Hangup(referDialog.Context())
+			return referDialog.Close(referDialog.Context())
 		}))
 		<-d.Context().Done()
 		return nil
@@ -752,7 +752,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 		defer d.release()
-		defer d.Hangup(d.Context())
+		defer d.Close(d.Context())
 
 		notify := newReferNotifier()
 		err = d.Refer(d.Context(), env.uasTarget(""), notify.option())
@@ -765,7 +765,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 		defer d.release()
-		defer d.Hangup(d.Context())
+		defer d.Close(d.Context())
 
 		notify := newReferNotifier()
 		err = d.Refer(d.Context(), env.uasTarget("noanswer"), notify.option())
@@ -778,7 +778,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 		d, err := env.dialer.DialURI(ctx, sip.Uri{Host: "127.0.0.1", Port: env.transferorPort})
 		require.NoError(t, err)
 		defer d.release()
-		defer d.Hangup(d.Context())
+		defer d.Close(d.Context())
 
 		notify := newReferNotifier()
 		err = d.Refer(d.Context(), env.uasTarget("busy"), notify.option())

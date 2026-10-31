@@ -113,13 +113,13 @@ func (d *InboundCall) respondHandlerError(ctx context.Context, herr error) error
 	if d.sess.LoadState() >= sip.DialogStateEstablished && d.sess.LoadState() != sip.DialogStateEnded {
 		// The 2xx was already sent (possibly still awaiting the ACK): a
 		// re-response is no longer possible, so terminate with BYE.
-		opts := []HangupOption{WithHeaders(sip.NewHeader("Reason", dialogReasonHeader(code, reason)))}
+		opts := []CloseOption{WithHeaders(sip.NewHeader("Reason", dialogReasonHeader(code, reason)))}
 		for _, h := range headers {
 			if h != nil {
 				opts = append(opts, WithHeaders(h))
 			}
 		}
-		return d.Hangup(ctx, opts...)
+		return d.hangup(ctx, opts...)
 	}
 
 	params := &signalParams{

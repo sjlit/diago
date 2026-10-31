@@ -5,7 +5,7 @@
 // server applications on top of sipgo.
 //
 // It provides:
-//   - UAC and UAS dialog handling (Invite/Answer/Ack/Hangup, re-INVITE, REFER
+//   - UAC and UAS dialog handling (Invite/Answer/Ack/Close, re-INVITE, REFER
 //     with NOTIFY tracking, hold/unhold, digest authentication).
 //   - Media sessions: RTP/RTCP with PCMU/PCMA/opus/telephone-event, SDES and
 //     DTLS-SRTP, RTP source learning for NAT, RTP statistics, jitter buffer,
@@ -59,7 +59,7 @@
 //
 // Per-call behavior is configured with the With* option constructors. Every
 // API takes the option interface for its operation (ResponseOption,
-// AnswerOption, HangupOption, InviteOption, DialOption, RegisterOption, ...)
+// AnswerOption, CloseOption, InviteOption, DialOption, RegisterOption, ...)
 // and each constructor implements only the interfaces it is valid for:
 // passing an option an API does not consume is a compile error.
 //
