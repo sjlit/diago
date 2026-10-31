@@ -110,11 +110,11 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   was handed to the transaction layer; the ACK wait continues in the
   background. Use `WaitAck` (or `AckReceived`/`AckErr`) when the call must be
   fully established before continuing.
-- **Options**: each API takes the option interface for its operation
-  (`AnswerOption`, `CloseOptions`, `InviteOption`, `DialOption`,
-  `RegisterOption`, ...); passing an option an API does not consume is a
-  compile error. Constructors validate their values at call time; failures
-  wrap `ErrInvalidOption`.
+- **Options**: most APIs take the option interface for their operation
+  (`AnswerOption`, `InviteOption`, `DialOption`, `RegisterOption`, ...);
+  `Call.Close` takes a `CloseOptions` struct. Passing an option an API does
+  not consume is a compile error. Constructors validate their values at call
+  time; failures wrap `ErrInvalidOption`.
 - **Configuration**: construction-time media settings live in `MediaConfig`
   (`Codecs`, `SRTP`, `Network`, `SDP`, `MusicOnHold`, `Logger`, `Debug`,
   `Tracer`, `HTTPClient`). Transports can select a complete named profile with

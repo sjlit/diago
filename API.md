@@ -31,12 +31,13 @@ Conventions used by the public API. New code (and reviews) should follow them;
 
 - Every option constructor is `WithX` and returns a concrete (unexported)
   type. APIs take the per-operation interface for what they consume
-  (`AnswerOption`, `CloseOptions`, `InviteOption`, `DialOption`,
-  `RegisterOption`, ...); passing an option an API does not consume is a
-  compile error. Adding an option means: a concrete type implementing the
-  marker methods of every interface it is valid for, one row in
-  `TestOptionInterfaceMatrix` (a constructor missing from the matrix is not
-  checked), and a case in `TestSignalOptionValidation` for signal options.
+  (`AnswerOption`, `InviteOption`, `DialOption`, `RegisterOption`, ...);
+  passing an option an API does not consume is a compile error. `Close`
+  takes a `CloseOptions` struct. Adding an option means: a concrete type
+  implementing the marker methods of every interface it is valid for, one
+  row in `TestOptionInterfaceMatrix` (a constructor missing from the matrix
+  is not checked), and a case in `TestSignalOptionValidation` for signal
+  options.
 - Option constructors validate their own input and return an error from the
   option function (surfaced by the API call). Nil callbacks, empty names and
   out-of-range values are rejected instead of silently ignored; every such
