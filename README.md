@@ -96,7 +96,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   (Close is idempotent; Hangup on an already ended dialog is a no-op).
 - **Lifecycle**: `Agent.Close` hangs up tracked dialogs, unregisters the
   registrations it created, stops the listeners
-  started by `Serve`/`ServeBackground` and closes the private UserAgent. A
+  started by `Serve`/`Start` and closes the private UserAgent. A
   UserAgent supplied with `WithUserAgent` (and servers/clients from
   `WithServer`/`WithClient`) stay caller-owned.
 - **Media**: `call.Media()` is the single owner of the media session.
@@ -143,7 +143,7 @@ v1 imported `github.com/sjlit/diago`; v2 is `github.com/sjlit/diago/v2`.
 | `diago.NewDiago(ua, opts...) *Diago` | `diago.New(opts...) (*Agent, error)`; `ua` is optional (`WithUserAgent`) |
 | implicit loopback transport | `WithDefaultTransport()` or `WithTransport(...)` |
 | `ServeDialogFunc func(d)` | `CallHandler func(ctx, *InboundCall) error` (error → SIP response) |
-| `HandleFunc(f)` | handler is passed to `Serve`/`ServeBackground` |
+| `HandleFunc(f)` | handler is passed to `Serve`/`Start` |
 | `Invite` / `InviteBridge` | `Dial` / `DialBridge` (string target; `DialURI` for a parsed URI) |
 | `WithAuth` | removed (was unused); use `WithAuthCredentials` or `DigestAuthServer` |
 | `InviteOptions` / `NewDialogOptions` / `ProgressMediaOptions` / `AnswerOptions` | removed; per-operation option interfaces |

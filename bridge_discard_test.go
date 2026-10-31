@@ -53,7 +53,7 @@ func newQueuedRTPDialog(t *testing.T) (*InboundCall, func(n int)) {
 	}
 
 	d := &InboundCall{
-		DialogServerSession: &sipgo.DialogServerSession{
+		sess: &sipgo.DialogServerSession{
 			Dialog: sipgo.Dialog{ID: "queued-rtp"},
 		},
 	}

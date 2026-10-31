@@ -23,6 +23,7 @@ import (
 type Call interface {
 	ID() string
 	Context() context.Context
+	State() CallState
 	// FromUser returns the user part of the From header (the caller).
 	FromUser() string
 	// ToUser returns the user part of the To header (the callee).
@@ -267,17 +268,17 @@ func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onRe
 	defer func() { _ = referDialog.Close() }()
 
 	if h := referReq.GetHeader("referred-by"); h != nil {
-		referDialog.InviteRequest.AppendHeader(sip.HeaderClone(h))
+		referDialog.sess.InviteRequest.AppendHeader(sip.HeaderClone(h))
 	}
 	if h := referReq.GetHeader("replaces"); h != nil {
-		referDialog.InviteRequest.AppendHeader(sip.HeaderClone(h))
+		referDialog.sess.InviteRequest.AppendHeader(sip.HeaderClone(h))
 	}
 
 	// 	The final NOTIFY sent in response to a REFER MUST indicate
 	//    the subscription has been "terminated" with a reason of "noresource".
 	//    (The resource being subscribed to is the state of the referenced
 	//    request).
-	referDialog.OnState(func(s sip.DialogState) {
+	referDialog.sess.OnState(func(s sip.DialogState) {
 		if s == sip.DialogStateConfirmed || s == sip.DialogStateEnded {
 			if err := sendNotify(ctx, 200, "OK", subState{
 				state:  "terminated",
@@ -306,7 +307,7 @@ func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onRe
 		}
 
 		// If call failed to be established but not yet confirmed
-		state := referDialog.LoadState()
+		state := referDialog.sess.LoadState()
 		if state == 0 || state == sip.DialogStateEstablished {
 			return sendNotify(ctx, 400, "Bad Request", subState{
 				state:  "terminated",

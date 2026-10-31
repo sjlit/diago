@@ -145,7 +145,7 @@ func TestDiagoMatchDialog_RealClientDialog(t *testing.T) {
 	// d is confirmed and stored in client cache under d.ID (DialogIDFromResponse).
 	// An in-dialog request from the remote (From=remote tag, To=our tag) with same Call-ID
 	// must match via UAC path. Build it from the dialog's InviteResponse.
-	res := d.DialogClientSession.InviteResponse
+	res := d.sess.InviteResponse
 	require.NotNil(t, res, "InviteResponse must be present for confirmed dialog")
 	remoteTo := res.To()
 	localFrom := res.From()

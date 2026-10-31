@@ -25,10 +25,10 @@ var (
 )
 
 // OutboundCall is an outbound (UAC) dialog created by Dial/DialURI or
-// NewCall+Invite. It embeds the sipgo dialog; the diago methods are the
-// supported API surface.
+// NewCall+Invite. The diago methods are the supported API surface; use SIP for
+// the underlying sipgo dialog.
 type OutboundCall struct {
-	*sipgo.DialogClientSession
+	sess *sipgo.DialogClientSession
 
 	callMedia
 
@@ -43,6 +43,17 @@ func (d *OutboundCall) Media() *Media {
 	return &d.callMedia
 }
 
+// Context returns the dialog lifetime context.
+func (d *OutboundCall) Context() context.Context {
+	return d.sess.Context()
+}
+
+// Do sends an in-dialog request and waits for its final response. It is the
+// raw SIP escape hatch; prefer the diago methods for dialog operations.
+func (d *OutboundCall) Do(ctx context.Context, req *Request) (*Response, error) {
+	return d.sess.Do(ctx, req)
+}
+
 // Close frees local resources (media stack and dialog cleanup hooks).
 // It is idempotent and does NOT send any SIP message: closing without Hangup
 // leaves the remote leg up. Signaling teardown is the caller's responsibility
@@ -52,13 +63,13 @@ func (d *OutboundCall) Close() error {
 		return nil
 	}
 	e1 := d.callMedia.Close()
-	e2 := d.DialogClientSession.Close()
+	e2 := d.sess.Close()
 	return errors.Join(e1, e2)
 }
 
 // ID returns the dialog identifier (Call-ID, tags and tags-derived hash).
 func (d *OutboundCall) ID() string {
-	return d.DialogClientSession.ID
+	return d.sess.ID
 }
 
 // Hangup terminates dialog with BYE.
@@ -87,12 +98,12 @@ func (d *OutboundCall) Hangup(ctx context.Context, opts ...HangupOption) error {
 // byeSignal builds BYE request applying signaling options and writes it.
 // Mandatory dialog headers (From/To/Call-ID/CSeq) are filled by sipgo.
 func (d *OutboundCall) byeSignal(ctx context.Context, params *signalParams) error {
-	if d.InviteResponse == nil {
+	if d.sess.InviteResponse == nil {
 		return byeNotPossible()
 	}
-	inviteRequest := d.InviteRequest
+	inviteRequest := d.sess.InviteRequest
 	recipient := inviteRequest.Recipient
-	if contact := d.InviteResponse.Contact(); contact != nil {
+	if contact := d.sess.InviteResponse.Contact(); contact != nil {
 		recipient = contact.Address
 	}
 
@@ -107,7 +118,7 @@ func (d *OutboundCall) byeSignal(ctx context.Context, params *signalParams) erro
 	if err := applyRequestSignal(bye, params); err != nil {
 		return err
 	}
-	return d.DialogClientSession.WriteBye(ctx, bye)
+	return d.sess.WriteBye(ctx, bye)
 }
 
 // byeNotPossible is returned when no BYE can be sent because the dialog was
@@ -118,22 +129,22 @@ func byeNotPossible() error {
 
 // FromUser returns the caller user part of the dialog's From header.
 func (d *OutboundCall) FromUser() string {
-	return d.InviteRequest.From().Address.User
+	return d.sess.InviteRequest.From().Address.User
 }
 
 // ToUser returns the callee user part of the dialog's To header.
 func (d *OutboundCall) ToUser() string {
-	return d.InviteRequest.To().Address.User
+	return d.sess.InviteRequest.To().Address.User
 }
 
 // Transport returns the transport of the dialog's INVITE request (ex. "UDP").
 func (d *OutboundCall) Transport() string {
-	return d.InviteRequest.Transport()
+	return d.sess.InviteRequest.Transport()
 }
 
 // SIP exposes the underlying sipgo dialog as the escape hatch.
 func (d *OutboundCall) SIP() *Dialog {
-	return &d.Dialog
+	return &d.sess.Dialog
 }
 
 // RemoteContact returns the current remote target of the dialog.
@@ -151,10 +162,10 @@ func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 		// Invite update can change contact
 		return d.remoteContactTarget
 	}
-	if d.InviteResponse == nil {
+	if d.sess.InviteResponse == nil {
 		return nil
 	}
-	return d.InviteResponse.Contact()
+	return d.sess.InviteResponse.Contact()
 }
 
 // Invite sends Invite request and establishes [early] media. Normally you need to call Ack after.
@@ -231,7 +242,7 @@ func (d *OutboundCall) inviteWithParams(ctx context.Context, params *signalParam
 
 func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalParams) error {
 	sess := med.mediaSession
-	inviteReq := d.InviteRequest
+	inviteReq := d.sess.InviteRequest
 	originator := params.Dialog.Originator
 
 	// Custom headers must be applied before originator logic so it can
@@ -308,7 +319,7 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 		}
 	}
 
-	dialogCli := d.UA
+	dialogCli := d.sess.UA
 	// Honor custom Contact, otherwise use dialog default one
 	if params.Msg.Contact != nil {
 		setSignalContact(inviteReq, params.Msg.Contact)
@@ -337,7 +348,7 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 	}
 
 	// Build here request
-	client := d.UA.Client
+	client := d.sess.UA.Client
 	if err := sipgo.ClientRequestBuild(client, inviteReq); err != nil {
 		return err
 	}
@@ -356,7 +367,7 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 	// via := inviteReq.Via()
 	// if via.Host == "" {
 	// }
-	err := d.DialogClientSession.Invite(ctx, func(c *Client, req *Request) error {
+	err := d.sess.Invite(ctx, func(c *Client, req *Request) error {
 		// Do nothing
 		return nil
 	})
@@ -463,11 +474,11 @@ func (d *OutboundCall) waitAnswerEarly(ctx context.Context, med *Media, opts sip
 }
 
 func (d *OutboundCall) waitAnswer(ctx context.Context, med *Media, opts sipgo.AnswerOptions) error {
-	if err := d.DialogClientSession.WaitAnswer(ctx, opts); err != nil {
+	if err := d.sess.WaitAnswer(ctx, opts); err != nil {
 		return err
 	}
 
-	remoteSDP := d.InviteResponse.Body()
+	remoteSDP := d.sess.InviteResponse.Body()
 	if remoteSDP == nil {
 		return fmt.Errorf("no sdp in response: %w", ErrSDPMissing)
 	}
@@ -475,7 +486,7 @@ func (d *OutboundCall) waitAnswer(ctx context.Context, med *Media, opts sipgo.An
 	if err := d.applyRemoteSDP(med, remoteSDP); err != nil {
 		// Terminate call. Call must be ACK before doing BYE
 		ackErr := d.Ack(ctx)
-		byeErr := d.Bye(ctx)
+		byeErr := d.sess.Bye(ctx)
 		return errors.Join(err, ackErr, byeErr)
 	}
 
@@ -520,9 +531,9 @@ func (d *OutboundCall) Ack(ctx context.Context, opts ...AckOption) error {
 		return err
 	}
 
-	inviteRequest := d.InviteRequest
+	inviteRequest := d.sess.InviteRequest
 	recipient := inviteRequest.Recipient
-	if contact := d.InviteResponse.Contact(); contact != nil {
+	if contact := d.sess.InviteResponse.Contact(); contact != nil {
 		recipient = contact.Address
 	}
 
@@ -557,7 +568,7 @@ func (d *OutboundCall) ack(ctx context.Context, remoteTarget URI, body []byte, p
 		return err
 	}
 
-	if err := d.DialogClientSession.WriteAck(ctx, ackRequest); err != nil {
+	if err := d.sess.WriteAck(ctx, ackRequest); err != nil {
 		return err
 	}
 	return nil
@@ -585,7 +596,7 @@ func (d *OutboundCall) ReInvite(ctx context.Context, opts ...RequestOption) erro
 	}
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
-	if err := buildReInviteRequest(req, sdpBody, d.InviteRequest.Contact(), params); err != nil {
+	if err := buildReInviteRequest(req, sdpBody, d.sess.InviteRequest.Contact(), params); err != nil {
 		return err
 	}
 
@@ -619,7 +630,7 @@ func (d *OutboundCall) reInviteMediaSession(ctx context.Context, ms *media.Media
 	}
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
-	req.AppendHeader(d.InviteRequest.Contact())
+	req.AppendHeader(d.sess.InviteRequest.Contact())
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.SetBody(sdpBody)
 	if err := applyRequestSignal(req, params); err != nil {
@@ -661,7 +672,7 @@ func (d *OutboundCall) reInviteKeepAlive(ctx context.Context) error {
 	}
 
 	req := sip.NewRequest(sip.INVITE, contact.Address)
-	req.AppendHeader(d.InviteRequest.Contact())
+	req.AppendHeader(d.sess.InviteRequest.Contact())
 
 	res, err := reInviteExchange(ctx, d, req)
 	if err != nil {
@@ -698,8 +709,8 @@ func (d *OutboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOpti
 	d.mu.Lock()
 	cont := d.remoteContactUnsafe()
 	var localContact *ContactHeader
-	if d.InviteResponse != nil {
-		localContact = d.InviteResponse.Contact()
+	if d.sess.InviteResponse != nil {
+		localContact = d.sess.InviteResponse.Contact()
 	}
 	if params.Dialog.OnReferNotify != nil {
 		d.onReferNotify = params.Dialog.OnReferNotify
@@ -717,8 +728,8 @@ func (d *OutboundCall) referWithContacts(ctx context.Context, cont, localContact
 	if cont == nil {
 		return fmt.Errorf("can not refer: remote contact is missing")
 	}
-	if localContact == nil && d.InviteRequest != nil {
-		localContact = d.InviteRequest.Contact()
+	if localContact == nil && d.sess.InviteRequest != nil {
+		localContact = d.sess.InviteRequest.Contact()
 	}
 	if localContact == nil {
 		return fmt.Errorf("can not refer: local contact is missing")
@@ -746,11 +757,11 @@ func (d *OutboundCall) handleRefer(dg *Agent, req *Request, tx ServerTransaction
 }
 
 func (d *OutboundCall) handleReInvite(req *Request, tx ServerTransaction) error {
-	if err := d.ReadRequest(req, tx); err != nil {
+	if err := d.sess.ReadRequest(req, tx); err != nil {
 		return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request - "+err.Error(), nil))
 	}
 
-	return d.handleMediaUpdate(req, tx, d.InviteRequest.Contact())
+	return d.handleMediaUpdate(req, tx, d.sess.InviteRequest.Contact())
 }
 
 func (d *OutboundCall) handleReInviteACK(req *Request, tx ServerTransaction) error {

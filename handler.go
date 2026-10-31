@@ -37,14 +37,14 @@ type CallHandler func(ctx context.Context, d *InboundCall) error
 // defaultCallHandler is used when Serve is given a nil handler: it refuses
 // calls instead of accepting and immediately hanging them up.
 func defaultCallHandler(ctx context.Context, d *InboundCall) error {
-	return &ResponseError{Code: sip.StatusServiceUnavailable, Reason: "Service Unavailable"}
+	return newResponseError(sip.StatusServiceUnavailable, "Service Unavailable")
 }
 
 // handlerErrorResponse maps a CallHandler error to a final SIP response.
 func handlerErrorResponse(err error) (code int, reason string, headers []Header) {
 	var resErr *ResponseError
 	if errors.As(err, &resErr) {
-		code, reason, headers = resErr.Code, resErr.Reason, resErr.Headers
+		code, reason, headers = resErr.Code(), resErr.Reason(), resErr.Headers()
 		if code < 300 {
 			// A handler error is never a success: keep the dialog state
 			// consistent with a 5xx rather than emitting a bogus 2xx.
@@ -110,7 +110,7 @@ func (d *InboundCall) respondHandlerError(ctx context.Context, herr error) error
 	}
 
 	code, reason, headers := handlerErrorResponse(herr)
-	if d.LoadState() >= sip.DialogStateEstablished && d.LoadState() != sip.DialogStateEnded {
+	if d.sess.LoadState() >= sip.DialogStateEstablished && d.sess.LoadState() != sip.DialogStateEnded {
 		// The 2xx was already sent (possibly still awaiting the ACK): a
 		// re-response is no longer possible, so terminate with BYE.
 		opts := []HangupOption{WithHeaders(sip.NewHeader("Reason", dialogReasonHeader(code, reason)))}

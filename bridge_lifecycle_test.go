@@ -22,6 +22,7 @@ type fakeBridgeDialog struct {
 
 func (f *fakeBridgeDialog) ID() string               { return f.id }
 func (f *fakeBridgeDialog) Context() context.Context { return context.Background() }
+func (f *fakeBridgeDialog) State() CallState         { return CallStateConfirmed }
 func (f *fakeBridgeDialog) FromUser() string         { return "fake-from" }
 func (f *fakeBridgeDialog) ToUser() string           { return "fake-to" }
 func (f *fakeBridgeDialog) Transport() string        { return "UDP" }

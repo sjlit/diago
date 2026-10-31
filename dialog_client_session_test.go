@@ -78,7 +78,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 			return nil
 		}
 
-		d.Respond(sip.StatusForbidden, "Forbidden", nil)
+		d.sess.Respond(sip.StatusForbidden, "Forbidden", nil)
 
 		<-d.Context().Done()
 		return nil
@@ -120,7 +120,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 		dialog, err := phone.DialURI(context.TODO(), sip.Uri{User: "hanguper", Host: "127.0.0.1", Port: 5060})
 		require.NoError(t, err)
 		<-dialog.Context().Done()
-		assert.Equal(t, dialog.InviteRequest.Via().Port, dialog.InviteRequest.Contact().Address.Port)
+		assert.Equal(t, dialog.sess.InviteRequest.Via().Port, dialog.sess.InviteRequest.Contact().Address.Port)
 	})
 
 	t.Run("dialer", func(t *testing.T) {
@@ -794,7 +794,7 @@ func TestOutboundCallReferMissingContact(t *testing.T) {
 	inviteReq.AppendHeader(sip.NewHeader("Contact", "<sip:me@127.0.0.1:5060>"))
 
 	d := &OutboundCall{
-		DialogClientSession: &sipgo.DialogClientSession{
+		sess: &sipgo.DialogClientSession{
 			Dialog: sipgo.Dialog{
 				InviteRequest:  inviteReq,
 				InviteResponse: &sip.Response{},

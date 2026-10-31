@@ -57,7 +57,7 @@ func Record(ctx context.Context, inDialog *diago.InboundCall) error {
 	} // Answer -> 200 Response
 
 	// Create wav file to store recording
-	filename := "/tmp/diago_record_" + inDialog.InviteRequest.CallID().Value() + ".wav"
+	filename := "/tmp/diago_record_" + inDialog.SIP().InviteRequest.CallID().Value() + ".wav"
 	slog.Info("Creating new recording", "filename", filename)
 	wavFile, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {

@@ -231,7 +231,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	require.Eventually(t, func() bool {
 		confirmed := false
 		dgS.cache.server.rangeDialogs(ctx, func(id string, dd *InboundCall) bool {
-			confirmed = dd.LoadState() == sip.DialogStateConfirmed
+			confirmed = dd.sess.LoadState() == sip.DialogStateConfirmed
 			return false
 		})
 		return confirmed

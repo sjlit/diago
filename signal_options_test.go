@@ -232,7 +232,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	require.Eventually(t, func() bool {
 		confirmed := false
 		dgSrv.cache.server.rangeDialogs(ctx, func(id string, dd *InboundCall) bool {
-			confirmed = dd.LoadState() == sip.DialogStateConfirmed
+			confirmed = dd.sess.LoadState() == sip.DialogStateConfirmed
 			return false
 		})
 		return confirmed
@@ -266,7 +266,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 		assert.Equal(t, "<ring>", ringAlertInfo)
 		// Custom contact user proves override (default would be ua name)
 		assert.Equal(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(int(srvPort.Load()))), okContact)
-		cont := dialog.InviteResponse.Contact()
+		cont := dialog.sess.InviteResponse.Contact()
 		require.NotNil(t, cont)
 		assert.Equal(t, "answered-custom", cont.Address.User)
 		assert.Equal(t, "yes", okMutated)

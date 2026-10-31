@@ -6,6 +6,7 @@ package diago
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // Lifecycle sentinels for dialog media operations. All media entry points
@@ -100,6 +101,9 @@ var (
 	// ErrInvalidOption is wrapped by every option constructor that rejects its
 	// value: nil callbacks or headers, empty names and out-of-range values.
 	ErrInvalidOption = errors.New("invalid option")
+	// ErrInvalidResponseCode is returned by NewResponseError when code is not
+	// a final non-2xx SIP status.
+	ErrInvalidResponseCode = errors.New("invalid SIP response code")
 	// ErrNoTransport is returned by New when no transport is configured.
 	ErrNoTransport = errors.New("no transport configured")
 	// ErrTransportNotFound is returned when no configured transport matches the
@@ -120,14 +124,61 @@ var (
 )
 
 // ResponseError lets a CallHandler map an error to an arbitrary final SIP
-// response. Code must be a final non-2xx status; values below 300 are treated
-// as 500 to keep the dialog state consistent.
+// response. Code must be a final non-2xx status; values below 300 are rejected
+// by NewResponseError.
 type ResponseError struct {
-	Code    int
-	Reason  string
-	Headers []Header
+	code    int
+	reason  string
+	headers []Header
+}
+
+// NewResponseError builds a ResponseError. Code must be a final non-2xx SIP
+// status; anything below 300 is rejected so a handler error can never turn
+// into a success response.
+func NewResponseError(code int, reason string, headers ...Header) (*ResponseError, error) {
+	if code < 300 {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidResponseCode, code)
+	}
+	return &ResponseError{
+		code:    code,
+		reason:  reason,
+		headers: slices.Clone(headers),
+	}, nil
+}
+
+// newResponseError is the unchecked internal constructor for fixed statuses.
+func newResponseError(code int, reason string, headers ...Header) *ResponseError {
+	return &ResponseError{code: code, reason: reason, headers: headers}
 }
 
 func (e *ResponseError) Error() string {
-	return fmt.Sprintf("dialog handler response: %d %s", e.Code, e.Reason)
+	if e == nil {
+		return "dialog handler response: <nil>"
+	}
+	return fmt.Sprintf("dialog handler response: %d %s", e.code, e.reason)
+}
+
+// Code returns the SIP status code.
+func (e *ResponseError) Code() int {
+	if e == nil {
+		return 0
+	}
+	return e.code
+}
+
+// Reason returns the reason phrase; empty means the framework fills the
+// default phrase for the code.
+func (e *ResponseError) Reason() string {
+	if e == nil {
+		return ""
+	}
+	return e.reason
+}
+
+// Headers returns a copy of the extra response headers.
+func (e *ResponseError) Headers() []Header {
+	if e == nil {
+		return nil
+	}
+	return slices.Clone(e.headers)
 }

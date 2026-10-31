@@ -172,7 +172,7 @@ func TestMediaGuardsClosed(t *testing.T) {
 }
 
 func TestDialogClientGuardsNotAnswered(t *testing.T) {
-	d := &OutboundCall{DialogClientSession: &sipgo.DialogClientSession{}}
+	d := &OutboundCall{sess: &sipgo.DialogClientSession{}}
 
 	t.Run("hold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Hold(context.Background()), ErrDialogNotAnswered)
@@ -191,7 +191,7 @@ func TestDialogClientGuardsNotAnswered(t *testing.T) {
 }
 
 func TestDialogServerGuardsNotAnswered(t *testing.T) {
-	d := &InboundCall{DialogServerSession: &sipgo.DialogServerSession{}}
+	d := &InboundCall{sess: &sipgo.DialogServerSession{}}
 
 	t.Run("hold", func(t *testing.T) {
 		assert.ErrorIs(t, d.Hold(context.Background()), ErrDialogNotAnswered)

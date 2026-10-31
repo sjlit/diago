@@ -26,7 +26,7 @@ import (
 
 // TestInboundCallReferBeforeAnswer locks the nil-InviteResponse guard:
 // Refer on a dialog that has not sent any response must return an error, not
-// panic — the state check has to run before d.InviteResponse is dereferenced.
+// panic — the state check has to run before d.sess.InviteResponse is dereferenced.
 func TestInboundCallReferBeforeAnswer(t *testing.T) {
 	inviteReq, err := diagotestSafeNewRequest(sip.INVITE, sip.Uri{Scheme: "sip", Host: "127.0.0.1", Port: 5060, User: "bob"})
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestInboundCallReferBeforeAnswer(t *testing.T) {
 	}
 	sess, err := ua.ReadInvite(inviteReq, siptest.NewServerTxRecorder(inviteReq))
 	require.NoError(t, err)
-	d := InboundCall{DialogServerSession: sess}
+	d := InboundCall{sess: sess}
 
 	err = d.Refer(context.TODO(), sip.Uri{Scheme: "sip", Host: "127.0.0.1", Port: 5060})
 	require.Error(t, err)
@@ -236,7 +236,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	dialog, err := peer.DialURI(ctx, sip.Uri{User: "service", Host: "127.0.0.1", Port: uasPort})
 	require.NoError(t, err)
 	defer dialog.Close()
-	require.Contains(t, string(dialog.InviteRequest.Body()), " 0 8 101")
+	require.Contains(t, string(dialog.sess.InviteRequest.Body()), " 0 8 101")
 
 	// The initial peer offer contains PCMU, PCMA and telephone-event. The
 	// post-answer offer intentionally prunes PCMA, matching the SBC behavior.
@@ -249,7 +249,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	require.Contains(t, string(prunedOffer), " 0 101")
 	require.NotContains(t, string(prunedOffer), " 0 8 101")
 	reinvite := sip.NewRequest(sip.INVITE, dialog.RemoteContact().Address)
-	reinvite.AppendHeader(dialog.InviteRequest.Contact())
+	reinvite.AppendHeader(dialog.sess.InviteRequest.Contact())
 	reinvite.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	reinvite.SetBody(prunedOffer)
 
@@ -283,7 +283,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 
 	// Complete the re-INVITE transaction from the peer/UAC side.
 	ack := sip.NewRequest(sip.ACK, res.Contact().Address)
-	require.NoError(t, dialog.WriteRequest(ack))
+	require.NoError(t, dialog.sess.WriteRequest(ack))
 	dialog.Hangup(ctx)
 
 	select {
@@ -662,7 +662,7 @@ func TestInboundCallMatchesInviteAck(t *testing.T) {
 	inviteReq.AppendHeader(&sip.CSeqHeader{SeqNo: 10, MethodName: sip.INVITE})
 
 	d := &InboundCall{
-		DialogServerSession: &sipgo.DialogServerSession{
+		sess: &sipgo.DialogServerSession{
 			Dialog: sipgo.Dialog{InviteRequest: inviteReq},
 		},
 	}
@@ -691,7 +691,7 @@ func TestInboundCallReadAckIgnoresForeignAck(t *testing.T) {
 	require.Nil(t, inviteReq.Body())
 
 	d := &InboundCall{
-		DialogServerSession: &sipgo.DialogServerSession{
+		sess: &sipgo.DialogServerSession{
 			Dialog: sipgo.Dialog{InviteRequest: inviteReq},
 		},
 	}
@@ -769,7 +769,7 @@ func TestIntegrationDialogServerLateOfferInvalidAckSDP(t *testing.T) {
 			err = d.WaitAck(hctx)
 		}
 		answerErr <- err
-		stateCh <- d.LoadState()
+		stateCh <- d.sess.LoadState()
 		select {
 		case <-d.Context().Done():
 		case <-time.After(3 * time.Second):
@@ -816,7 +816,7 @@ func TestInboundCallAckObservation(t *testing.T) {
 		require.NoError(t, err)
 		inviteReq.AppendHeader(&sip.CSeqHeader{SeqNo: 10, MethodName: sip.INVITE})
 		return &InboundCall{
-			DialogServerSession: &sipgo.DialogServerSession{
+			sess: &sipgo.DialogServerSession{
 				Dialog: sipgo.Dialog{InviteRequest: inviteReq},
 			},
 		}
@@ -829,15 +829,15 @@ func TestInboundCallAckObservation(t *testing.T) {
 
 	t.Run("second answer rejected", func(t *testing.T) {
 		d := newSession(t)
-		d.InitWithState(sip.DialogStateEstablished)
-		res := sip.NewResponseFromRequest(d.InviteRequest, sip.StatusOK, "OK", nil)
+		d.sess.InitWithState(sip.DialogStateEstablished)
+		res := sip.NewResponseFromRequest(d.sess.InviteRequest, sip.StatusOK, "OK", nil)
 		require.ErrorIs(t, d.writeSuccessAsync(res), ErrAlreadyAnswered)
 	})
 
 	t.Run("ended dialog rejects answer", func(t *testing.T) {
 		d := newSession(t)
-		d.InitWithState(sip.DialogStateEnded)
-		res := sip.NewResponseFromRequest(d.InviteRequest, sip.StatusOK, "OK", nil)
+		d.sess.InitWithState(sip.DialogStateEnded)
+		res := sip.NewResponseFromRequest(d.sess.InviteRequest, sip.StatusOK, "OK", nil)
 		require.ErrorIs(t, d.writeSuccessAsync(res), ErrDialogEnded)
 	})
 
@@ -870,7 +870,7 @@ func TestInboundCallAckObservation(t *testing.T) {
 		require.NoError(t, err)
 		defer tx.Terminate()
 
-		d := &InboundCall{DialogServerSession: sess}
+		d := &InboundCall{sess: sess}
 		res := sip.NewResponseFromRequest(sess.InviteRequest, sip.StatusOK, "OK", nil)
 
 		errs := make(chan error, 2)
@@ -897,6 +897,6 @@ func TestInboundCallAckObservation(t *testing.T) {
 		ack, err := diagotestSafeNewRequest(sip.ACK, sess.InviteRequest.Recipient)
 		require.NoError(t, err)
 		ack.AppendHeader(&sip.CSeqHeader{SeqNo: 10, MethodName: sip.ACK})
-		require.NoError(t, d.DialogServerSession.ReadAck(ack, tx))
+		require.NoError(t, d.sess.ReadAck(ack, tx))
 	})
 }

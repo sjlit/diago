@@ -54,7 +54,7 @@ func newReferEnv(t *testing.T, ctx context.Context, onTransferor CallHandler) *r
 		t.Log("Call INVITE due to REFER received")
 		switch d.ToUser() {
 		case "busy":
-			d.Respond(sip.StatusBusyHere, "Busy Here", nil)
+			d.sess.Respond(sip.StatusBusyHere, "Busy Here", nil)
 			return nil
 		case "noanswer":
 			d.Ringing(ctx)

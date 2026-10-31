@@ -57,7 +57,7 @@ func AnswerEarly(ctx context.Context, inDialog *diago.InboundCall) error {
 	} // Answer -> 200 Response
 
 	// Create wav file to store recording
-	wavFile, err := os.OpenFile("/tmp/diago_record_"+inDialog.InviteRequest.CallID().Value()+".wav", os.O_RDWR|os.O_CREATE, 0755)
+	wavFile, err := os.OpenFile("/tmp/diago_record_"+inDialog.SIP().InviteRequest.CallID().Value()+".wav", os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {
 		return err
 	}

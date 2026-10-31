@@ -255,7 +255,7 @@ func TestDigestAuthorizeDialogSends401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &InboundCall{DialogServerSession: sess}
+	d := &InboundCall{sess: sess}
 
 	srv := NewDigestServer()
 	defer srv.Close()
@@ -300,29 +300,29 @@ func TestDigestAuthorizeDialogBadCredsWrites401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &InboundCall{DialogServerSession: sess}
+	d := &InboundCall{sess: sess}
 
 	srv := NewDigestServer()
 	defer srv.Close()
 	auth := DigestAuth{Username: "alice", Password: "wonderland"}
 
 	// Challenge on the dialog's request, then answer it with a wrong password.
-	res, _ := srv.AuthorizeRequest(d.InviteRequest, auth)
+	res, _ := srv.AuthorizeRequest(d.sess.InviteRequest, auth)
 	chal, err := digest.ParseChallenge(res.GetHeader("WWW-Authenticate").Value())
 	if err != nil {
 		t.Fatal(err)
 	}
 	badCred, err := digest.Digest(chal, digest.Options{
-		Method:   d.InviteRequest.Method.String(),
-		URI:      d.InviteRequest.Recipient.Addr(),
+		Method:   d.sess.InviteRequest.Method.String(),
+		URI:      d.sess.InviteRequest.Recipient.Addr(),
 		Username: auth.Username,
 		Password: "wrong-password",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.InviteRequest.RemoveHeader("Authorization")
-	d.InviteRequest.AppendHeader(sip.NewHeader("Authorization", badCred.String()))
+	d.sess.InviteRequest.RemoveHeader("Authorization")
+	d.sess.InviteRequest.AppendHeader(sip.NewHeader("Authorization", badCred.String()))
 
 	// WriteResponse blocks until ACK/TimerH - run it in the background.
 	authDone := make(chan error, 1)

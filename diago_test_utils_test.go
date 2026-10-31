@@ -125,3 +125,12 @@ func canBindUDPAddr(addr *net.UDPAddr) bool {
 	}
 	return conn.Close() == nil
 }
+
+// ServeBackground is a test-only shim for the tests that predate
+// Agent.Start. Production code uses Start and observes the returned
+// ServerHandle; keeping the shim here avoids rewriting the whole suite while
+// the public API is being reshaped.
+func (dg *Agent) ServeBackground(ctx context.Context, h CallHandler) error {
+	_, err := dg.Start(ctx, h)
+	return err
+}

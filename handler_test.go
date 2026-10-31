@@ -37,21 +37,21 @@ func TestHandlerErrorResponseMapping(t *testing.T) {
 	})
 
 	t.Run("response error", func(t *testing.T) {
-		code, reason, headers := handlerErrorResponse(&ResponseError{
-			Code:    402,
-			Reason:  "Payment Required",
-			Headers: []sip.Header{sip.NewHeader("X-Test", "1")},
-		})
+		resErr, err := NewResponseError(402, "Payment Required", sip.NewHeader("X-Test", "1"))
+		require.NoError(t, err)
+		code, reason, headers := handlerErrorResponse(resErr)
 		assert.Equal(t, 402, code)
 		assert.Equal(t, "Payment Required", reason)
 		require.Len(t, headers, 1)
 
-		// A 2xx handler error is coerced to 500 to keep the dialog consistent.
-		code, _, _ = handlerErrorResponse(&ResponseError{Code: 200})
-		assert.Equal(t, sip.StatusInternalServerError, code)
+		// A non-final status is rejected at construction.
+		_, err = NewResponseError(200, "")
+		assert.ErrorIs(t, err, ErrInvalidResponseCode)
 
 		// Empty reason gets a default phrase.
-		code, reason, _ = handlerErrorResponse(&ResponseError{Code: 480})
+		resErr, err = NewResponseError(480, "")
+		require.NoError(t, err)
+		code, reason, _ = handlerErrorResponse(resErr)
 		assert.Equal(t, sip.StatusTemporarilyUnavailable, code)
 		assert.Equal(t, "Temporarily Unavailable", reason)
 	})
@@ -106,7 +106,9 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 		{
 			name: "custom response",
 			handler: func(ctx context.Context, d *InboundCall) error {
-				return &ResponseError{Code: 402, Reason: "Payment Required"}
+				resErr, err := NewResponseError(402, "Payment Required")
+				require.NoError(t, err)
+				return resErr
 			},
 			wantCode: 402,
 		},

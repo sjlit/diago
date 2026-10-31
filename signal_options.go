@@ -585,8 +585,9 @@ func WithAuthCredentials(username string, password string) authCredentialsOption
 }
 
 // WithEarlyMediaDetect enables early media detection on outgoing INVITE.
-// Invite returns ErrClientEarlyMedia when 183 Session Progress with SDP is received.
-// Invite only.
+// Invite returns ErrClientEarlyMedia when 183 Session Progress with SDP is
+// received. It is not a DialOption: Dial treats every Invite error as fatal.
+// Use NewCall + Invite to handle early media.
 func WithEarlyMediaDetect() earlyMediaDetectOption {
 	return func(p *signalParams) error {
 		p.Dialog.EarlyMediaDetect = true
@@ -883,7 +884,6 @@ type earlyMediaDetectOption func(*signalParams) error
 
 func (o earlyMediaDetectOption) applySignal(p *signalParams) error { return o(p) }
 func (earlyMediaDetectOption) isInviteOption()                     {}
-func (earlyMediaDetectOption) isDialOption()                       {}
 
 // registerExpiryOption is the concrete type returned by WithRegisterExpiry.
 type registerExpiryOption func(*signalParams) error

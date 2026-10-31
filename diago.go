@@ -693,13 +693,13 @@ func New(opts ...AgentOption) (*Agent, error) {
 		// handler to challenge/validate the INVITE (RFC 2617).
 		mediaConf := dg.mediaConfigForTransport(tran)
 		dWrap := &InboundCall{
-			DialogServerSession: dialog,
-			callMedia:           Media{log: mediaConf.Logger, httpClient: mediaConf.HTTPClient},
+			sess:      dialog,
+			callMedia: Media{log: mediaConf.Logger, httpClient: mediaConf.HTTPClient},
 			// TODO we may actually just build media session with this conf here
 			mediaConf: mediaConf,
 		}
 
-		if err := dg.cache.server.store(dWrap.Context(), dWrap.DialogServerSession.ID, dWrap); err != nil {
+		if err := dg.cache.server.store(dWrap.Context(), dWrap.sess.ID, dWrap); err != nil {
 			return fmt.Errorf("failed to store server dialog: %w", err)
 		}
 
@@ -713,7 +713,7 @@ func New(opts ...AgentOption) (*Agent, error) {
 			<-hctx.Done()
 			hcancel()
 
-			if dWrap.LoadState() != sip.DialogStateEnded {
+			if dWrap.sess.LoadState() != sip.DialogStateEnded {
 				// The serve context ended while the dialog was still up
 				// (plain Serve ctx cancellation, not Close). Tear the call
 				// down so media and transaction state do not leak.
@@ -725,7 +725,7 @@ func New(opts ...AgentOption) (*Agent, error) {
 			}
 
 			// TODO: have better context
-			if err := dg.cache.server.remove(context.Background(), dWrap.DialogServerSession.ID); err != nil {
+			if err := dg.cache.server.remove(context.Background(), dWrap.sess.ID); err != nil {
 				dg.log.Error("Failed to delete server dialog", "error", err)
 			}
 			closeAndLog(dWrap.logger(), dWrap, "closing dialog server returned error")
@@ -739,7 +739,7 @@ func New(opts ...AgentOption) (*Agent, error) {
 		ctx, cancel := context.WithTimeout(dialogCtx, 10*time.Second)
 		defer cancel()
 
-		switch state := dWrap.LoadState(); {
+		switch state := dWrap.sess.LoadState(); {
 		case state == sip.DialogStateEnded:
 			// The dialog already ended (CANCEL/BYE) while the handler ran.
 			return nil
@@ -814,11 +814,11 @@ func New(opts ...AgentOption) (*Agent, error) {
 		if cd != nil {
 			defer closeAndLog(cd.logger(), &cd.callMedia, "failed to close client media")
 
-			return cd.ReadBye(req, tx)
+			return cd.sess.ReadBye(req, tx)
 		}
 
 		defer closeAndLog(sd.logger(), &sd.callMedia, "failed to close server media")
-		return sd.ReadBye(req, tx)
+		return sd.sess.ReadBye(req, tx)
 	}))
 
 	server.OnInfo(errHandler(func(req *Request, tx ServerTransaction) error {
@@ -942,7 +942,7 @@ type MethodHandler func(req *Request, tx ServerTransaction) error
 // SUBSCRIBE, PUBLISH, ...). The handler is wrapped by the middleware given to
 // WithServerRequestMiddleware.
 //
-// Handle must be called before Serve/ServeBackground: the sipgo method to
+// Handle must be called before Serve/Start: the sipgo method to
 // handler map is not safe to mutate while the server is dispatching, so
 // registering while serving returns an error.
 //
@@ -1001,7 +1001,87 @@ func (dg *Agent) Transports() []Transport {
 	return slices.Clone(dg.transports)
 }
 
-// Serve starts 'Server' handle for SIP.
+// ServerHandle is a running Serve/Start instance. Done is closed when the
+// serve loop exits; Err reports its terminal error (nil for a clean stop).
+// Close stops the listeners and waits for them to exit, bounded by ctx.
+type ServerHandle struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	mu  sync.Mutex
+	err error
+}
+
+// Done is closed when the serve loop exits.
+func (h *ServerHandle) Done() <-chan struct{} {
+	return h.done
+}
+
+// Err reports the serve loop's terminal error. It returns nil while the loop
+// is running and after a clean Close.
+func (h *ServerHandle) Err() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.err
+}
+
+func (h *ServerHandle) finish(err error) {
+	h.mu.Lock()
+	h.err = err
+	h.mu.Unlock()
+	close(h.done)
+}
+
+// Close stops the listeners started by Start and waits for them to exit. It
+// is idempotent and safe for concurrent use. A clean stop returns nil; a
+// listener failure observed before shutdown is returned.
+func (h *ServerHandle) Close(ctx context.Context) error {
+	h.cancel()
+	select {
+	case <-h.done:
+		err := h.Err()
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Start starts serving in the background and returns a handle that observes
+// listener failures. It waits until every listener is ready before returning.
+// Serve is Start plus a wait on the handle.
+func (dg *Agent) Start(ctx context.Context, h CallHandler) (*ServerHandle, error) {
+	serveCtx, cancel := context.WithCancel(ctx)
+	handle := &ServerHandle{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+
+	readyCh := make(chan struct{}, len(dg.transports))
+	resultCh := make(chan error, 1)
+	go func() {
+		err := dg.serve(serveCtx, h, func() {
+			readyCh <- struct{}{}
+		})
+		handle.finish(err)
+		resultCh <- err
+	}()
+
+	for range dg.transports {
+		select {
+		case err := <-resultCh:
+			cancel()
+			return nil, err
+		case <-readyCh:
+		}
+	}
+	return handle, nil
+}
+
+// Serve starts 'Server' handle for SIP and blocks until it stops. It is Start
+// plus a wait on the returned handle.
 // Should be called for UAS but can be skipped for UAC behavior
 //
 // Handler contract: the CallHandler decides how the call is answered.
@@ -1014,11 +1094,14 @@ func (dg *Agent) Transports() []Transport {
 //
 // Listener contract: Serve returns the first listener error joined with the
 // errors of the remaining listeners, and it only returns after every listener
-// has stopped — a non-nil return means nothing is serving. This also applies
-// to ServeBackground, which reports the same error while Serve is tearing the
-// remaining listeners down.
+// has stopped — a non-nil return means nothing is serving.
 func (dg *Agent) Serve(ctx context.Context, h CallHandler) error {
-	return dg.serve(ctx, h, func() {})
+	handle, err := dg.Start(ctx, h)
+	if err != nil {
+		return err
+	}
+	<-handle.Done()
+	return handle.Err()
 }
 
 // handler returns the installed CallHandler. Serve swaps it atomically, so
@@ -1145,30 +1228,6 @@ func (dg *Agent) serve(ctx context.Context, h CallHandler, readyCh func()) error
 	return errors.Join(errs...)
 }
 
-// ServeBackground starts serving in background, but waits server listener to be started before returning
-// Checkout more info on Serve()
-func (dg *Agent) ServeBackground(ctx context.Context, h CallHandler) error {
-	readyCh := make(chan struct{}, len(dg.transports))
-	ready := func() {
-		readyCh <- struct{}{}
-	}
-	chErr := make(chan error, 1)
-
-	go func() {
-		chErr <- dg.serve(ctx, h, ready)
-	}()
-
-	for range dg.transports {
-		select {
-		case err := <-chErr:
-			return err
-		case <-readyCh:
-			dg.log.Info("Network ready")
-		}
-	}
-	return nil
-}
-
 // shutdownDialogHangupTimeout bounds the per-dialog Hangup during Close.
 // context.WithTimeout takes the earlier deadline when the passed ctx already
 // has one.
@@ -1183,7 +1242,7 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //  2. It unregisters and stops every registration created by Register or
 //     RegisterURI, waiting at most unregisterTimeout for each within ctx.
 //     Registrations created with WithRegistrationDetached are left alone.
-//  3. It stops the SIP listeners started by Serve/ServeBackground and waits
+//  3. It stops the SIP listeners started by Serve/Start and waits
 //     for them to exit.
 //  4. It closes the private UserAgent created by New. A UserAgent passed with
 //     WithUserAgent is caller-owned and is NOT closed, so it can be shared
@@ -1198,7 +1257,7 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //
 // In-flight serve handlers keep running concurrently with phase 1; their own
 // Hangup/Close on an already-torn-down dialog is a tolerated no-op path.
-// Close is idempotent. After Close, Serve/ServeBackground and
+// Close is idempotent. After Close, Serve/Start and
 // Register/RegisterURI return ErrAgentClosed.
 //
 // ctx bounds the phase 1 waits (dialog hangup, registration unregister) and
@@ -1357,8 +1416,11 @@ func shutdownDialog(ctx context.Context, id string, d Call) []error {
 // Options allow full call customization, checkout SignalOption.
 // Each SignalOption func is executed exactly once for the whole call setup.
 // The final ACK is sent without options; call Ack directly if you need ACK headers.
-// Scope: everything OutboundCall.Invite accepts, plus
-// WithDialogTransport and WithDialogTransportID.
+// Scope: everything OutboundCall.Invite accepts except WithEarlyMediaDetect,
+// plus WithDialogTransport and WithDialogTransportID.
+//
+// For early media use NewCall + Invite + WaitAnswer: Dial treats an early
+// media result as failure because it cannot return a call it has not answered.
 //
 // For better control more details use above functions instead.
 // If you want to bridge call then use helper DialBridge
@@ -1384,15 +1446,34 @@ func (dg *Agent) DialURI(ctx context.Context, recipient URI, opts ...DialOption)
 	}
 
 	if err := d.inviteWithParams(ctx, params); err != nil {
-		closeErr := d.Close()
-		return nil, errors.Join(err, closeErr)
+		return nil, errors.Join(err, teardownOutbound(d))
 	}
 
 	if err := d.Ack(ctx); err != nil {
-		closeErr := d.Close()
-		return nil, errors.Join(err, closeErr)
+		return nil, errors.Join(err, teardownOutbound(d))
 	}
 	return d, nil
+}
+
+// teardownOutbound tears down a call that failed after it may already have
+// been established. Close alone is local-only; a 2xx dialog also needs an ACK
+// and a BYE so the remote side does not keep the call up. Teardown is
+// best-effort: the original operation error is the one callers need, so only
+// local Close errors are returned. The teardown context is independent of the
+// caller's context because the failure may itself be ctx cancellation.
+func teardownOutbound(d *OutboundCall) error {
+	state := d.sess.LoadState()
+	if state == sip.DialogStateEstablished {
+		tctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = d.Ack(tctx)
+		cancel()
+	}
+	if d.sess.LoadState() == sip.DialogStateConfirmed {
+		tctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = d.Hangup(tctx)
+		cancel()
+	}
+	return d.Close()
 }
 
 // parseTargetURI parses a dial target string into a private URI copy.
@@ -1464,16 +1545,20 @@ func (dg *Agent) DialBridgeURI(ctx context.Context, recipient URI, bridge Bridge
 	}
 
 	if err := d.inviteWithParams(ctx, params); err != nil {
-		return nil, errors.Join(err, d.Hangup(d.Context()), d.Close())
+		return nil, errors.Join(err, teardownOutbound(d))
 	}
 
 	// Do bridging now
 	if err := bridge.Add(d); err != nil {
-		return nil, errors.Join(err, d.Close())
+		return nil, errors.Join(err, teardownOutbound(d))
 	}
 
 	if err := d.Ack(ctx); err != nil {
-		return nil, errors.Join(err, d.Close())
+		var removeErr error
+		if remover, ok := bridge.(interface{ Remove(Call) error }); ok {
+			removeErr = remover.Remove(d)
+		}
+		return nil, errors.Join(err, removeErr, teardownOutbound(d))
 	}
 	return d, nil
 }
@@ -1612,14 +1697,14 @@ func (dg *Agent) newSIPDialog(recipient URI, tran *Transport, contact *ContactHe
 	inviteReq.SetTransport(sip.NetworkToUpper(transport))
 
 	d = &OutboundCall{
-		DialogClientSession: &sipgo.DialogClientSession{
+		sess: &sipgo.DialogClientSession{
 			UA: &dialogUA,
 			Dialog: Dialog{
 				InviteRequest: inviteReq,
 			},
 		},
 	}
-	d.Init()
+	d.sess.Init()
 
 	// Per-dialog media config: global media config with transport values
 	// overlaid, so it carries all fields (codecs, RTPNAT, SRTP alg, port
@@ -1629,19 +1714,19 @@ func (dg *Agent) newSIPDialog(recipient URI, tran *Transport, contact *ContactHe
 	d.callMedia.httpClient = d.mediaConfig.HTTPClient
 
 	// This should be run on ACK
-	d.OnState(func(s sip.DialogState) {
+	d.sess.OnState(func(s sip.DialogState) {
 		if s != sip.DialogStateConfirmed {
 			return
 		}
 
 		// Now dialog is established and can be add into store
-		if err := dg.cache.client.store(context.Background(), d.DialogClientSession.ID, d); err != nil {
+		if err := dg.cache.client.store(context.Background(), d.sess.ID, d); err != nil {
 			dg.log.Error("Failed to store in dialog cache", "error", err)
 		}
 	})
 
-	d.OnClose(func() error {
-		return dg.cache.client.remove(context.Background(), d.DialogClientSession.ID)
+	d.callMedia.OnClose(func() error {
+		return dg.cache.client.remove(context.Background(), d.sess.ID)
 	})
 	return d, nil
 }

@@ -25,10 +25,10 @@ import (
 type OnReferFunc func(referDialog *OutboundCall) error
 
 // InboundCall is an inbound (UAS) dialog delivered to the CallHandler given
-// to Serve/ServeBackground. It embeds the sipgo dialog; the diago methods are
-// the supported API surface.
+// to Serve/Start. The diago methods are the supported API surface;
+// use SIP for the underlying sipgo dialog.
 type InboundCall struct {
-	*sipgo.DialogServerSession
+	sess *sipgo.DialogServerSession
 
 	// MediaSession *media.MediaSession
 	callMedia
@@ -70,6 +70,17 @@ type InboundCall struct {
 // Media returns the media half of the session. It is never nil.
 func (d *InboundCall) Media() *Media {
 	return &d.callMedia
+}
+
+// Context returns the dialog lifetime context.
+func (d *InboundCall) Context() context.Context {
+	return d.sess.Context()
+}
+
+// Do sends an in-dialog request and waits for its final response. It is the
+// raw SIP escape hatch; prefer the diago methods for dialog operations.
+func (d *InboundCall) Do(ctx context.Context, req *Request) (*Response, error) {
+	return d.sess.Do(ctx, req)
 }
 
 // ackChannel lazily allocates and returns the per-dialog ACK-arrival channel.
@@ -159,10 +170,10 @@ func (d *InboundCall) notifyAck() {
 // with another CSeq must not let a pending respondSignal treat the sipgo
 // wait-loop timeout as success.
 func (d *InboundCall) matchesInviteAck(req *Request) bool {
-	if req == nil || d.InviteRequest == nil {
+	if req == nil || d.sess.InviteRequest == nil {
 		return false
 	}
-	reqCSeq, inviteCSeq := req.CSeq(), d.InviteRequest.CSeq()
+	reqCSeq, inviteCSeq := req.CSeq(), d.sess.InviteRequest.CSeq()
 	if reqCSeq == nil || inviteCSeq == nil {
 		return false
 	}
@@ -171,7 +182,7 @@ func (d *InboundCall) matchesInviteAck(req *Request) bool {
 
 // ID returns the dialog identifier (Call-ID, tags and tags-derived hash).
 func (d *InboundCall) ID() string {
-	return d.DialogServerSession.ID
+	return d.sess.ID
 }
 
 // Close frees local resources (media stack and dialog cleanup hooks).
@@ -183,18 +194,18 @@ func (d *InboundCall) Close() error {
 		return nil
 	}
 	e1 := d.callMedia.Close()
-	e2 := d.DialogServerSession.Close()
+	e2 := d.sess.Close()
 	return errors.Join(e1, e2)
 }
 
 // FromUser returns the caller user part of the dialog's From header.
 func (d *InboundCall) FromUser() string {
-	return d.InviteRequest.From().Address.User
+	return d.sess.InviteRequest.From().Address.User
 }
 
 // ToUser returns the user that was dialed.
 func (d *InboundCall) ToUser() string {
-	return d.InviteRequest.To().Address.User
+	return d.sess.InviteRequest.To().Address.User
 }
 
 // Authorize challenges and validates the incoming INVITE with SIP digest
@@ -222,7 +233,7 @@ func (d *InboundCall) Authorize(s *DigestAuthServer, auth DigestAuth) error {
 
 // Transport returns the transport of the dialog's INVITE (ex. "UDP").
 func (d *InboundCall) Transport() string {
-	return d.InviteRequest.Transport()
+	return d.sess.InviteRequest.Transport()
 }
 
 // respondSignal builds a response for the dialog INVITE applying signaling
@@ -242,7 +253,7 @@ func (d *InboundCall) respondSignal(ctx context.Context, statusCode int, reason 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	res := sip.NewResponseFromRequest(d.InviteRequest, statusCode, reason, body)
+	res := sip.NewResponseFromRequest(d.sess.InviteRequest, statusCode, reason, body)
 	if params != nil {
 		if params.Msg.Contact != nil {
 			setSignalContact(res, params.Msg.Contact)
@@ -260,7 +271,7 @@ func (d *InboundCall) respondSignal(ctx context.Context, statusCode int, reason 
 
 	// Only 2xx waits for ACK and is affected by the race.
 	if !res.IsSuccess() {
-		return d.DialogServerSession.WriteResponse(res)
+		return d.sess.WriteResponse(res)
 	}
 
 	// The caller observes only initiation: waiting for the ACK (and
@@ -275,7 +286,7 @@ func (d *InboundCall) respondSignal(ctx context.Context, statusCode int, reason 
 // retransmission and the ACK wait to a background goroutine. The ACK outcome
 // is observable through AckReceived, AckErr and WaitAck.
 func (d *InboundCall) writeSuccessAsync(res *Response) error {
-	switch state := d.LoadState(); {
+	switch state := d.sess.LoadState(); {
 	case state == sip.DialogStateEnded:
 		return ErrDialogEnded
 	case state >= sip.DialogStateEstablished:
@@ -295,7 +306,7 @@ func (d *InboundCall) writeSuccessAsync(res *Response) error {
 	stateCh := d.SIP().StateRead()
 	writeDone := make(chan error, 1)
 	go func() {
-		err := d.DialogServerSession.WriteResponse(res)
+		err := d.sess.WriteResponse(res)
 		writeDone <- err
 		d.finishSuccessWrite(err)
 	}()
@@ -343,7 +354,7 @@ func (d *InboundCall) finishSuccessWrite(err error) {
 		} else {
 			// The same upstream error is raised when the dialog was
 			// terminated while the ACK was still in flight.
-			err = ackWaitFailure(d.LoadState(), err)
+			err = ackWaitFailure(d.sess.LoadState(), err)
 			if !errors.Is(err, ErrDialogEnded) {
 				err = fmt.Errorf("%w: %w", ErrAckTimeout, err)
 			}
@@ -398,7 +409,7 @@ func (d *InboundCall) AckErr() error {
 // WaitAck when the call must be fully established (ACK processed, media
 // finalized) before proceeding.
 func (d *InboundCall) WaitAck(ctx context.Context) error {
-	if d.LoadState() < sip.DialogStateEstablished {
+	if d.sess.LoadState() < sip.DialogStateEstablished {
 		return ErrDialogNotAnswered
 	}
 	_, ackDone := d.ackChannels()
@@ -477,14 +488,14 @@ func isAckWaitRaceError(err error) bool {
 
 // byeSignal sends BYE applying signaling options (extra headers, request mutator).
 func (d *InboundCall) byeSignal(ctx context.Context, params *signalParams) error {
-	cont := d.InviteRequest.Contact()
+	cont := d.sess.InviteRequest.Contact()
 	bye := sip.NewRequest(sip.BYE, cont.Address)
-	bye.SetTransport(d.InviteRequest.Transport())
+	bye.SetTransport(d.sess.InviteRequest.Transport())
 
 	if err := applyRequestSignal(bye, params); err != nil {
 		return err
 	}
-	return d.DialogServerSession.WriteBye(ctx, bye)
+	return d.sess.WriteBye(ctx, bye)
 }
 
 // Trying sends 100 Trying.
@@ -573,7 +584,7 @@ func (d *InboundCall) Ringing(ctx context.Context, opts ...ResponseOption) error
 // confirmed dialog (ReInvite, Hold, Unhold, Refer) follow a non-blocking
 // Answer without racing the ACK.
 func (d *InboundCall) waitConfirmed(ctx context.Context) error {
-	switch st := d.LoadState(); {
+	switch st := d.sess.LoadState(); {
 	case st == sip.DialogStateConfirmed:
 		return nil
 	case st == sip.DialogStateEnded:
@@ -600,7 +611,7 @@ func (d *InboundCall) waitConfirmed(ctx context.Context) error {
 
 // SIP exposes the underlying sipgo dialog as the escape hatch.
 func (d *InboundCall) SIP() *Dialog {
-	return &d.Dialog
+	return &d.sess.Dialog
 }
 
 // RemoteContact returns the current remote target of the dialog.
@@ -611,7 +622,7 @@ func (d *InboundCall) RemoteContact() *ContactHeader {
 	if d.remoteContactTarget != nil {
 		return d.remoteContactTarget
 	}
-	return d.InviteRequest.Contact()
+	return d.sess.InviteRequest.Contact()
 }
 
 // RespondSDP responds with 200 OK and provided SDP body.
@@ -724,7 +735,7 @@ func (d *InboundCall) newAnswerRTPSession(params *signalParams) (*media.RTPSessi
 func (d *InboundCall) answerSession(ctx context.Context, rtpSess *media.RTPSession, params *signalParams) error {
 	// TODO: Use setupRTPSession
 	sess := rtpSess.Sess
-	sdp := d.InviteRequest.Body()
+	sdp := d.sess.InviteRequest.Body()
 	if sdp == nil {
 		return fmt.Errorf("no sdp present in invite: %w", ErrSDPMissing)
 	}
@@ -776,7 +787,7 @@ func (d *InboundCall) answerSession(ctx context.Context, rtpSess *media.RTPSessi
 
 func (d *InboundCall) setupRTPSession(rtpSess *media.RTPSession) error {
 	sess := rtpSess.Sess
-	sdp := d.InviteRequest.Body()
+	sdp := d.sess.InviteRequest.Body()
 	if sdp == nil {
 		return fmt.Errorf("no sdp present in invite: %w", ErrSDPMissing)
 	}
@@ -846,7 +857,7 @@ func (d *InboundCall) AnswerLate(ctx context.Context, opts ...AnswerOption) erro
 	if err := d.respondSignal(ctx, sip.StatusOK, "OK", body, params); err != nil {
 		return err
 	}
-	if d.InviteRequest.Body() == nil {
+	if d.sess.InviteRequest.Body() == nil {
 		// Late offer: the ACK carries the remote answer, so readAck applies
 		// the remote SDP and starts the monitor when it arrives.
 		return nil
@@ -874,7 +885,7 @@ func (d *InboundCall) readAck(req *Request, tx ServerTransaction) error {
 
 	// A late-offer INVITE (no SDP) makes the ACK answer mandatory: the dialog
 	// has no remote media address otherwise (RFC 3261 §13.3.1.4).
-	lateOffer := d.InviteRequest != nil && d.InviteRequest.Body() == nil
+	lateOffer := d.sess.InviteRequest != nil && d.sess.InviteRequest.Body() == nil
 
 	// Apply the late-offer SDP under the lock, resolving the media session
 	// for Finalize which must run outside it: Finalize performs the DTLS
@@ -915,12 +926,12 @@ func (d *InboundCall) readAck(req *Request, tx ServerTransaction) error {
 		// the wire) and then send a real BYE. Record the failure before the
 		// state change so a waiting respondSignal surfaces it.
 		d.setAckError(err)
-		aerr := d.DialogServerSession.ReadAck(req, tx)
+		aerr := d.sess.ReadAck(req, tx)
 		herr := d.Hangup(d.Context())
 		return errors.Join(err, aerr, herr)
 	}
 
-	aerr := d.DialogServerSession.ReadAck(req, tx)
+	aerr := d.sess.ReadAck(req, tx)
 	if aerr != nil {
 		d.setAckError(aerr)
 	}
@@ -958,7 +969,7 @@ func (d *InboundCall) Hangup(ctx context.Context, opts ...HangupOption) error {
 		return err
 	}
 
-	state := d.LoadState()
+	state := d.sess.LoadState()
 	if state >= sip.DialogStateEstablished && state != sip.DialogStateEnded {
 		return d.byeSignal(ctx, params)
 	}
@@ -990,8 +1001,8 @@ func (d *InboundCall) ReInvite(ctx context.Context, opts ...RequestOption) error
 	sdpBody := d.mediaSession.LocalSDP()
 	contact := d.remoteContactUnsafe()
 	var localContact *ContactHeader
-	if d.InviteResponse != nil {
-		localContact = d.InviteResponse.Contact()
+	if d.sess.InviteResponse != nil {
+		localContact = d.sess.InviteResponse.Contact()
 	}
 	d.mu.Unlock()
 
@@ -1060,9 +1071,9 @@ func (d *InboundCall) writeReInviteACK(ctx context.Context, target URI) error {
 }
 
 func (d *InboundCall) ack(ctx context.Context, remoteTarget URI, body []byte) error {
-	// inviteRequest := d.InviteRequest
+	// inviteRequest := d.sess.InviteRequest
 	// recipient := &inviteRequest.Recipient
-	// if contact := d.InviteResponse.Contact(); contact != nil {
+	// if contact := d.sess.InviteResponse.Contact(); contact != nil {
 	// 	recipient = &contact.Address
 	// }
 	ackRequest := sip.NewRequest(
@@ -1076,11 +1087,11 @@ func (d *InboundCall) ack(ctx context.Context, remoteTarget URI, body []byte) er
 		ackRequest.SetBody(body)
 	}
 
-	if err := d.DialogServerSession.WriteRequest(ackRequest); err != nil {
+	if err := d.sess.WriteRequest(ackRequest); err != nil {
 		return err
 	}
 
-	// if err := d.DialogServerSession.WriteAck(ctx, ackRequest); err != nil {
+	// if err := d.sess.WriteAck(ctx, ackRequest); err != nil {
 	// 	return err
 	// }
 
@@ -1099,7 +1110,7 @@ func (d *InboundCall) remoteContactUnsafe() *ContactHeader {
 		// Invite update can change contact
 		return d.remoteContactTarget
 	}
-	return d.InviteRequest.Contact()
+	return d.sess.InviteRequest.Contact()
 }
 
 // Refer tries todo refer (blind transfer) on call.
@@ -1124,7 +1135,7 @@ func (d *InboundCall) Refer(ctx context.Context, referTo URI, opts ...ReferOptio
 		d.onReferNotify = params.Dialog.OnReferNotify
 	}
 	d.mu.Unlock()
-	return dialogRefer(ctx, d, cont.Address, referTo, d.InviteResponse.Contact().Address, params)
+	return dialogRefer(ctx, d, cont.Address, referTo, d.sess.InviteResponse.Contact().Address, params)
 }
 
 func (d *InboundCall) handleReferNotify(req *Request, tx ServerTransaction) {
@@ -1147,7 +1158,7 @@ func (d *InboundCall) handleRefer(dg *Agent, req *Request, tx ServerTransaction)
 
 func (d *InboundCall) handleReInvite(req *Request, tx ServerTransaction) error {
 	// Check is current pending dialog
-	if state := d.LoadState(); state == sip.DialogStateEstablished {
+	if state := d.sess.LoadState(); state == sip.DialogStateEstablished {
 		// RFC 3261 §14.2 — UAS Behavior
 		// If a UAS receives an INVITE request for an existing dialog while another INVITE transaction is in progress, it MUST return a 491 (Request Pending) response to the new INVITE.”
 		return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusRequestPending, "Request Pending", nil))
@@ -1156,7 +1167,7 @@ func (d *InboundCall) handleReInvite(req *Request, tx ServerTransaction) error {
 	// NOTE: Calling ReadRequest increases remote CSEQ.
 	// We should not call this until dialog is confirmed, otherwise any intermidiate response
 	// will have wrong CSEQ
-	if err := d.ReadRequest(req, tx); err != nil {
+	if err := d.sess.ReadRequest(req, tx); err != nil {
 		if errors.Is(err, sipgo.ErrDialogInvalidCseq) {
 			// https://datatracker.ietf.org/doc/html/rfc3261#section-14.2
 			// 			A UAS that receives a second INVITE before it sends the final
@@ -1172,7 +1183,7 @@ func (d *InboundCall) handleReInvite(req *Request, tx ServerTransaction) error {
 		return tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, err.Error(), nil))
 	}
 
-	return d.handleMediaUpdate(req, tx, d.InviteResponse.Contact())
+	return d.handleMediaUpdate(req, tx, d.sess.InviteResponse.Contact())
 }
 
 func (d *InboundCall) readSIPInfoDTMF(req *Request, tx ServerTransaction) error {

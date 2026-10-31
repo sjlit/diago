@@ -21,10 +21,17 @@ import (
 
 // RegisterResponseError reports a final non-200 REGISTER response.
 type RegisterResponseError struct {
-	RegisterReq *Request
-	RegisterRes *Response
+	registerReq *Request
+	registerRes *Response
+	msg         string
+}
 
-	Msg string
+func newRegisterResponseError(req *Request, res *Response) *RegisterResponseError {
+	msg := ""
+	if res != nil {
+		msg = res.StartLine()
+	}
+	return &RegisterResponseError{registerReq: req, registerRes: res, msg: msg}
 }
 
 // statusIntervalTooBrief is the REGISTER 423 final response (RFC 3261 §10.2.8),
@@ -35,13 +42,39 @@ const statusIntervalTooBrief = 423
 // and the time Agent.Close waits for each registration.
 const unregisterTimeout = 5 * time.Second
 
-// StatusCode returns the SIP status code of the REGISTER response.
+// StatusCode returns the SIP status code of the REGISTER response. It returns
+// zero when the error was constructed without a response.
 func (e *RegisterResponseError) StatusCode() int {
-	return e.RegisterRes.StatusCode
+	if e == nil || e.registerRes == nil {
+		return 0
+	}
+	return e.registerRes.StatusCode
 }
 
-func (e RegisterResponseError) Error() string {
-	return e.Msg
+func (e *RegisterResponseError) Error() string {
+	if e == nil {
+		return "register response error"
+	}
+	if e.msg != "" {
+		return e.msg
+	}
+	return fmt.Sprintf("register response: %d", e.StatusCode())
+}
+
+// RegisterRequest returns the REGISTER request that produced the error.
+func (e *RegisterResponseError) RegisterRequest() *Request {
+	if e == nil {
+		return nil
+	}
+	return e.registerReq
+}
+
+// RegisterResponse returns the final REGISTER response.
+func (e *RegisterResponseError) RegisterResponse() *Response {
+	if e == nil {
+		return nil
+	}
+	return e.registerRes
 }
 
 // RegisterTransaction is a REGISTER transaction: it owns the request
@@ -273,11 +306,7 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalPara
 	}
 
 	if res.StatusCode != 200 {
-		return &RegisterResponseError{
-			RegisterReq: req,
-			RegisterRes: res,
-			Msg:         res.StartLine(),
-		}
+		return newRegisterResponseError(req, res)
 	}
 
 	// Now update server expiry
@@ -437,11 +466,7 @@ func (t *RegisterTransaction) doRequest(ctx context.Context, req *Request, param
 	}
 
 	if res.StatusCode != 200 {
-		return &RegisterResponseError{
-			RegisterReq: req,
-			RegisterRes: res,
-			Msg:         res.StartLine(),
-		}
+		return newRegisterResponseError(req, res)
 	}
 
 	// Check is expirese changed
@@ -643,12 +668,12 @@ func (r *Registration) run() {
 		retryAfter := 5 * time.Second
 		var rr *RegisterResponseError
 		if errors.As(err, &rr) {
-			resCode := rr.RegisterRes.StatusCode
+			resCode := rr.registerRes.StatusCode
 			switch {
 			case resCode == statusIntervalTooBrief:
 				// RFC 3261 §10.2.8: retry with an Expires of at least
 				// Min-Expires instead of treating the response as terminal.
-				minExpires, ok := minExpiresDelay(rr.RegisterRes)
+				minExpires, ok := minExpiresDelay(rr.registerRes)
 				if !ok {
 					r.setErr(err)
 					return
@@ -669,7 +694,7 @@ func (r *Registration) run() {
 				return
 			}
 
-			if h := rr.RegisterRes.GetHeader("Retry-After"); h != nil {
+			if h := rr.registerRes.GetHeader("Retry-After"); h != nil {
 				ra, _ := strconv.Atoi(h.Value())
 				if ra > 0 {
 					retryAfter = time.Duration(ra) * time.Second

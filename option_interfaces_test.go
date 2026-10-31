@@ -63,7 +63,7 @@ func TestOptionInterfaceMatrix(t *testing.T) {
 		{"WithDialogTransportID", WithDialogTransportID("tr-1"), []string{"dial", "newCall"}},
 		{"WithOriginator", WithOriginator(newBridgeTestDialog("o")), []string{"invite", "dial"}},
 		{"WithAuthCredentials", WithAuthCredentials("u", "p"), []string{"invite", "dial", "waitAnswer", "registerAttempt", "register"}},
-		{"WithEarlyMediaDetect", WithEarlyMediaDetect(), []string{"invite", "dial"}},
+		{"WithEarlyMediaDetect", WithEarlyMediaDetect(), []string{"invite"}},
 		{"WithRegisterExpiry", WithRegisterExpiry(time.Second), []string{"register"}},
 		{"WithRegisterRetryInterval", WithRegisterRetryInterval(time.Second), []string{"register"}},
 		{"WithRegisterAllowHeaders", WithRegisterAllowHeaders("INVITE"), []string{"register"}},

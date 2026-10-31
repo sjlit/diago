@@ -195,7 +195,7 @@ func (s *DigestAuthServer) challenge(req *Request, auth DigestAuth) *Response {
 // InboundCall.Authorize.
 func (s *DigestAuthServer) AuthorizeDialog(d *InboundCall, auth DigestAuth) error {
 	// https://www.rfc-editor.org/rfc/rfc2617#page-6
-	req := d.InviteRequest
+	req := d.sess.InviteRequest
 	res, err := s.AuthorizeRequest(req, auth)
 	if res != nil && res.StatusCode != sip.StatusOK {
 		// Every non-2xx outcome must terminate the INVITE transaction here:
@@ -210,7 +210,7 @@ func (s *DigestAuthServer) AuthorizeDialog(d *InboundCall, auth DigestAuth) erro
 		// written, so the handler error mapping must not answer again. Only
 		// claim that when the write actually succeeded: otherwise the INVITE
 		// would be left without any final response.
-		if werr := d.WriteResponse(res); werr != nil {
+		if werr := d.sess.WriteResponse(res); werr != nil {
 			return errors.Join(err, werr)
 		}
 		return errors.Join(ErrResponseSent, err)
