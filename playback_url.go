@@ -24,9 +24,9 @@ import (
 const playbackURLRangeSize = 65536
 
 // httpClientOrDefault returns the HTTP client configured for this playback
-// (MediaConfig.HTTPClient / withHTTPClient). The default client carries a 20s
-// timeout; wrap the transport with withHTTPClient when request logging or
-// custom TLS is needed.
+// (MediaConfig.HTTPClient / Config.HTTPClient). The default client carries a
+// 20s timeout; set Config.HTTPClient when request logging or custom TLS is
+// needed.
 func (p *playbackStream) httpClientOrDefault() *http.Client {
 	if p.httpClient != nil {
 		return p.httpClient

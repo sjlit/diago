@@ -11,9 +11,9 @@ import (
 // Aliases for the sipgo types used in diago's public API. They let
 // applications use diago without importing sipgo directly; because they are
 // type aliases, sipgo values remain assignable in both directions, so advanced
-// code can keep mixing the underlying types. Use the sipgo escape hatches
-// (withUserAgent, withServer, withClient, Agent.Server, call.SIP) when the
-// alias surface is not enough.
+// code can keep mixing the underlying types. Use the explicit escape hatches
+// (Config.UserAgent, Config.Server, Config.Client, Agent.Server, call.SIP)
+// when the alias surface is not enough.
 type (
 	// URI is a parsed SIP URI (alias of sip.Uri).
 	URI = sip.Uri
