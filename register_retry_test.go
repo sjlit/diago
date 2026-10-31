@@ -79,7 +79,7 @@ func TestRegisterRetryAfterHonored(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.ErrorIs(t, reg.Wait(), context.Canceled)
 
@@ -113,7 +113,7 @@ func TestRegisterRetryIntervalBeatsRetryAfter(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"},
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"},
 		RegisterOptions{RetryInterval: 3 * time.Millisecond})
 	require.NoError(t, err)
 	require.ErrorIs(t, reg.Wait(), context.Canceled)
@@ -147,7 +147,7 @@ func TestRegisterTransient408Retries(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	go func() {
 		done <- reg.Wait()
@@ -187,7 +187,7 @@ func TestRegisterTerminal4xxStops(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	go func() {
 		done <- reg.Wait()
@@ -265,7 +265,7 @@ func TestRegisterRetryable5xxKeepsRetrying(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.ErrorIs(t, reg.Wait(), context.Canceled)
 	assert.GreaterOrEqual(t, attempts.Load(), int32(4), "500 and 503 must be retried")
@@ -294,7 +294,7 @@ func TestRegisterTerminal5xxStops(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	go func() {
 		done <- reg.Wait()
@@ -334,7 +334,7 @@ func TestRegister3xxStops(t *testing.T) {
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
 	done := make(chan error, 1)
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	go func() {
 		done <- reg.Wait()
@@ -386,7 +386,7 @@ func TestRegisterRetryAfterClearedOnSuccess(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	go func() {
 		done <- reg.Wait()
@@ -450,7 +450,7 @@ func TestRegisterIntervalTooBriefUsesMinExpires(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	require.ErrorIs(t, reg.Wait(), context.Canceled)
 
@@ -475,7 +475,7 @@ func TestRegistrationHandle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	reg, err := dg.Register(ctx, "sip:alice@localhost")
+	reg, err := dg.StartRegistration(ctx, "sip:alice@localhost")
 	require.NoError(t, err)
 	require.NoError(t, reg.WaitReady(ctx))
 	require.NoError(t, reg.Close(ctx))
@@ -516,7 +516,7 @@ func TestRegistrationInitialFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 
 	err = reg.WaitReady(ctx)
@@ -571,7 +571,7 @@ func TestRegisterIntervalTooBriefRepeatedIsTerminal(t *testing.T) {
 	var delays []time.Duration
 	dg.registerAfter = recordingAfter(&delays, &mu)
 
-	reg, err := dg.RegisterURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	reg, err := dg.StartRegistrationURI(ctx, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 	err = reg.Wait()
 	var rr *RegisterResponseError

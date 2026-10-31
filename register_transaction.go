@@ -79,7 +79,7 @@ func (e *RegisterResponseError) RegisterResponse() *Response {
 
 // RegisterTransaction is a REGISTER transaction: it owns the request
 // template, credentials and expiry, and can register, qualify and
-// unregister the contact. Agent.Register builds one and drives the
+// unregister the contact. Agent.StartRegistration builds one and drives the
 // re-registration loop.
 type RegisterTransaction struct {
 	register signalRegisterParams
@@ -98,7 +98,7 @@ type RegisterTransaction struct {
 	// response.
 	expiry time.Duration
 	// retryAfter carries the server-requested Retry-After delay for the next
-	// attempt. It is set by the retry orchestration (Agent.Register) after a
+	// attempt. It is set by the retry orchestration (Agent.StartRegistration) after a
 	// retryable failure and cleared on the next successful REGISTER.
 	retryAfter time.Duration
 	// after is the timer factory used between REGISTER attempts. It is a
@@ -177,7 +177,7 @@ func (t *RegisterTransaction) cloneOrigin() (*Request, error) {
 
 // Register sends the initial REGISTER. Options allow customizing Contact,
 // extra headers and the final request of this registration attempt.
-// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials;
+// Scope: RegisterAttemptOptions;
 // credentials fall back to the transaction ones when not provided via options.
 func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAttemptOptions) error {
 	params, err := registerAttemptSignalParams(opts...)
@@ -194,7 +194,7 @@ func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAtte
 	return nil
 }
 
-// signalCredentials overlays credentials passed via WithAuthCredentials on top
+// signalCredentials overlays credentials passed via RegisterAttemptOptions on top
 // of the transaction ones. Empty SignalOption fields fall back to the
 // transaction values.
 func (t *RegisterTransaction) signalCredentials(params *signalParams) (string, string) {
@@ -326,7 +326,7 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalPara
 }
 
 // QualifyLoop refreshes the registration on the negotiated expiry until
-// ctx is canceled or a terminal failure occurs (see Agent.Register).
+// ctx is canceled or a terminal failure occurs (see Agent.StartRegistration).
 func (t *RegisterTransaction) QualifyLoop(ctx context.Context) error {
 	// t.expiry tracks the server's Expires response header (set by Qualify)
 	// and is re-read on every loop iteration, so server-driven expiry
@@ -386,7 +386,7 @@ func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
 // transient and the re-registration loop should schedule another attempt.
 //
 // Retryable: 408 Request Timeout, 491 Request Pending, and 5xx except
-// 501/505. 423 Interval Too Brief is handled separately by Agent.Register
+// 501/505. 423 Interval Too Brief is handled separately by Agent.StartRegistration
 // (RFC 3261 §10.2.8: retry with the Min-Expires value). Terminal: 3xx, every
 // other 4xx (401/407 in particular: credentials are transaction-scoped, so
 // retrying only repeats the same failure), 6xx and anything outside the SIP
@@ -404,7 +404,7 @@ func shouldRetryRegister(code int) bool {
 }
 
 // Unregister unregisters the contact. Options allow customizing the request.
-// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
+// Scope: RegisterAttemptOptions.
 func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAttemptOptions) error {
 	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
@@ -427,7 +427,7 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAt
 }
 
 // Qualify refreshes the registration. Options allow customizing the request.
-// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials.
+// Scope: RegisterAttemptOptions.
 func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...RegisterAttemptOptions) error {
 	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
@@ -490,7 +490,7 @@ func (t *RegisterTransaction) doRequest(ctx context.Context, req *Request, param
 // was closed (or the loop stopped) before the first successful REGISTER.
 var ErrRegistrationClosed = errors.New("registration closed")
 
-// Registration is a running REGISTER loop created by Agent.Register. The
+// Registration is a running REGISTER loop created by Agent.StartRegistration. The
 // initial REGISTER and every re-registration run in a background goroutine;
 // the handle owns their lifecycle:
 //
@@ -504,7 +504,7 @@ var ErrRegistrationClosed = errors.New("registration closed")
 //     exit (bounded by ctx). It is idempotent.
 //
 // Agent.Close also closes the handle, unless it was created with
-// WithRegistrationDetached; then the caller owns it.
+// RegisterOptions.Detached; then the caller owns it.
 //
 // The handle is safe for concurrent use.
 type Registration struct {

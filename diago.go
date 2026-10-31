@@ -69,7 +69,7 @@ type Agent struct {
 	registerAfter func(time.Duration) <-chan time.Time
 
 	// registrations holds the handles Agent.Close unregisters: every handle from
-	// Register/RegisterURI except WithRegistrationDetached ones.
+	// StartRegistration/StartRegistrationURI except detached ones.
 	registrationsMu sync.Mutex
 	registrations   map[*Registration]struct{}
 
@@ -1232,9 +1232,9 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //     (server dialogs are tracked from the incoming INVITE, client dialogs
 //     once confirmed). Media sockets close with the dialogs and the cache
 //     entries are evicted.
-//  2. It unregisters and stops every registration created by Register or
-//     RegisterURI, waiting at most unregisterTimeout for each within ctx.
-//     Registrations created with WithRegistrationDetached are left alone.
+//  2. It unregisters and stops every registration created by StartRegistration or
+//     StartRegistrationURI, waiting at most unregisterTimeout for each within ctx.
+//     Registrations created with RegisterOptions{Detached: true} are left alone.
 //  3. It stops the SIP listeners started by Serve/Start and waits
 //     for them to exit.
 //  4. It closes the private UserAgent created by New. A UserAgent passed with
@@ -1244,14 +1244,14 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 // Ownership boundaries:
 //   - Outgoing dialogs that never reached an answer are not in the cache;
 //     cancel their Invite contexts instead (which sends CANCEL).
-//   - Registrations created with WithRegistrationDetached and RegisterTransaction
+//   - Registrations created with RegisterOptions.Detached and RegisterTransaction
 //     objects are caller-owned: stop a detached registration with
 //     Registration.Close (or cancel its context).
 //
 // In-flight serve handlers keep running concurrently with phase 1; their own
 // Hangup/Close on an already-torn-down dialog is a tolerated no-op path.
 // Close is idempotent. After Close, Serve/Start and
-// Register/RegisterURI return ErrAgentClosed.
+// StartRegistration/StartRegistrationURI return ErrAgentClosed.
 //
 // ctx bounds the phase 1 waits (dialog hangup, registration unregister) and
 // phase 2 (listener exit). An already-canceled ctx makes those waits fail fast
@@ -1787,16 +1787,16 @@ func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 	return dg.getTransport("udp")
 }
 
-// Register starts a REGISTER transaction that keeps the registration ongoing
-// in the background and returns a handle to it. target is a SIP URI string
-// ("sip:alice@example.com"); use RegisterURI for a parsed URI. The initial
+// StartRegistration starts a REGISTER transaction that keeps the registration
+// ongoing in the background and returns a handle to it. target is a SIP URI
+// string ("sip:alice@example.com"); use StartRegistrationURI for a parsed URI. The initial
 // REGISTER is sent asynchronously; use Registration.WaitReady to wait for the
 // first success. For granular one-shot control use RegisterTransaction.
 //
 // The returned handle owns the loop: Registration.Close stops it and
 // unregisters the contact; Registration.Wait reports the terminal error.
-// Agent.Close stops and unregisters it too, unless WithRegistrationDetached
-// was passed. Cancel the passed ctx to stop the loop without unregistering
+// Agent.Close stops and unregisters it too, unless RegisterOptions.Detached
+// was set. Cancel the passed ctx to stop the loop without unregistering
 // explicitly (Close is still recommended to wait for the exit).
 //
 // Retry semantics: a terminal REGISTER response (401/407, other 4xx, 3xx, 6xx)
@@ -1808,23 +1808,18 @@ func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 // or Close, so callers that need an upper bound must pass a
 // bounded/cancelable ctx.
 //
-// Options configure the transaction (WithRegisterExpiry,
-// WithRegisterRetryInterval, WithRegisterProxyHost, WithRegisterAllowHeaders,
-// WithOnRegistered, WithRegistrationDetached) and every REGISTER attempt
-// (WithAuthCredentials, WithContact, WithHeaders, WithRequestMutator).
-// Scope: WithHeaders, WithContact, WithRequestMutator, WithAuthCredentials,
-// WithRegisterExpiry, WithRegisterRetryInterval, WithRegisterAllowHeaders,
-// WithRegisterProxyHost, WithOnRegistered, WithRegistrationDetached.
-func (dg *Agent) Register(ctx context.Context, target string, opts ...RegisterOptions) (*Registration, error) {
+// Options configure the transaction and every REGISTER attempt; see
+// RegisterOptions fields.
+func (dg *Agent) StartRegistration(ctx context.Context, target string, opts ...RegisterOptions) (*Registration, error) {
 	uri, err := parseTargetURI(target)
 	if err != nil {
 		return nil, err
 	}
-	return dg.RegisterURI(ctx, uri, opts...)
+	return dg.StartRegistrationURI(ctx, uri, opts...)
 }
 
-// RegisterURI is Register for an already parsed SIP URI.
-func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...RegisterOptions) (*Registration, error) {
+// StartRegistrationURI is StartRegistration for an already parsed SIP URI.
+func (dg *Agent) StartRegistrationURI(ctx context.Context, recipient URI, opts ...RegisterOptions) (*Registration, error) {
 	params, err := registerSignalParams(opts...)
 	if err != nil {
 		return nil, err
@@ -1843,19 +1838,16 @@ func (dg *Agent) RegisterURI(ctx context.Context, recipient URI, opts ...Registe
 }
 
 // RegisterTransaction creates the REGISTER transaction object used for
-// Register and Unregister requests.
-// Options configure the transaction (see Register) and every REGISTER
-// attempt. Scope: WithHeaders, WithContact, WithRequestMutator,
-// WithAuthCredentials, WithRegisterExpiry, WithRegisterRetryInterval,
-// WithRegisterAllowHeaders, WithRegisterProxyHost, WithOnRegistered.
-// WithRegistrationDetached is rejected: a transaction runs no registration loop.
+// Register and Unregister requests. Options configure the transaction and
+// every REGISTER attempt; RegisterOptions.Detached is rejected because a
+// transaction runs no registration loop.
 func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ...RegisterOptions) (*RegisterTransaction, error) {
 	params, err := registerSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
 	if params.Register.Detached {
-		return nil, fmt.Errorf("%w: WithRegistrationDetached: a RegisterTransaction has no registration loop", ErrInvalidOption)
+		return nil, fmt.Errorf("%w: RegisterOptions.Detached: a RegisterTransaction has no registration loop", ErrInvalidOption)
 	}
 	return dg.registerTransaction(recipient, params)
 }

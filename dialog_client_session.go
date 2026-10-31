@@ -435,7 +435,7 @@ func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
 // ErrClientEarlyMedia (or otherwise did not complete). Media options are not
 // part of WaitAnswerOption: the media session was already negotiated by
 // Invite. Options allow receiving responses (WithOnResponse) and digest
-// credentials (WithAuthCredentials).
+// credentials (WaitAnswerOptions.Username/Password).
 // Scope: WaitAnswerOptions.
 func (d *OutboundCall) WaitAnswer(ctx context.Context, opts ...WaitAnswerOptions) error {
 	params, err := waitAnswerSignalParams(opts...)

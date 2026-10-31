@@ -86,7 +86,7 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 	}()
 
 	// Start registration and keep it running until the process is stopped.
-	reg, err := tu.Register(ctx, recipientURI, regOpts...)
+	reg, err := tu.StartRegistration(ctx, recipientURI, regOpts...)
 	if err != nil {
 		return err
 	}

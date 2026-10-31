@@ -70,7 +70,7 @@ call, err := agent.Dial(ctx, "sip:alice@127.0.0.1:5060")
 if err != nil {
 	return err
 }
-defer call.Close()
+defer call.Close(context.Background())
 
 // ... use call.Media() for playback, DTMF, recording, ...
 
@@ -119,7 +119,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   `Tracer`, `HTTPClient`). Transports can select a complete named profile with
   `Config.MediaProfiles` + `Transport.Profile`; there is no package-level mutable
   configuration.
-- **REGISTER**: `Agent.Register` returns a `*Registration` handle
+- **REGISTER**: `Agent.StartRegistration` returns a `*Registration` handle
   (`WaitReady`/`Wait`/`Close`) that keeps the registration refreshed and
   unregisters on `Close`; `Agent.Close` does the same for every registration
   it created unless `RegisterOptions{Detached: true}` is passed. `RegisterTransaction`
@@ -174,7 +174,7 @@ Breaking changes since the first v2 preview (same module path):
 | runtime option scope (`UnsupportedOptionError`) | per-operation options structs |
 | handler return hangs up the call | answering then returning keeps it alive |
 | `Answer` blocks until ACK | returns after the 2xx; `WaitAck` opt-in |
-| `Register(...) error` | `Register(...) (*Registration, error)` |
+| `Register(...) error` | `StartRegistration(...) (*Registration, error)` |
 
 Behavioral notes:
 
@@ -186,7 +186,7 @@ Behavioral notes:
 - Server `Close` on a still-pending INVITE sends the 480 decline even when the
   passed ctx is already canceled.
 - `Agent.Close` unregisters the REGISTER handles created by `Register` and
-  `RegisterURI` (opt out with `RegisterOptions{Detached: true}`). Registering
+  `StartRegistrationURI` (opt out with `RegisterOptions{Detached: true}`). Registering
   after `Close` returns `ErrAgentClosed`.
 
 ## License

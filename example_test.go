@@ -74,7 +74,7 @@ func ExampleAgent_Dial() {
 
 // ExampleAgent_Register registers a contact and keeps the registration
 // refreshed until Close. WaitReady reports the first successful REGISTER.
-func ExampleAgent_Register() {
+func ExampleAgent_StartRegistration() {
 	agent, err := diago.New(diago.Config{
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
@@ -84,7 +84,7 @@ func ExampleAgent_Register() {
 	defer agent.Close(context.Background())
 
 	ctx := context.Background()
-	reg, err := agent.Register(ctx, "sip:alice@example.com", diago.RegisterOptions{
+	reg, err := agent.StartRegistration(ctx, "sip:alice@example.com", diago.RegisterOptions{
 		Username: "alice",
 		Password: "secret",
 	})

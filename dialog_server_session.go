@@ -555,9 +555,7 @@ func (d *InboundCall) Progress(ctx context.Context, opts ...ResponseOptions) err
 
 // ProgressMedia sends 183 Session Progress and creates early media.
 //
-// Scope: WithHeaders, WithContact, WithBody, WithResponseMutator, plus the
-// media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP, WithMediaExternalIP,
-// WithMediaDTLS, WithSDPSessionName, WithMediaSession, WithMusicOnHold).
+// Scope: ProgressMediaOptions.
 func (d *InboundCall) ProgressMedia(ctx context.Context, opts ...ProgressMediaOptions) error {
 	params, err := progressMediaSignalParams(opts...)
 	if err != nil {
@@ -842,10 +840,7 @@ func (d *InboundCall) setupRTPSession(rtpSess *media.RTPSession) error {
 
 // AnswerLate does answer with Late offer.
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
-// Scope: WithHeaders, WithContact, WithBody, WithResponseMutator,
-// WithOnMediaUpdate, WithOnRefer, plus the media overrides (WithCodecs,
-// WithRTPNAT, WithMediaBindIP, WithMediaExternalIP, WithMediaDTLS,
-// WithSDPSessionName, WithMediaSession, WithMusicOnHold).
+// Scope: AnswerOptions.
 //
 // Like Answer, it returns once the 200 OK was handed to the transaction
 // layer. The ACK of a late offer carries the remote answer: call WaitAck to

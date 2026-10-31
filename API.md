@@ -72,7 +72,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
   that answers and returns keeps the call alive; the framework closes the
   dialog (media, cache entry) when it ends.
 - `Agent.Close` hangs up dialogs, unregisters and stops the registrations it
-  created (`Register`/`RegisterURI`), stops listeners and closes the private
+  created (`StartRegistration`/`StartRegistrationURI`), stops listeners and closes the private
   UserAgent. A UserAgent supplied with `Config.UserAgent` stays caller-owned.
 - Caller-owned resources are explicit: the UserAgent (when supplied),
   registrations created with `RegisterOptions{Detached: true}`, REGISTER

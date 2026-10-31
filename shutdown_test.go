@@ -115,7 +115,7 @@ func TestShutdownUnregistersRegistrations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	reg, err := dg.Register(ctx, "sip:alice@localhost")
+	reg, err := dg.StartRegistration(ctx, "sip:alice@localhost")
 	require.NoError(t, err)
 	require.NoError(t, reg.WaitReady(ctx))
 
@@ -130,13 +130,13 @@ func TestShutdownUnregistersRegistrations(t *testing.T) {
 	// Idempotent, and registrations are refused once the agent is closed.
 	require.NoError(t, dg.Close(ctx))
 	assert.Equal(t, int32(1), unregisters.Load())
-	_, err = dg.Register(ctx, "sip:bob@localhost")
+	_, err = dg.StartRegistration(ctx, "sip:bob@localhost")
 	assert.ErrorIs(t, err, ErrAgentClosed)
-	_, err = dg.Register(ctx, "sip:bob@localhost", RegisterOptions{Detached: true})
+	_, err = dg.StartRegistration(ctx, "sip:bob@localhost", RegisterOptions{Detached: true})
 	assert.ErrorIs(t, err, ErrAgentClosed)
 }
 
-// TestShutdownKeepsDetachedRegistrations locks WithRegistrationDetached: the
+// TestShutdownKeepsDetachedRegistrations locks RegisterOptions.Detached: the
 // handle keeps running after Agent.Close and its owner unregisters it.
 func TestShutdownKeepsDetachedRegistrations(t *testing.T) {
 	var unregisters atomic.Int32
@@ -150,7 +150,7 @@ func TestShutdownKeepsDetachedRegistrations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	reg, err := dg.Register(ctx, "sip:alice@localhost", RegisterOptions{Detached: true})
+	reg, err := dg.StartRegistration(ctx, "sip:alice@localhost", RegisterOptions{Detached: true})
 	require.NoError(t, err)
 	require.NoError(t, reg.WaitReady(ctx))
 
@@ -176,7 +176,7 @@ func TestRegistrationUntrackedAfterLoopExit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	reg, err := dg.Register(ctx, "sip:alice@localhost")
+	reg, err := dg.StartRegistration(ctx, "sip:alice@localhost")
 	require.NoError(t, err)
 	require.Error(t, reg.Wait())
 
