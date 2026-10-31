@@ -349,7 +349,7 @@ type SDPConfig struct {
 	// CodecPreferLocalOrder makes the answerer order common codecs by local
 	// preference instead of the offerer order (RFC 3264 default). Zero keeps
 	// the offerer order.
-	CodecPreferLocalOrder int
+	CodecPreferLocalOrder bool
 	// SessionName overrides the SDP "s=" session-name line. Empty keeps the
 	// library default "Sip Go Media".
 	SessionName string

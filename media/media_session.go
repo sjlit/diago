@@ -130,7 +130,7 @@ type MediaSession struct {
 	// consistency.
 	RTPPortStart             int
 	RTPPortEnd               int
-	SDPCodecPreferLocalOrder int
+	SDPCodecPreferLocalOrder bool
 	// SDPSessionName overrides the SDP "s=" line. Empty keeps the default
 	// "Sip Go Media". Set only in the Config phase; carried through Fork.
 	SDPSessionName string
@@ -954,7 +954,7 @@ func (s *MediaSession) updateRemoteCodecs(codecs []Codec, answerer bool) int {
 	// Some systems may like to answer with local order of preference.
 	// Per-session value from MediaConfig.
 	preferLocalOrder := s.SDPCodecPreferLocalOrder
-	if preferLocalOrder > 0 && answerer {
+	if preferLocalOrder && answerer {
 		filter := make([]Codec, 0, len(codecs))
 		for _, lc := range local {
 			for _, c := range codecs {

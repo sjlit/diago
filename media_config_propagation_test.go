@@ -32,7 +32,7 @@ func TestDiagoMediaProfileForTransport(t *testing.T) {
 				RTPPortEnd:   16020,
 			},
 			SRTP: SRTPConfig{Alg: 1},
-			SDP:  SDPConfig{CodecPreferLocalOrder: 1},
+			SDP:  SDPConfig{CodecPreferLocalOrder: true},
 		}),
 		withMediaProfile("sdes", MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
@@ -48,7 +48,7 @@ func TestDiagoMediaProfileForTransport(t *testing.T) {
 	assert.Equal(t, SRTPAlg(1), conf.SRTP.Alg)
 	assert.Equal(t, 16000, conf.Network.RTPPortStart)
 	assert.Equal(t, 16020, conf.Network.RTPPortEnd)
-	assert.Equal(t, 1, conf.SDP.CodecPreferLocalOrder)
+	assert.True(t, conf.SDP.CodecPreferLocalOrder)
 	assert.Equal(t, SecureRTPNone, conf.SRTP.Mode)
 
 	// Profile selected: it replaces the default wholesale.

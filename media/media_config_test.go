@@ -41,11 +41,11 @@ func TestMediaSessionPortRangeFromConfig(t *testing.T) {
 
 	t.Run("fork carries config", func(t *testing.T) {
 		s := newSession(16000, 16020)
-		s.SDPCodecPreferLocalOrder = 1
+		s.SDPCodecPreferLocalOrder = true
 		f := s.Fork()
 		assert.Equal(t, 16000, f.RTPPortStart)
 		assert.Equal(t, 16020, f.RTPPortEnd)
-		assert.Equal(t, 1, f.SDPCodecPreferLocalOrder)
+		assert.True(t, f.SDPCodecPreferLocalOrder)
 	})
 }
 
@@ -57,7 +57,7 @@ func TestMediaSessionCodecOrderPerSession(t *testing.T) {
 	remote := []Codec{CodecAudioAlaw, CodecAudioUlaw}
 
 	t.Run("session field local order", func(t *testing.T) {
-		s := &MediaSession{Codecs: local, SDPCodecPreferLocalOrder: 1}
+		s := &MediaSession{Codecs: local, SDPCodecPreferLocalOrder: true}
 		n := s.updateRemoteCodecs(remote, true)
 		require.Equal(t, 2, n)
 		assert.Equal(t, "PCMU", s.filterCodecs[0].Name, "local order must win")
