@@ -169,7 +169,7 @@ Breaking changes since the first v2 preview (same module path):
 | `WithHeader` | removed: use the operation options `Headers` field |
 | `CreatePlayback*` / `CreateDTMF*` / `CreateRingtonePlayback` | `NewPlayback` / `NewDTMFReader` / `NewRingtone` |
 | `PlayMusicOnHold` | `StartMusicOnHold` |
-| `WithAudioReader*` / `WithAudioWriter*` | `WithReader*` / `WithWriter*` |
+| `WithAudioReader*` / `WithAudioWriter*` | `ReaderOptions` / `WriterOptions` |
 | `Transport.Transport` | `Transport.Network` |
 | runtime option scope (`UnsupportedOptionError`) | per-operation options structs |
 | handler return hangs up the call | answering then returning keeps it alive |

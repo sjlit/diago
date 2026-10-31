@@ -8,7 +8,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - Call legs are `InboundCall` (UAS) and `OutboundCall` (UAC); the shared
   contract is the `Call` interface. Do not re-introduce `Dialog*` types.
 - The engine is `Agent`, constructed by `New`. Options are per-domain types
-  (`Config`, `AnswerOptions`, `MediaConfig`, `ReaderOption`, ...).
+  (`Config`, `AnswerOptions`, `MediaConfig`, `ReaderOptions`, ...).
 - Methods follow one verb per intent:
   - `New*` constructs an object or a media handle (`New`, `NewCall`,
     `NewBridge`, `NewPlayback`, `NewDTMFReader`, ...). A playback handle

@@ -584,12 +584,12 @@ func proxyMediaBackground(log *slog.Logger, reader io.Reader, writer io.Writer, 
 
 func (b *Bridge) proxyMediaWithDTMF(m1 *Media, m2 *Media) error {
 	dtmfReader := DTMFReader{}
-	r, p1, err := m1.ReaderWithProps(WithReaderDTMF(&dtmfReader))
+	r, p1, err := m1.ReaderWithProps(ReaderOptions{DTMF: &dtmfReader})
 	if err != nil {
 		return err
 	}
 	dtmfWriter := DTMFWriter{}
-	w, p2, err := m2.WriterWithProps(WithWriterDTMF(&dtmfWriter))
+	w, p2, err := m2.WriterWithProps(WriterOptions{DTMF: &dtmfWriter})
 	if err != nil {
 		return err
 	}

@@ -232,7 +232,7 @@ func TestReaderWriterWithProps(t *testing.T) {
 	assert.Equal(t, rprops.Raddr, wprops.Raddr)
 
 	// Same options as AudioReader/AudioWriter can be passed along.
-	dr, _, err := d.ReaderWithProps(WithReaderJitterBuffer(media.RTPJitterBufferOptions{}))
+	dr, _, err := d.ReaderWithProps(ReaderOptions{JitterBuffer: &media.RTPJitterBufferOptions{}})
 	require.NoError(t, err)
 	require.NotNil(t, dr)
 }
