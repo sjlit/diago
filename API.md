@@ -31,7 +31,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
 
 - Every option constructor is `WithX` and returns a concrete (unexported)
   type. APIs take the per-operation interface for what they consume
-  (`AnswerOption`, `CloseOption`, `InviteOption`, `DialOption`,
+  (`AnswerOption`, `CloseOptions`, `InviteOption`, `DialOption`,
   `RegisterOption`, ...); passing an option an API does not consume is a
   compile error. Adding an option means: a concrete type implementing the
   marker methods of every interface it is valid for, one row in

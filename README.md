@@ -111,7 +111,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   background. Use `WaitAck` (or `AckReceived`/`AckErr`) when the call must be
   fully established before continuing.
 - **Options**: each API takes the option interface for its operation
-  (`AnswerOption`, `CloseOption`, `InviteOption`, `DialOption`,
+  (`AnswerOption`, `CloseOptions`, `InviteOption`, `DialOption`,
   `RegisterOption`, ...); passing an option an API does not consume is a
   compile error. Constructors validate their values at call time; failures
   wrap `ErrInvalidOption`.

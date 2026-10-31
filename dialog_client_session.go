@@ -72,7 +72,7 @@ func (d *OutboundCall) releaseUnsafe() error {
 // Close terminates the dialog (CANCEL/BYE or no-op depending on its state)
 // and releases local resources. It is idempotent and honors ctx for the
 // signaling part.
-func (d *OutboundCall) Close(ctx context.Context, opts ...CloseOption) error {
+func (d *OutboundCall) Close(ctx context.Context, opts ...CloseOptions) error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
@@ -104,8 +104,8 @@ func (d *OutboundCall) ID() string {
 // framework also releases them when the dialog ends).
 //
 // Scope: WithHeaders, WithContact, WithRequestMutator.
-func (d *OutboundCall) hangup(ctx context.Context, opts ...CloseOption) error {
-	params, err := newSignalParams(opts...)
+func (d *OutboundCall) hangup(ctx context.Context, opts ...CloseOptions) error {
+	params, err := closeSignalParams(opts...)
 	if err != nil {
 		return err
 	}

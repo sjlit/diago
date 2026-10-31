@@ -47,7 +47,7 @@ type Call interface {
 	Media() *Media
 	// Close terminates the dialog (CANCEL/BYE/decline as appropriate) and
 	// releases local resources. It is idempotent.
-	Close(ctx context.Context, opts ...CloseOption) error
+	Close(ctx context.Context, opts ...CloseOptions) error
 }
 
 // RawCall exposes the underlying sipgo dialog. It is the explicit escape

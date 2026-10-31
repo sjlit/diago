@@ -41,11 +41,6 @@ type (
 		SignalOption
 		isAnswerOption()
 	}
-	// CloseOption configures Close on both caller and callee dialogs.
-	CloseOption interface {
-		SignalOption
-		isCloseOption()
-	}
 	// RequestOption configures in-dialog requests without media negotiation:
 	// ReInvite and Unhold.
 	RequestOption interface {
@@ -100,6 +95,42 @@ type (
 		isRegisterOption()
 	}
 )
+
+// CloseOptions configures Call.Close. Headers are added to the outgoing BYE,
+// CANCEL or decline; Contact replaces the default Contact; MutateRequest is
+// the last-chance request hook.
+type CloseOptions struct {
+	Headers       []Header
+	Contact       *ContactHeader
+	MutateRequest func(req *Request) error
+}
+
+func (o CloseOptions) signalParams() (*signalParams, error) {
+	p := &signalParams{}
+	for _, h := range o.Headers {
+		if h == nil {
+			return nil, fmt.Errorf("%w: CloseOptions: nil header provided", ErrInvalidOption)
+		}
+	}
+	p.Msg.Headers = append(p.Msg.Headers, o.Headers...)
+	if o.Contact != nil {
+		p.Msg.Contact = o.Contact
+	}
+	if o.MutateRequest != nil {
+		p.Msg.MutateRequest = o.MutateRequest
+	}
+	return p, nil
+}
+
+func closeSignalParams(opts ...CloseOptions) (*signalParams, error) {
+	if len(opts) == 0 {
+		return &signalParams{}, nil
+	}
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("%w: Close accepts at most one CloseOptions", ErrInvalidOption)
+	}
+	return opts[0].signalParams()
+}
 
 // signalParams carries per-call signaling customizations applied by the With*
 // options. It is constructed by the library (newSignalParams); user code
@@ -684,7 +715,6 @@ func (o headersOption) applySignal(p *signalParams) error { return o(p) }
 func (headersOption) isResponseOption()                   {}
 func (headersOption) isProgressMediaOption()              {}
 func (headersOption) isAnswerOption()                     {}
-func (headersOption) isCloseOption()                      {}
 func (headersOption) isRequestOption()                    {}
 func (headersOption) isHoldOption()                       {}
 func (headersOption) isAckOption()                        {}
@@ -701,7 +731,6 @@ func (o contactOption) applySignal(p *signalParams) error { return o(p) }
 func (contactOption) isResponseOption()                   {}
 func (contactOption) isProgressMediaOption()              {}
 func (contactOption) isAnswerOption()                     {}
-func (contactOption) isCloseOption()                      {}
 func (contactOption) isRequestOption()                    {}
 func (contactOption) isHoldOption()                       {}
 func (contactOption) isAckOption()                        {}
@@ -830,7 +859,6 @@ func (onReferNotifyOption) isReferOption()                      {}
 type requestMutatorOption func(*signalParams) error
 
 func (o requestMutatorOption) applySignal(p *signalParams) error { return o(p) }
-func (requestMutatorOption) isCloseOption()                      {}
 func (requestMutatorOption) isRequestOption()                    {}
 func (requestMutatorOption) isHoldOption()                       {}
 func (requestMutatorOption) isAckOption()                        {}

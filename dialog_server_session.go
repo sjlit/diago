@@ -203,7 +203,7 @@ func (d *InboundCall) releaseUnsafe() error {
 // Close terminates the dialog (decline, BYE or no-op depending on its state)
 // and releases local resources. It is idempotent and honors ctx for the
 // signaling part.
-func (d *InboundCall) Close(ctx context.Context, opts ...CloseOption) error {
+func (d *InboundCall) Close(ctx context.Context, opts ...CloseOptions) error {
 	if !d.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
@@ -996,8 +996,8 @@ func (d *InboundCall) startMonitorForAnswer() error {
 // unconfirmed INVITE is sent even when ctx is already canceled: the caller
 // asked to terminate and the peer is still waiting for a final response, so
 // skipping the decline would hang the INVITE transaction.
-func (d *InboundCall) hangup(ctx context.Context, opts ...CloseOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) hangup(ctx context.Context, opts ...CloseOptions) error {
+	params, err := closeSignalParams(opts...)
 	if err != nil {
 		return err
 	}

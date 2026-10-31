@@ -275,7 +275,7 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	t.Run("hangup headers", func(t *testing.T) {
 		hctx, hcancel := context.WithTimeout(ctx, 10*time.Second)
 		defer hcancel()
-		err = dialog.Close(hctx, WithHeaders(sip.NewHeader("Reason", "Q.850;cause=16")))
+		err = dialog.Close(hctx, CloseOptions{Headers: []Header{sip.NewHeader("Reason", "Q.850;cause=16")}})
 		require.NoError(t, err)
 
 		mu.Lock()
