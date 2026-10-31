@@ -75,9 +75,10 @@ func TestBridgeDiscardQueuedRTPOnStart(t *testing.T) {
 			name = "discard_queued"
 		}
 		t.Run(name, func(t *testing.T) {
-			b := NewBridge()
-			b.WaitDialogsNum = 99 // start the proxy explicitly below
-			b.DiscardQueuedOnStart = discard
+			b := NewBridge(BridgeOptions{
+				WaitDialogsNum:       99, // start the proxy explicitly below
+				DiscardQueuedOnStart: discard,
+			})
 
 			incoming, sendIncoming := newQueuedRTPDialog(t)
 			outgoing, _ := newQueuedRTPDialog(t)

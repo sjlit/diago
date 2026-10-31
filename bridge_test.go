@@ -31,8 +31,7 @@ func ulawEncode(b []byte) []byte {
 	return dec[:n]
 }
 func TestBridgeProxy(t *testing.T) {
-	b := NewBridge()
-	b.WaitDialogsNum = 99 // Do not start proxy
+	b := NewBridge(BridgeOptions{WaitDialogsNum: 99}) // Do not start proxy
 
 	incoming := &InboundCall{
 		callMedia: Media{
@@ -330,12 +329,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		dg := newDialer(t, ua)
 
 		// Make number of calls that will have audio mixed in bridge
-		bridge := NewBridgeMix()
-		// RealtimeReader keeps its production default (true): the mix loop
-		// drops packets it considers late under CPU contention. Assert on the
-		// packets that arrive (content) instead of a fixed count so this
-		// integration test covers the default path without being flaky.
-		bridge.WaitDialogsNum = 2 // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
+		bridge := NewBridgeMix(BridgeMixOptions{WaitDialogsNum: 2, RealtimeReader: true, Poll: true}) // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 		bridgePtr.Store(bridge)
 
 		dialog1, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})

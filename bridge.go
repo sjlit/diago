@@ -31,14 +31,25 @@ var (
 	_ Bridger = (*BridgeMix)(nil)
 )
 
+// BridgeOptions configures NewBridge.
+type BridgeOptions struct {
+	// Originator is the dialog that created the bridge.
+	Originator Call
+	// DTMFPass also proxies DTMF. By default only audio media is proxied.
+	DTMFPass bool
+	// WaitDialogsNum is the number of dialogs before the automatic proxy
+	// starts. Zero selects 2.
+	WaitDialogsNum int
+	// DiscardQueuedOnStart drops RTP already queued on each leg before the
+	// proxy starts.
+	DiscardQueuedOnStart bool
+}
+
 // Bridge is a two-party proxy: it forwards encoded media between the two
 // added dialogs without transcoding.
 type Bridge struct {
-	// Originator is dialog session that created bridge
-	Originator Call
-	// DTMFpass is also dtmf pipeline and proxy. By default only audio media is proxied
-	// NOTE: this may not work if you are already processing DTMF with NewDTMFReader
-	DTMFpass bool
+	originator Call
+	dtmfPass   bool
 
 	log *slog.Logger
 	// TODO: RTPpass. RTP pass means that RTP will be proxied.
@@ -51,8 +62,7 @@ type Bridge struct {
 	mu      sync.Mutex
 	dialogs []Call
 
-	// minDialogs is just helper flag when to start proxy
-	WaitDialogsNum int
+	waitDialogsNum int
 
 	// DiscardQueuedOnStart drops RTP already queued on each leg's socket right
 	// before the proxy loop starts, so bridging begins from live media instead
@@ -62,7 +72,7 @@ type Bridge struct {
 	// Opt-in (default false). Enable it for answer-before-bridge B2BUAs,
 	// where the peer starts sending media before the second leg joins and
 	// nothing consumes the socket in between.
-	DiscardQueuedOnStart bool
+	discardQueuedOnStart bool
 
 	// Lifecycle (#21): closed rejects Add; proxyRunning/proxyDone track the
 	// current proxyMedia generation so Remove/Close can interrupt and wait.
@@ -90,27 +100,33 @@ var bridgeReadPool = sync.Pool{
 	},
 }
 
-// NewBridge creates bridge with default settings.
-// The bridge state (dialog list, originator) is guarded internally, so the
-// pointer must be used: methods are not safe to call on a copied value.
-func NewBridge() *Bridge {
+// NewBridge creates a two-party bridge with the given options. The bridge
+// state is guarded internally, so the pointer must be used: methods are not
+// safe to call on a copied value.
+func NewBridge(opts ...BridgeOptions) *Bridge {
 	b := Bridge{}
-	b.Init(media.DefaultLogger())
+	if len(opts) > 0 {
+		o := opts[0]
+		b.originator = o.Originator
+		b.dtmfPass = o.DTMFPass
+		b.waitDialogsNum = o.WaitDialogsNum
+		b.discardQueuedOnStart = o.DiscardQueuedOnStart
+	}
+	b.initDefaults(media.DefaultLogger())
 	return &b
 }
 
-// Init installs the bridge defaults (logger, WaitDialogsNum, idle proxy
-// channel). It is idempotent: subsequent calls are no-ops, so the zero value
-// is usable even when the caller never calls Init.
-func (b *Bridge) Init(log *slog.Logger) {
+// initDefaults installs the bridge defaults (logger, wait dialogs count, idle
+// proxy channel). It is idempotent, so the zero value remains usable.
+func (b *Bridge) initDefaults(log *slog.Logger) {
 	b.initOnce.Do(func() {
 		b.log = log
 		if b.log == nil {
 			b.log = media.DefaultLogger()
 		}
 
-		if b.WaitDialogsNum == 0 {
-			b.WaitDialogsNum = 2
+		if b.waitDialogsNum == 0 {
+			b.waitDialogsNum = 2
 		}
 		if b.proxyDone == nil {
 			// Idle state is done (closed chan) so waiters never block.
@@ -122,16 +138,16 @@ func (b *Bridge) Init(log *slog.Logger) {
 
 // ensureInit prepares the zero value on first use.
 func (b *Bridge) ensureInit() {
-	b.Init(media.DefaultLogger())
+	b.initDefaults(media.DefaultLogger())
 }
 
 // originator returns the current bridge originator under mu. The field is
 // guarded because AddCall updates it while callers (ex. DialBridge)
 // may read it concurrently.
-func (b *Bridge) originator() Call {
+func (b *Bridge) origin() Call {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.Originator
+	return b.originator
 }
 
 // Add adds a dialog to the 2-party bridge; the call starts proxying when the
@@ -154,9 +170,9 @@ func (b *Bridge) Add(d Call) error {
 		return fmt.Errorf("%w: 2-party bridge already has 2 dialogs", ErrBridgeFull)
 	}
 
-	if b.Originator != nil {
+	if b.originator != nil {
 		// This may look ugly but it is safe way of reading
-		origM := b.Originator.Media()
+		origM := b.originator.Media()
 		origProps := MediaProps{}
 		if _, err := origM.audioWriterProps(&origProps); err != nil {
 			return fmt.Errorf("bridge originator dialog has no media: %w", err)
@@ -181,23 +197,23 @@ func (b *Bridge) Add(d Call) error {
 
 	b.dialogs = append(b.dialogs, d)
 	if len(b.dialogs) == 1 {
-		b.Originator = d
+		b.originator = d
 	}
 
 	// Remove the just-appended dialog: a failed Add must not leave a stale
 	// entry in the bridge (#21 atomicity).
 	rollbackLast := func() {
 		b.dialogs = b.dialogs[:len(b.dialogs)-1]
-		if b.Originator != nil && b.Originator.ID() == d.ID() {
+		if b.originator != nil && b.originator.ID() == d.ID() {
 			if len(b.dialogs) > 0 {
-				b.Originator = b.dialogs[0]
+				b.originator = b.dialogs[0]
 			} else {
-				b.Originator = nil
+				b.originator = nil
 			}
 		}
 	}
 
-	if len(b.dialogs) < b.WaitDialogsNum {
+	if len(b.dialogs) < b.waitDialogsNum {
 		return nil
 	}
 
@@ -308,19 +324,20 @@ func (b *Bridge) Remove(d Call) error {
 			break
 		}
 	}
-	if b.Originator != nil && b.Originator.ID() == id {
+	if b.originator != nil && b.originator.ID() == id {
 		if len(b.dialogs) > 0 {
-			b.Originator = b.dialogs[0]
+			b.originator = b.dialogs[0]
 		} else {
-			b.Originator = nil
+			b.originator = nil
 		}
 	}
 	return releaseErr
 }
 
-// Close stops any running proxy and clears the bridge. Idempotent; Add after
-// Close returns ErrBridgeClosed.
-func (b *Bridge) Close() error {
+// Close stops any running proxy and clears the bridge. ctx bounds the wait for
+// the proxy to exit. Close is idempotent; Add after Close returns
+// ErrBridgeClosed.
+func (b *Bridge) Close(ctx context.Context) error {
 	b.ensureInit()
 	b.mu.Lock()
 	if b.closed {
@@ -338,7 +355,7 @@ func (b *Bridge) Close() error {
 		releases := interruptBridgeProxy(snapshot)
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
 		}
 		for _, release := range releases {
 			releaseErr = errors.Join(releaseErr, release())
@@ -348,7 +365,7 @@ func (b *Bridge) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.dialogs = nil
-	b.Originator = nil
+	b.originator = nil
 	return releaseErr
 }
 
@@ -385,7 +402,7 @@ func (b *Bridge) ProxyMedia() error {
 		return fmt.Errorf("number of dialogs must equal to 2")
 	}
 
-	if b.WaitDialogsNum < 3 {
+	if b.waitDialogsNum < 3 {
 		b.mu.Unlock()
 		return fmt.Errorf("you are already running proxy media. Increase WaitDialogsNum")
 	}
@@ -480,7 +497,7 @@ func (b *Bridge) proxyMedia() error {
 	// "only support 2 party") while proxying is already running.
 	b.mu.Lock()
 	dialogs := slices.Clone(b.dialogs)
-	discardQueued := b.DiscardQueuedOnStart
+	discardQueued := b.discardQueuedOnStart
 	b.mu.Unlock()
 	if len(dialogs) < 2 {
 		return fmt.Errorf("number of dialogs must equal to 2")
@@ -498,7 +515,7 @@ func (b *Bridge) proxyMedia() error {
 
 	// Lets for now simplify proxy and later optimize
 
-	if b.DTMFpass {
+	if b.dtmfPass {
 		errCh := make(chan error, 4)
 		go func() {
 			errCh <- b.proxyMediaWithDTMF(m1, m2)
@@ -636,31 +653,43 @@ type BridgeMix struct {
 	// mixStopWait after the mix goroutines rejoin. Guarded by mu.
 	pauseReleases []StopFunc
 
-	// WaitDialogsNum is just helper flag when to start proxy
-	WaitDialogsNum int
-	// RealtimeReader is almost always nesessary if you are delaying audio streaming(mixing) in bridge
-	RealtimeReader bool
-	Poll           bool
+	waitDialogsNum int
+	realtimeReader bool
+	poll           bool
 	log            *slog.Logger
 
 	// initOnce makes Init idempotent and lets the zero value be used directly.
 	initOnce sync.Once
 }
 
-// NewBridgeMix creates an N-party mixer with realtime reading and polling enabled.
-func NewBridgeMix() *BridgeMix {
+// BridgeMixOptions configures NewBridgeMix.
+type BridgeMixOptions struct {
+	WaitDialogsNum int
+	RealtimeReader bool
+	Poll           bool
+}
+
+// NewBridgeMix creates an N-party mixer with realtime reading and polling
+// enabled unless overridden by options.
+func NewBridgeMix(opts ...BridgeMixOptions) *BridgeMix {
 	b := BridgeMix{
-		RealtimeReader: true,
-		Poll:           true,
+		realtimeReader: true,
+		poll:           true,
 	}
-	b.Init()
+	if len(opts) > 0 {
+		o := opts[0]
+		b.waitDialogsNum = o.WaitDialogsNum
+		b.realtimeReader = o.RealtimeReader
+		b.poll = o.Poll
+	}
+	b.initDefaults()
 	return &b
 }
 
 // Init initializes bridge struct. Use only if construct bridge with struct
 // or use NewBridgeMix. It is idempotent and the zero value is usable without
 // calling it.
-func (b *BridgeMix) Init() {
+func (b *BridgeMix) initDefaults() {
 	b.initOnce.Do(func() {
 		b.log = media.DefaultLogger().With("caller", "bridge_mix")
 	})
@@ -668,9 +697,10 @@ func (b *BridgeMix) Init() {
 
 // ensureInit prepares the zero value on first use.
 func (b *BridgeMix) ensureInit() {
-	b.Init()
+	b.initDefaults()
 }
 
+// String returns a diagnostic description of the mixer state and dialogs.
 func (b *BridgeMix) String() string {
 	b.ensureInit()
 	b.mu.Lock()
@@ -785,10 +815,14 @@ func (b *BridgeMix) Remove(d Call) error {
 	return mixStopErr
 }
 
-// Close stops the mixer and removes every dialog. It is idempotent; Add and
-// Remove after Close return ErrBridgeClosed.
-func (b *BridgeMix) Close() error {
+// Close stops the mixer and removes every dialog. ctx is checked before the
+// stop cycle; Close is idempotent and Add/Remove after Close return
+// ErrBridgeClosed.
+func (b *BridgeMix) Close(ctx context.Context) error {
 	b.ensureInit()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	b.mixMutateMu.Lock()
 	defer b.mixMutateMu.Unlock()
 
@@ -886,13 +920,13 @@ func (b *BridgeMix) mixStart() error {
 	if len(b.dialogs) < 1 {
 		return nil
 	}
-	if len(b.dialogs) < b.WaitDialogsNum {
+	if len(b.dialogs) < b.waitDialogsNum {
 		return nil
 	}
 
 	ctx, cancelPoll := context.WithCancel(context.Background())
 	// We could decide and optimize here, poll vs deadlines
-	poll := b.Poll
+	poll := b.poll
 	wg := &sync.WaitGroup{}
 	rwStreams, err := func() ([]*bridgePCMStream, error) {
 		rwStreams := make([]*bridgePCMStream, len(b.dialogs))
@@ -1043,7 +1077,7 @@ func (b *BridgeMix) addDialogStream(ctx context.Context, d Call, stream *bridgeP
 	}
 
 	rtr, err := func() (io.Reader, error) {
-		if !b.RealtimeReader {
+		if !b.realtimeReader {
 			return r, nil
 		}
 

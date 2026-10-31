@@ -67,8 +67,7 @@ func bridgeDialogs(b *Bridge) []Call {
 }
 
 func TestBridgeLifecycle_RemoveClose(t *testing.T) {
-	b := NewBridge()
-	b.WaitDialogsNum = 99 // no auto proxy
+	b := NewBridge(BridgeOptions{WaitDialogsNum: 99}) // no auto proxy
 	d1 := newBridgeTestDialog("a")
 	d2 := newBridgeTestDialog("b")
 	require.NoError(t, b.Add(d1))
@@ -83,13 +82,13 @@ func TestBridgeLifecycle_RemoveClose(t *testing.T) {
 	// Remove one; originator falls back to remaining.
 	require.NoError(t, b.Remove(d1))
 	require.Len(t, bridgeDialogs(b), 1)
-	require.Equal(t, "b", b.Originator.ID())
+	require.Equal(t, "b", b.originator.ID())
 	// Missing ID is no-op.
 	require.NoError(t, b.Remove(d1))
 
 	// Close idempotent; Add after Close rejected.
-	require.NoError(t, b.Close())
-	require.NoError(t, b.Close())
+	require.NoError(t, b.Close(context.Background()))
+	require.NoError(t, b.Close(context.Background()))
 	require.Empty(t, bridgeDialogs(b))
 	require.ErrorIs(t, b.Add(newBridgeTestDialog("d")), ErrBridgeClosed)
 }
@@ -132,8 +131,7 @@ func newBridgePausableDialog(t *testing.T, id string) Call {
 // could not interrupt it (goroutine and writes kept running) and a second
 // control start was accepted, running two proxies over the same media.
 func TestBridgeProxyMediaControlClaimAndClose(t *testing.T) {
-	b := NewBridge()
-	b.WaitDialogsNum = 99 // no auto proxy
+	b := NewBridge(BridgeOptions{WaitDialogsNum: 99}) // no auto proxy
 	require.NoError(t, b.Add(newBridgePausableDialog(t, "a")))
 	require.NoError(t, b.Add(newBridgePausableDialog(t, "b")))
 
@@ -148,7 +146,7 @@ func TestBridgeProxyMediaControlClaimAndClose(t *testing.T) {
 	// Close must interrupt the claimed generation through the write gate and
 	// wait for it, not time out after 5s.
 	done := make(chan error, 1)
-	go func() { done <- b.Close() }()
+	go func() { done <- b.Close(context.Background()) }()
 	select {
 	case err := <-done:
 		require.NoError(t, err)
@@ -181,7 +179,7 @@ func TestBridgeZeroValueUsable(t *testing.T) {
 	require.Error(t, b.ProxyMedia(), "empty bridge must report the precondition, not panic")
 	require.NotNil(t, b.log)
 	require.NotNil(t, b.proxyDone)
-	require.Equal(t, 2, b.WaitDialogsNum)
+	require.Equal(t, 2, b.waitDialogsNum)
 
 	require.Error(t, b.Add(nil))
 	require.Error(t, b.Remove(nil))
@@ -190,7 +188,7 @@ func TestBridgeZeroValueUsable(t *testing.T) {
 	d := &fakeBridgeDialog{id: "zero-value", dm: &Media{}}
 	require.NoError(t, b.Add(d))
 
-	require.NoError(t, b.Close())
+	require.NoError(t, b.Close(context.Background()))
 }
 
 // TestBridgeMixZeroValueUsable is the BridgeMix counterpart.
@@ -205,8 +203,8 @@ func TestBridgeMixZeroValueUsable(t *testing.T) {
 
 func TestBridgeMixClose(t *testing.T) {
 	b := NewBridgeMix()
-	require.NoError(t, b.Close())
-	require.NoError(t, b.Close())
+	require.NoError(t, b.Close(context.Background()))
+	require.NoError(t, b.Close(context.Background()))
 
 	// Add/Remove are rejected once the mixer is closed, before any dialog
 	// state or media is touched.

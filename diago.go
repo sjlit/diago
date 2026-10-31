@@ -1527,7 +1527,7 @@ func (dg *Agent) DialBridgeURI(ctx context.Context, recipient URI, bridge Bridge
 	// run a single time across dialog creation and Invite.
 	if params == nil || params.Dialog.Originator == nil {
 		if b, ok := bridge.(*Bridge); ok {
-			if orig := b.originator(); orig != nil {
+			if orig := b.origin(); orig != nil {
 				params.Dialog.Originator = orig
 			}
 		}
