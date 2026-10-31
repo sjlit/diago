@@ -440,7 +440,7 @@ func waitAnswerSignalParams(opts ...WaitAnswerOptions) (*signalParams, error) {
 }
 
 // RegisterAttemptOptions configures a single REGISTER attempt
-// (RegisterTransaction.Register/Unregister/Qualify).
+// (registerTransaction.Register/Unregister/Qualify).
 type RegisterAttemptOptions struct {
 	Headers       []Header
 	Contact       *ContactHeader
@@ -454,7 +454,7 @@ func (o RegisterAttemptOptions) signalParams() (*signalParams, error) {
 }
 
 // RegisterOptions configures a REGISTER transaction
-// (Agent.Register/RegisterURI/RegisterTransaction).
+// (Agent.StartRegistration/StartRegistrationURI).
 type RegisterOptions struct {
 	Headers       []Header
 	Contact       *ContactHeader
@@ -613,7 +613,7 @@ type signalDialogParams struct {
 
 // signalRegisterParams configures a REGISTER transaction. All fields are
 // construction-time: they are read when the transaction is created with
-// Agent.Register/RegisterTransaction and have no effect when passed to the
+// Agent.StartRegistration/registerTransaction and have no effect when passed to the
 // per-request methods (Register/Unregister/Qualify). Register only.
 type signalRegisterParams struct {
 	// Expiry is for Expire header

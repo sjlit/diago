@@ -64,7 +64,7 @@ type Agent struct {
 	wrapRequest func(f func(req *Request, tx ServerTransaction) error) RequestHandler
 
 	// registerAfter is the timer factory used between REGISTER attempts of
-	// Register/RegisterTransaction. It defaults to time.After and exists as a
+	// StartRegistration/registerTransaction. It defaults to time.After and exists as a
 	// field so tests can exercise retry pacing without wall-clock waits.
 	registerAfter func(time.Duration) <-chan time.Time
 
@@ -1244,7 +1244,7 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 // Ownership boundaries:
 //   - Outgoing dialogs that never reached an answer are not in the cache;
 //     cancel their Invite contexts instead (which sends CANCEL).
-//   - Registrations created with RegisterOptions.Detached and RegisterTransaction
+//   - Registrations created with RegisterOptions.Detached and registerTransaction
 //     objects are caller-owned: stop a detached registration with
 //     Registration.Close (or cancel its context).
 //
@@ -1791,7 +1791,7 @@ func (dg *Agent) findTransport(transport string, id string) (*Transport, bool) {
 // ongoing in the background and returns a handle to it. target is a SIP URI
 // string ("sip:alice@example.com"); use StartRegistrationURI for a parsed URI. The initial
 // REGISTER is sent asynchronously; use Registration.WaitReady to wait for the
-// first success. For granular one-shot control use RegisterTransaction.
+// first success.
 //
 // The returned handle owns the loop: Registration.Close stops it and
 // unregisters the contact; Registration.Wait reports the terminal error.
@@ -1837,24 +1837,9 @@ func (dg *Agent) StartRegistrationURI(ctx context.Context, recipient URI, opts .
 	return reg, nil
 }
 
-// RegisterTransaction creates the REGISTER transaction object used for
-// Register and Unregister requests. Options configure the transaction and
-// every REGISTER attempt; RegisterOptions.Detached is rejected because a
-// transaction runs no registration loop.
-func (dg *Agent) RegisterTransaction(ctx context.Context, recipient URI, opts ...RegisterOptions) (*RegisterTransaction, error) {
-	params, err := registerSignalParams(opts...)
-	if err != nil {
-		return nil, err
-	}
-	if params.Register.Detached {
-		return nil, fmt.Errorf("%w: RegisterOptions.Detached: a RegisterTransaction has no registration loop", ErrInvalidOption)
-	}
-	return dg.registerTransaction(recipient, params)
-}
-
 // registerTransaction builds the REGISTER transaction for a parsed recipient
 // from validated params.
-func (dg *Agent) registerTransaction(recipient URI, params *signalParams) (*RegisterTransaction, error) {
+func (dg *Agent) registerTransaction(recipient URI, params *signalParams) (*registerTransaction, error) {
 	// Make our client reuse address
 	transport, exists := recipient.UriParams.Get("transport")
 	if !exists {

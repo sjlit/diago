@@ -31,12 +31,12 @@ func recordingAfter(delays *[]time.Duration, mu *sync.Mutex) func(time.Duration)
 
 func TestRegisterCalcRetryPriority(t *testing.T) {
 	t.Run("retry after wins over expiry", func(t *testing.T) {
-		rtx := &RegisterTransaction{expiry: 100 * time.Second, retryAfter: 7 * time.Second}
+		rtx := &registerTransaction{expiry: 100 * time.Second, retryAfter: 7 * time.Second}
 		assert.Equal(t, 7*time.Second, rtx.calcRetry(rtx.expiry))
 	})
 
 	t.Run("explicit interval wins over retry after", func(t *testing.T) {
-		rtx := &RegisterTransaction{
+		rtx := &registerTransaction{
 			expiry:     100 * time.Second,
 			retryAfter: 7 * time.Second,
 			register:   signalRegisterParams{RetryInterval: 3 * time.Millisecond},
@@ -45,12 +45,12 @@ func TestRegisterCalcRetryPriority(t *testing.T) {
 	})
 
 	t.Run("expiry derived", func(t *testing.T) {
-		rtx := &RegisterTransaction{expiry: 100 * time.Second}
+		rtx := &registerTransaction{expiry: 100 * time.Second}
 		assert.Equal(t, 75*time.Second, rtx.calcRetry(rtx.expiry))
 	})
 
 	t.Run("default when nothing known", func(t *testing.T) {
-		rtx := &RegisterTransaction{}
+		rtx := &registerTransaction{}
 		assert.Equal(t, 30*time.Second, rtx.calcRetry(0))
 	})
 }

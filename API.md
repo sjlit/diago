@@ -22,9 +22,9 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - No stutter: prefer `Transport.Network` over `Transport.Transport`,
   `call.Media()` over `call.DialogMedia()`, `call.SIP()` over
   `call.DialogSIP()`.
-- Targets: `Dial`, `DialBridge` and `Register` take a SIP URI string and have a
+- Targets: `Dial`, `DialBridge` and `StartRegistration` take a SIP URI string and have a
   `*URI` variant for an already parsed `URI`. Low-level constructors take a
-  `URI` only (`NewCall`, `RegisterTransaction`); Go has no overloading, so they
+  `URI` only (`NewCall`); Go has no overloading, so they
   have no string variant.
 
 ## Options

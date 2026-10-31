@@ -122,8 +122,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 - **REGISTER**: `Agent.StartRegistration` returns a `*Registration` handle
   (`WaitReady`/`Wait`/`Close`) that keeps the registration refreshed and
   unregisters on `Close`; `Agent.Close` does the same for every registration
-  it created unless `RegisterOptions{Detached: true}` is passed. `RegisterTransaction`
-  exposes single attempts (`Register`/`Qualify`/`Unregister`).
+  it created unless `RegisterOptions{Detached: true}` is passed.
 - **sipgo interop**: sipgo types in signatures are aliases (`diago.URI`,
   `diago.Header`, `diago.Request`, `diago.Response`, ...), so importing sipgo
   is optional. Escape hatches: `Config.UserAgent`, `Config.Server`, `Config.Client`,

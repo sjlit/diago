@@ -45,6 +45,14 @@ func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Respons
 	return dg
 }
 
+func testRegisterTransaction(dg *Agent, recipient URI, opts ...RegisterOptions) (*registerTransaction, error) {
+	params, err := registerSignalParams(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return dg.registerTransaction(recipient, params)
+}
+
 func TestMain(m *testing.M) {
 	examples.SetupLogger()
 	m.Run()
@@ -70,7 +78,7 @@ func TestDiagoRegister(t *testing.T) {
 	})
 
 	ctx := context.TODO()
-	rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"})
+	rtx, err := testRegisterTransaction(dg, sip.Uri{User: "alice", Host: "localhost"})
 	require.NoError(t, err)
 
 	err = rtx.Register(ctx)
@@ -92,7 +100,7 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 	ctx := context.TODO()
 
 	t.Run("signal option credentials", func(t *testing.T) {
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"})
+		rtx, err := testRegisterTransaction(dg, sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
 
 		err = rtx.Register(ctx, RegisterAttemptOptions{Username: "aliceFromSignal", Password: "secret"})
@@ -101,7 +109,7 @@ func TestDiagoRegisterAuthorization(t *testing.T) {
 	})
 
 	t.Run("register transaction credentials fallback", func(t *testing.T) {
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "bob", Host: "localhost"}, RegisterOptions{Username: "bobFromOpts", Password: "pw"})
+		rtx, err := testRegisterTransaction(dg, sip.Uri{User: "bob", Host: "localhost"}, RegisterOptions{Username: "bobFromOpts", Password: "pw"})
 		require.NoError(t, err)
 
 		err = rtx.Register(ctx)
@@ -143,7 +151,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 		var reqs []*sip.Request
 		dg2 := testDiagoClient(t, registerTestCapture(&reqs))
 
-		rtx, err := dg2.RegisterTransaction(ctx, sip.Uri{User: "carol", Host: "localhost"}, RegisterOptions{
+		rtx, err := testRegisterTransaction(dg2, sip.Uri{User: "carol", Host: "localhost"}, RegisterOptions{
 			Expiry:       3600 * time.Second,
 			AllowHeaders: []string{"INVITE", "ACK", "BYE"},
 			MutateRequest: func(req *sip.Request) error {
@@ -171,7 +179,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 		var reqs []*sip.Request
 		dg2 := testDiagoClient(t, registerTestCapture(&reqs))
 
-		rtx, err := dg2.RegisterTransaction(ctx, sip.Uri{User: "erin", Host: "localhost"}, RegisterOptions{
+		rtx, err := testRegisterTransaction(dg2, sip.Uri{User: "erin", Host: "localhost"}, RegisterOptions{
 			MutateRequest: func(req *sip.Request) error {
 				req.AppendHeader(sip.NewHeader("X-Transaction", "mutated"))
 				return nil
@@ -192,7 +200,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 	})
 
 	t.Run("contact override", func(t *testing.T) {
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "heidi", Host: "localhost"}, RegisterOptions{
+		rtx, err := testRegisterTransaction(dg, sip.Uri{User: "heidi", Host: "localhost"}, RegisterOptions{
 			Contact: &sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "heidi", Host: "example.com", Port: 5060}},
 		})
 		require.NoError(t, err)
@@ -202,7 +210,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 	})
 
 	t.Run("proxy host destination", func(t *testing.T) {
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "grace", Host: "localhost"}, RegisterOptions{
+		rtx, err := testRegisterTransaction(dg, sip.Uri{User: "grace", Host: "localhost"}, RegisterOptions{
 			ProxyHost: "127.0.0.1:9999",
 		})
 		require.NoError(t, err)
@@ -211,7 +219,7 @@ func TestDiagoRegisterTransactionOptions(t *testing.T) {
 
 	t.Run("on registered fires once", func(t *testing.T) {
 		var registered atomic.Int32
-		rtx, err := dg.RegisterTransaction(ctx, sip.Uri{User: "frank", Host: "localhost"}, RegisterOptions{
+		rtx, err := testRegisterTransaction(dg, sip.Uri{User: "frank", Host: "localhost"}, RegisterOptions{
 			OnRegistered: func() { registered.Add(1) },
 		})
 		require.NoError(t, err)

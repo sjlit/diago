@@ -77,11 +77,11 @@ func (e *RegisterResponseError) RegisterResponse() *Response {
 	return e.registerRes
 }
 
-// RegisterTransaction is a REGISTER transaction: it owns the request
+// registerTransaction is an internal REGISTER transaction: it owns the request
 // template, credentials and expiry, and can register, qualify and
 // unregister the contact. Agent.StartRegistration builds one and drives the
 // re-registration loop.
-type RegisterTransaction struct {
+type registerTransaction struct {
 	register signalRegisterParams
 	username string
 	password string
@@ -106,7 +106,7 @@ type RegisterTransaction struct {
 	after func(time.Duration) <-chan time.Time
 }
 
-func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader, log *slog.Logger, params *signalParams, after func(time.Duration) <-chan time.Time) *RegisterTransaction {
+func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader, log *slog.Logger, params *signalParams, after func(time.Duration) <-chan time.Time) *registerTransaction {
 	if params == nil {
 		params = &signalParams{}
 	}
@@ -146,7 +146,7 @@ func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader
 		username = client.Name()
 	}
 
-	t := &RegisterTransaction{
+	t := &registerTransaction{
 		Origin:        req, // origin maybe updated after first register
 		register:      reg,
 		username:      username,
@@ -164,7 +164,7 @@ func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader
 // transaction-level WithRequestMutator hook so it shapes every REGISTER of
 // this transaction. Per-call options are applied afterwards and keep the last
 // word.
-func (t *RegisterTransaction) cloneOrigin() (*Request, error) {
+func (t *registerTransaction) cloneOrigin() (*Request, error) {
 	req := t.Origin.Clone()
 	if t.mutateRequest == nil {
 		return req, nil
@@ -179,7 +179,7 @@ func (t *RegisterTransaction) cloneOrigin() (*Request, error) {
 // extra headers and the final request of this registration attempt.
 // Scope: RegisterAttemptOptions;
 // credentials fall back to the transaction ones when not provided via options.
-func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAttemptOptions) error {
+func (t *registerTransaction) Register(ctx context.Context, opts ...RegisterAttemptOptions) error {
 	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func (t *RegisterTransaction) Register(ctx context.Context, opts ...RegisterAtte
 // signalCredentials overlays credentials passed via RegisterAttemptOptions on top
 // of the transaction ones. Empty SignalOption fields fall back to the
 // transaction values.
-func (t *RegisterTransaction) signalCredentials(params *signalParams) (string, string) {
+func (t *registerTransaction) signalCredentials(params *signalParams) (string, string) {
 	username, password := t.username, t.password
 	if params != nil {
 		if params.Dialog.Username != "" {
@@ -210,7 +210,7 @@ func (t *RegisterTransaction) signalCredentials(params *signalParams) (string, s
 	return username, password
 }
 
-func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalParams) error {
+func (t *registerTransaction) doRegister(ctx context.Context, params *signalParams) error {
 	username, password := t.signalCredentials(params)
 	client := t.client
 	req, err := t.cloneOrigin()
@@ -327,7 +327,7 @@ func (t *RegisterTransaction) doRegister(ctx context.Context, params *signalPara
 
 // QualifyLoop refreshes the registration on the negotiated expiry until
 // ctx is canceled or a terminal failure occurs (see Agent.StartRegistration).
-func (t *RegisterTransaction) QualifyLoop(ctx context.Context) error {
+func (t *registerTransaction) QualifyLoop(ctx context.Context) error {
 	// t.expiry tracks the server's Expires response header (set by Qualify)
 	// and is re-read on every loop iteration, so server-driven expiry
 	// changes adjust the retry pacing automatically.
@@ -335,7 +335,7 @@ func (t *RegisterTransaction) QualifyLoop(ctx context.Context) error {
 	return t.reregisterLoop(ctx, retry)
 }
 
-func (t *RegisterTransaction) reregisterLoop(ctx context.Context, retry time.Duration) error {
+func (t *registerTransaction) reregisterLoop(ctx context.Context, retry time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -360,7 +360,7 @@ func (t *RegisterTransaction) reregisterLoop(ctx context.Context, retry time.Dur
 	}
 }
 
-func (t *RegisterTransaction) calcRetry(expiry time.Duration) time.Duration {
+func (t *registerTransaction) calcRetry(expiry time.Duration) time.Duration {
 	// Explicit caller interval has the final word.
 	if t.register.RetryInterval != 0 {
 		return t.register.RetryInterval
@@ -405,7 +405,7 @@ func shouldRetryRegister(code int) bool {
 
 // Unregister unregisters the contact. Options allow customizing the request.
 // Scope: RegisterAttemptOptions.
-func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAttemptOptions) error {
+func (t *registerTransaction) Unregister(ctx context.Context, opts ...RegisterAttemptOptions) error {
 	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
 		return err
@@ -428,7 +428,7 @@ func (t *RegisterTransaction) Unregister(ctx context.Context, opts ...RegisterAt
 
 // Qualify refreshes the registration. Options allow customizing the request.
 // Scope: RegisterAttemptOptions.
-func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...RegisterAttemptOptions) error {
+func (t *registerTransaction) Qualify(ctx context.Context, opts ...RegisterAttemptOptions) error {
 	params, err := registerAttemptSignalParams(opts...)
 	if err != nil {
 		return err
@@ -443,7 +443,7 @@ func (t *RegisterTransaction) Qualify(ctx context.Context, opts ...RegisterAttem
 	return t.doRequest(ctx, req, params)
 }
 
-func (t *RegisterTransaction) doRequest(ctx context.Context, req *Request, params *signalParams) error {
+func (t *registerTransaction) doRequest(ctx context.Context, req *Request, params *signalParams) error {
 	// log := p.getLoggerCtx(ctx, "Register")
 	client := t.client
 	username, password := t.signalCredentials(params)
@@ -509,7 +509,7 @@ var ErrRegistrationClosed = errors.New("registration closed")
 // The handle is safe for concurrent use.
 type Registration struct {
 	log   *slog.Logger
-	trans *RegisterTransaction
+	trans *registerTransaction
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -527,7 +527,7 @@ type Registration struct {
 	once   sync.Once
 }
 
-func newRegistration(ctx context.Context, log *slog.Logger, t *RegisterTransaction) *Registration {
+func newRegistration(ctx context.Context, log *slog.Logger, t *registerTransaction) *Registration {
 	runCtx, cancel := context.WithCancel(ctx)
 	r := &Registration{
 		log:    log,
@@ -720,7 +720,7 @@ func (r *Registration) run() {
 // setExpiry raises the registration expiry used by subsequent attempts and
 // updates the Origin request template so they advertise it. It implements the
 // RFC 3261 §10.2.8 reaction to 423 Interval Too Brief / Min-Expires.
-func (t *RegisterTransaction) setExpiry(d time.Duration) {
+func (t *registerTransaction) setExpiry(d time.Duration) {
 	t.register.Expiry = d
 	expires := sip.ExpiresHeader(d.Seconds())
 	t.Origin.RemoveHeader("Expires")
