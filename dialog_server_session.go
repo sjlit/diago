@@ -185,14 +185,6 @@ func (d *InboundCall) ID() string {
 	return d.sess.ID
 }
 
-// release frees local resources without sending SIP.
-func (d *InboundCall) release() error {
-	if !d.closed.CompareAndSwap(0, 1) {
-		return nil
-	}
-	return d.releaseUnsafe()
-}
-
 // releaseUnsafe closes local resources after the caller won the closed CAS.
 func (d *InboundCall) releaseUnsafe() error {
 	e1 := d.callMedia.close()

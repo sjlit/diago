@@ -17,7 +17,7 @@ import (
 
 // Call is the common contract of inbound and outbound dialogs
 // (*InboundCall and *OutboundCall). Cross-cutting APIs (Bridge, DialBridge,
-// FindCall, WithOriginator) accept it; type-assert to the concrete direction
+// FindCall, DialOptions.Originator) accept it; type-assert to the concrete direction
 // when direction-specific methods are needed.
 type Call interface {
 	ID() string
