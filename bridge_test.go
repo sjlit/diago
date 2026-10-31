@@ -329,7 +329,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		dg := newDialer(t, ua)
 
 		// Make number of calls that will have audio mixed in bridge
-		bridge := NewBridgeMix(BridgeMixOptions{WaitDialogsNum: 2, RealtimeReader: true, Poll: true}) // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
+		bridge := NewBridgeMix(BridgeMixOptions{WaitDialogsNum: 2}) // Do not start mixing until all 3 get joined, otherwise there will be no gurantee when something is mixed
 		bridgePtr.Store(bridge)
 
 		dialog1, err := dg.DialURI(context.TODO(), sip.Uri{Host: "127.0.0.1", Port: srvPort})

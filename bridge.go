@@ -664,9 +664,9 @@ type BridgeMix struct {
 
 // BridgeMixOptions configures NewBridgeMix.
 type BridgeMixOptions struct {
-	WaitDialogsNum int
-	RealtimeReader bool
-	Poll           bool
+	WaitDialogsNum        int
+	DisableRealtimeReader bool
+	DisablePoll           bool
 }
 
 // NewBridgeMix creates an N-party mixer with realtime reading and polling
@@ -679,8 +679,12 @@ func NewBridgeMix(opts ...BridgeMixOptions) *BridgeMix {
 	if len(opts) > 0 {
 		o := opts[0]
 		b.waitDialogsNum = o.WaitDialogsNum
-		b.realtimeReader = o.RealtimeReader
-		b.poll = o.Poll
+		if o.DisableRealtimeReader {
+			b.realtimeReader = false
+		}
+		if o.DisablePoll {
+			b.poll = false
+		}
 	}
 	b.initDefaults()
 	return &b
