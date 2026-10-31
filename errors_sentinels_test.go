@@ -81,7 +81,7 @@ func TestAgentSentinels(t *testing.T) {
 	_, err = dg.Register(ctx, "sip:alice@localhost;transport=sctp")
 	assert.ErrorIs(t, err, ErrTransportNotFound)
 
-	_, err = dg.Dial(ctx, "sip:bob@localhost", WithHeaders(nil))
+	_, err = dg.Dial(ctx, "sip:bob@localhost", DialOptions{Headers: []Header{nil}})
 	assert.ErrorIs(t, err, ErrInvalidOption)
 
 	_, err = dg.RegisterTransaction(ctx, sip.Uri{User: "alice", Host: "localhost"}, WithRegistrationDetached())

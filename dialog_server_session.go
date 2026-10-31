@@ -558,8 +558,8 @@ func (d *InboundCall) Progress(ctx context.Context, opts ...ResponseOptions) err
 // Scope: WithHeaders, WithContact, WithBody, WithResponseMutator, plus the
 // media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP, WithMediaExternalIP,
 // WithMediaDTLS, WithSDPSessionName, WithMediaSession, WithMusicOnHold).
-func (d *InboundCall) ProgressMedia(ctx context.Context, opts ...ProgressMediaOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) ProgressMedia(ctx context.Context, opts ...ProgressMediaOptions) error {
+	params, err := progressMediaSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -676,9 +676,8 @@ func (d *InboundCall) RespondSDP(ctx context.Context, body []byte, opts ...Respo
 // Answer creates media session and answers
 // After this new AudioReader and AudioWriter are created for audio manipulation
 // Options allow customizing Contact, headers, SDP body and media of the 200 OK response.
-// Scope: ProgressMedia options plus WithOnMediaUpdate and WithOnRefer; media
-// overrides only apply when Answer creates the media session itself (no early
-// media from ProgressMedia).
+// Scope: AnswerOptions. Media overrides only apply when Answer creates the
+// media session itself (no early media from ProgressMedia).
 //
 // Answer returns once the 200 OK was handed to the transaction layer; 2xx
 // retransmission until the peer's ACK (RFC 3261 §13.3.1.4) continues in the
@@ -702,17 +701,16 @@ func (d *InboundCall) applyDialogCallbacks(params *signalParams) {
 // Answer creates the media session (unless ProgressMedia created it) and
 // answers the call with 200 OK. Options allow customizing Contact, headers,
 // SDP body and media of the response.
-// Scope: ProgressMedia options plus WithOnMediaUpdate and WithOnRefer; media
-// overrides only apply when Answer creates the media session itself (no early
-// media from ProgressMedia).
+// Scope: AnswerOptions. Media overrides only apply when Answer creates the
+// media session itself (no early media from ProgressMedia).
 //
 // Answer returns once the 200 OK was handed to the transaction layer; 2xx
 // retransmission until the peer's ACK (RFC 3261 §13.3.1.4) continues in the
 // background. Use WaitAck when the call must be fully established (ACK
 // processed, media finalized) before proceeding. Calling Answer twice fails
 // with ErrAlreadyAnswered.
-func (d *InboundCall) Answer(ctx context.Context, opts ...AnswerOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) Answer(ctx context.Context, opts ...AnswerOptions) error {
+	params, err := answerSignalParams(opts...)
 	if err != nil {
 		return err
 	}
@@ -853,8 +851,8 @@ func (d *InboundCall) setupRTPSession(rtpSess *media.RTPSession) error {
 // layer. The ACK of a late offer carries the remote answer: call WaitAck to
 // wait for the media to be fully negotiated (RemoteSDP applied, monitoring
 // started) before reading or writing media.
-func (d *InboundCall) AnswerLate(ctx context.Context, opts ...AnswerOption) error {
-	params, err := newSignalParams(opts...)
+func (d *InboundCall) AnswerLate(ctx context.Context, opts ...AnswerOptions) error {
+	params, err := answerSignalParams(opts...)
 	if err != nil {
 		return err
 	}

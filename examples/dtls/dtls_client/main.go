@@ -44,7 +44,7 @@ func main() {
 		panic(err)
 	}
 
-	d, err := dg.Dial(ctx, "sip:11@127.0.0.1:16443", diago.WithDialogTransport("tcp"))
+	d, err := dg.Dial(ctx, "sip:11@127.0.0.1:16443", diago.DialOptions{Transport: "tcp"})
 	if err != nil {
 		panic(err)
 	}

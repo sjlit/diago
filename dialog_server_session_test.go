@@ -83,16 +83,14 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		dialog, err := dialer.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort}, WithOnResponse(
-			func(res *sip.Response) error {
-				t.Log("Received resp", res.StatusCode)
-				allResponses = append(allResponses, *res.Clone())
-				if res.StatusCode == sip.StatusSessionInProgress {
-					signalProgress()
-				}
-				return nil
-			},
-		))
+		dialog, err := dialer.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort}, DialOptions{OnResponse: func(res *sip.Response) error {
+			t.Log("Received resp", res.StatusCode)
+			allResponses = append(allResponses, *res.Clone())
+			if res.StatusCode == sip.StatusSessionInProgress {
+				signalProgress()
+			}
+			return nil
+		}})
 		if err != nil {
 			t.Log("Failed to dial", err)
 			return
@@ -192,10 +190,11 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	_, uasPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 		// This is the reported role: the peer sends the initial INVITE and
 		// Agent answers it as the UAS. RTP NAT must not change the SIP flow.
-		err := d.Answer(ctx,
-			WithRTPNAT(media.RTPNATSymetric),
-			WithOnMediaUpdate(func(*Media) {}),
-		)
+		rtpnat := RTPNATLearnSource
+		err := d.Answer(ctx, AnswerOptions{
+			Media:         MediaOptions{RTPNAT: &rtpnat},
+			OnMediaUpdate: func(*Media) {},
+		})
 		if err != nil {
 			// Serve handler goroutine: report through the channel, never
 			// through require (FailNow would abandon the handler).
@@ -310,7 +309,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 		require.NoError(t, err)
 
 		go func() {
-			err := dialog.Invite(ctx, WithOnRefer(func(referDialog *OutboundCall) error {
+			err := dialog.Invite(ctx, InviteOptions{OnRefer: func(referDialog *OutboundCall) error {
 				if err := referDialog.Invite(ctx); err != nil {
 					return err
 				}
@@ -319,7 +318,7 @@ func TestIntegrationDialogServerRefer(t *testing.T) {
 				}
 
 				return referDialog.Close(ctx)
-			}))
+			}})
 			// Dial goroutine: Error (not require) is goroutine-safe.
 			if err != nil {
 				t.Error(err)

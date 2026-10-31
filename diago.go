@@ -1406,15 +1406,14 @@ func shutdownDialog(ctx context.Context, id string, d Call) []error {
 // Options allow full call customization, checkout SignalOption.
 // Each SignalOption func is executed exactly once for the whole call setup.
 // The final ACK is sent without options; call Ack directly if you need ACK headers.
-// Scope: everything OutboundCall.Invite accepts except WithEarlyMediaDetect,
-// plus WithDialogTransport and WithDialogTransportID.
+// Scope: DialOptions. Early media is Invite-only; use NewCall + Invite.
 //
 // For early media use NewCall + Invite + WaitAnswer: Dial treats an early
 // media result as failure because it cannot return a call it has not answered.
 //
 // For better control more details use above functions instead.
 // If you want to bridge call then use helper DialBridge
-func (dg *Agent) Dial(ctx context.Context, target string, opts ...DialOption) (*OutboundCall, error) {
+func (dg *Agent) Dial(ctx context.Context, target string, opts ...DialOptions) (*OutboundCall, error) {
 	uri, err := parseTargetURI(target)
 	if err != nil {
 		return nil, err
@@ -1425,8 +1424,8 @@ func (dg *Agent) Dial(ctx context.Context, target string, opts ...DialOption) (*
 // DialURI is Dial for an already parsed SIP URI. The URI is copied, so the
 // caller's value is never mutated (unlike v2, the "transport" URI parameter
 // is consumed from the copy only).
-func (dg *Agent) DialURI(ctx context.Context, recipient URI, opts ...DialOption) (d *OutboundCall, err error) {
-	params, err := newSignalParams(opts...)
+func (dg *Agent) DialURI(ctx context.Context, recipient URI, opts ...DialOptions) (d *OutboundCall, err error) {
+	params, err := dialSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1499,9 +1498,9 @@ func cloneURI(uri URI) URI {
 // for creating outgoing call leg as in B2BUA.
 // When bridge is provided then this call will be bridged with any participant
 // already present in bridge.
-// Scope: same as Dial; for a *Bridge, Originator defaults to the bridge
+// Scope: DialOptions; for a *Bridge, Originator defaults to the bridge
 // originator when not set. Options execute exactly once.
-func (dg *Agent) DialBridge(ctx context.Context, target string, bridge Bridger, opts ...DialOption) (*OutboundCall, error) {
+func (dg *Agent) DialBridge(ctx context.Context, target string, bridge Bridger, opts ...DialOptions) (*OutboundCall, error) {
 	uri, err := parseTargetURI(target)
 	if err != nil {
 		return nil, err
@@ -1510,11 +1509,11 @@ func (dg *Agent) DialBridge(ctx context.Context, target string, bridge Bridger, 
 }
 
 // DialBridgeURI is DialBridge for an already parsed SIP URI.
-func (dg *Agent) DialBridgeURI(ctx context.Context, recipient URI, bridge Bridger, opts ...DialOption) (d *OutboundCall, err error) {
+func (dg *Agent) DialBridgeURI(ctx context.Context, recipient URI, bridge Bridger, opts ...DialOptions) (d *OutboundCall, err error) {
 	if isNilBridger(bridge) {
 		return nil, fmt.Errorf("dial bridge: %w", ErrBridgeNil)
 	}
-	params, err := newSignalParams(opts...)
+	params, err := dialSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1575,10 +1574,10 @@ func isNilBridger(bridge Bridger) bool {
 // Invite and the final ACK for you.
 // Options allow selecting transport (WithDialogTransport, WithDialogTransportID)
 // and overriding Contact.
-// Scope: WithDialogTransport, WithDialogTransportID, WithContact.
+// Scope: NewCallOptions.
 // Pass the remaining options to the later Invite call; this method rejects them.
-func (dg *Agent) NewCall(recipient URI, opts ...NewCallOption) (d *OutboundCall, err error) {
-	params, err := newSignalParams(opts...)
+func (dg *Agent) NewCall(recipient URI, opts ...NewCallOptions) (d *OutboundCall, err error) {
+	params, err := newCallSignalParams(opts...)
 	if err != nil {
 		return nil, err
 	}

@@ -221,7 +221,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	dgC, err := newAgent(withUserAgent(uaC), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 
-	d, err := dgC.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, WithDialogTransport("udp"))
+	d, err := dgC.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: serverPort}, DialOptions{Transport: "udp"})
 	require.NoError(t, err)
 	t.Cleanup(func() { d.release() })
 

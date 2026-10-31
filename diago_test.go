@@ -233,15 +233,6 @@ func TestRegisterOptionValidation(t *testing.T) {
 // runOnceOption is a test-only option counting how many times the library
 // applies it. It implements the dial option interfaces (unexported markers are
 // implementable only inside the package).
-type runOnceOption struct{ runs *atomic.Int32 }
-
-func (o runOnceOption) applySignal(p *signalParams) error {
-	o.runs.Add(1)
-	p.Msg.Headers = append(p.Msg.Headers, sip.NewHeader("X-Test-Run", "once"))
-	return nil
-}
-func (runOnceOption) isDialOption() {}
-
 // TestDiagoInviteOptionsRunOnce locks the single-execution guarantee: an
 // option must be applied exactly once across dialog creation and Invite.
 func TestDiagoInviteOptionsRunOnce(t *testing.T) {
@@ -253,7 +244,12 @@ func TestDiagoInviteOptionsRunOnce(t *testing.T) {
 	})
 
 	ctx := context.TODO()
-	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, runOnceOption{runs: &runs})
+	mutate := func(req *Request) error {
+		runs.Add(1)
+		req.AppendHeader(sip.NewHeader("X-Test-Run", "once"))
+		return nil
+	}
+	d, err := dg.DialURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, DialOptions{MutateRequest: mutate})
 	require.NoError(t, err)
 	defer d.release()
 
@@ -273,7 +269,12 @@ func TestDiagoDialBridgeOptionsRunOnce(t *testing.T) {
 
 	bridge := NewBridge()
 	ctx := context.TODO()
-	d, err := dg.DialBridgeURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge, runOnceOption{runs: &runs})
+	mutate := func(req *Request) error {
+		runs.Add(1)
+		req.AppendHeader(sip.NewHeader("X-Test-Run", "once"))
+		return nil
+	}
+	d, err := dg.DialBridgeURI(ctx, sip.Uri{User: "alice", Host: "localhost"}, bridge, DialOptions{MutateRequest: mutate})
 	require.NoError(t, err)
 	defer d.release()
 
@@ -526,7 +527,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 		))
 	require.NoError(t, err)
 
-	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, DialOptions{Transport: "tcp"})
 	require.NoError(t, err)
 
 	l16Audio := bytes.Repeat([]byte{0, 16, 96, 0}, l16Codec.Samples16()/4)
@@ -594,7 +595,7 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 		))
 	require.NoError(t, err)
 
-	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, DialOptions{Transport: "tcp"})
 	require.NoError(t, err)
 
 	ulaw := make([]byte, 160)
@@ -678,7 +679,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 		))
 	require.NoError(t, err)
 
-	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, WithDialogTransport("tcp"))
+	d, err := dg.DialURI(ctx, sip.Uri{User: "11", Host: "127.0.0.1", Port: srvPort}, DialOptions{Transport: "tcp"})
 	require.NoError(t, err)
 
 	ulaw := make([]byte, 160)

@@ -138,7 +138,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 				uasHeld.Store(false)
 			}
 		}
-		if err := d.Answer(ctx, WithOnMediaUpdate(heldCb)); err != nil {
+		if err := d.Answer(ctx, AnswerOptions{OnMediaUpdate: heldCb}); err != nil {
 			return err
 		}
 		<-d.Context().Done()

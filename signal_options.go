@@ -230,6 +230,272 @@ func referSignalParams(opts ...ReferOptions) (*signalParams, error) {
 	return singleSignalParams("Refer", opts, ReferOptions.signalParams)
 }
 
+// MediaOptions overrides the per-call media configuration.
+type MediaOptions struct {
+	// Codecs overrides the offered codecs. Nil keeps the dialog defaults.
+	Codecs []media.Codec
+	// RTPNAT selects the RTP NAT mode. Nil keeps the dialog default.
+	RTPNAT *RTPNATMode
+	// BindIP overrides the local RTP/RTCP bind IP.
+	BindIP net.IP
+	// ExternalIP overrides the IP advertised in SDP.
+	ExternalIP net.IP
+	// DTLS overrides the DTLS configuration. A non-zero value enables
+	// DTLS-SRTP unless SRTP mode is already set.
+	DTLS *media.DTLSConfig
+	// SessionName overrides the SDP "s=" line for this call.
+	SessionName string
+	// Session supplies a fully custom/pre-created media session. The library
+	// takes ownership of it.
+	Session *media.MediaSession
+	// MusicOnHold overrides the dialog-level hold music. A zero tone disables
+	// hold music for the call.
+	MusicOnHold *audio.Tone
+}
+
+func (o MediaOptions) apply(p *signalParams) error {
+	if o.Codecs != nil {
+		if len(o.Codecs) == 0 {
+			return fmt.Errorf("%w: MediaOptions.Codecs is empty", ErrInvalidOption)
+		}
+		p.Media.Codecs = slices.Clone(o.Codecs)
+	}
+	if o.RTPNAT != nil {
+		if *o.RTPNAT != RTPNATDisabled && *o.RTPNAT != RTPNATLearnSource {
+			return fmt.Errorf("%w: MediaOptions.RTPNAT: invalid mode %d", ErrInvalidOption, *o.RTPNAT)
+		}
+		v := *o.RTPNAT
+		p.Media.RTPNAT = &v
+	}
+	if o.BindIP != nil {
+		p.Media.MediaBindIP = o.BindIP
+	}
+	if o.ExternalIP != nil {
+		p.Media.MediaExternalIP = o.ExternalIP
+	}
+	if o.DTLS != nil {
+		if dtlsConfIsZero(*o.DTLS) {
+			return fmt.Errorf("%w: MediaOptions.DTLS: configuration is empty", ErrInvalidOption)
+		}
+		c := *o.DTLS
+		p.Media.MediaDTLSConf = &c
+	}
+	if o.SessionName != "" {
+		if err := media.ValidateSDPSessionName(o.SessionName); err != nil {
+			return fmt.Errorf("%w: MediaOptions.SessionName: %w", ErrInvalidOption, err)
+		}
+		p.Media.SDPSessionName = o.SessionName
+	}
+	if o.Session != nil {
+		p.Media.MediaSession = o.Session
+	}
+	if o.MusicOnHold != nil {
+		p.Media.MusicOnHold = o.MusicOnHold
+	}
+	return nil
+}
+
+// ProgressMediaOptions configures ProgressMedia (183 with early media).
+type ProgressMediaOptions struct {
+	Headers        []Header
+	Contact        *ContactHeader
+	Body           []byte
+	MutateResponse func(res *Response) error
+	Media          MediaOptions
+}
+
+func (o ProgressMediaOptions) signalParams() (*signalParams, error) {
+	p, err := messageSignalParams(o.Headers, o.Contact, o.Body, nil, o.MutateResponse)
+	if err != nil {
+		return nil, err
+	}
+	return p, o.Media.apply(p)
+}
+
+// AnswerOptions configures Answer and AnswerLate.
+type AnswerOptions struct {
+	Headers        []Header
+	Contact        *ContactHeader
+	Body           []byte
+	MutateResponse func(res *Response) error
+	Media          MediaOptions
+	OnMediaUpdate  func(d *Media)
+	OnRefer        OnReferFunc
+}
+
+func (o AnswerOptions) signalParams() (*signalParams, error) {
+	p, err := messageSignalParams(o.Headers, o.Contact, o.Body, nil, o.MutateResponse)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.Media.apply(p); err != nil {
+		return nil, err
+	}
+	if o.OnMediaUpdate != nil {
+		p.Dialog.OnMediaUpdate = o.OnMediaUpdate
+	}
+	if o.OnRefer != nil {
+		p.Dialog.OnRefer = o.OnRefer
+	}
+	return p, nil
+}
+
+// InviteOptions configures the initial INVITE of an outbound call.
+type InviteOptions struct {
+	Headers          []Header
+	Contact          *ContactHeader
+	Body             []byte
+	MutateRequest    func(req *Request) error
+	Media            MediaOptions
+	Originator       Call
+	Username         string
+	Password         string
+	EarlyMediaDetect bool
+	OnResponse       func(res *Response) error
+	OnMediaUpdate    func(d *Media)
+	OnRefer          OnReferFunc
+}
+
+func (o InviteOptions) signalParams() (*signalParams, error) {
+	return inviteSignalParams(inviteOptions{
+		Headers: o.Headers, Contact: o.Contact, Body: o.Body,
+		MutateRequest: o.MutateRequest, Media: o.Media, Originator: o.Originator,
+		Username: o.Username, Password: o.Password,
+		EarlyMediaDetect: o.EarlyMediaDetect,
+		OnResponse:       o.OnResponse, OnMediaUpdate: o.OnMediaUpdate, OnRefer: o.OnRefer,
+	})
+}
+
+// DialOptions configures Dial/DialURI and DialBridge/DialBridgeURI.
+type DialOptions struct {
+	Headers       []Header
+	Contact       *ContactHeader
+	Body          []byte
+	MutateRequest func(req *Request) error
+	Media         MediaOptions
+	Originator    Call
+	Username      string
+	Password      string
+	OnResponse    func(res *Response) error
+	OnMediaUpdate func(d *Media)
+	OnRefer       OnReferFunc
+	Transport     string
+	TransportID   string
+}
+
+func (o DialOptions) signalParams() (*signalParams, error) {
+	p, err := inviteSignalParams(inviteOptions{
+		Headers: o.Headers, Contact: o.Contact, Body: o.Body,
+		MutateRequest: o.MutateRequest, Media: o.Media, Originator: o.Originator,
+		Username: o.Username, Password: o.Password,
+		OnResponse: o.OnResponse, OnMediaUpdate: o.OnMediaUpdate, OnRefer: o.OnRefer,
+	})
+	if err != nil {
+		return nil, err
+	}
+	p.Dialog.Transport = o.Transport
+	p.Dialog.TransportID = o.TransportID
+	return p, nil
+}
+
+// NewCallOptions configures NewCall (transport selection and Contact only).
+type NewCallOptions struct {
+	Contact     *ContactHeader
+	Transport   string
+	TransportID string
+}
+
+func (o NewCallOptions) signalParams() (*signalParams, error) {
+	p := &signalParams{}
+	if o.Contact != nil {
+		p.Msg.Contact = o.Contact
+	}
+	p.Dialog.Transport = o.Transport
+	p.Dialog.TransportID = o.TransportID
+	return p, nil
+}
+
+// WaitAnswerOptions configures WaitAnswer after early media detection.
+type WaitAnswerOptions struct {
+	OnResponse func(res *Response) error
+	Username   string
+	Password   string
+}
+
+func (o WaitAnswerOptions) signalParams() (*signalParams, error) {
+	p := &signalParams{}
+	if o.OnResponse != nil {
+		p.Dialog.OnResponse = o.OnResponse
+	}
+	p.Dialog.Username = o.Username
+	p.Dialog.Password = o.Password
+	return p, nil
+}
+
+type inviteOptions struct {
+	Headers          []Header
+	Contact          *ContactHeader
+	Body             []byte
+	MutateRequest    func(req *Request) error
+	Media            MediaOptions
+	Originator       Call
+	Username         string
+	Password         string
+	EarlyMediaDetect bool
+	OnResponse       func(res *Response) error
+	OnMediaUpdate    func(d *Media)
+	OnRefer          OnReferFunc
+}
+
+func inviteSignalParams(o inviteOptions) (*signalParams, error) {
+	p, err := messageSignalParams(o.Headers, o.Contact, o.Body, o.MutateRequest, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.Media.apply(p); err != nil {
+		return nil, err
+	}
+	if o.Originator != nil {
+		p.Dialog.Originator = o.Originator
+	}
+	if o.Username == "" && o.Password == "" {
+		// no credentials
+	} else {
+		p.Dialog.Username = o.Username
+		p.Dialog.Password = o.Password
+	}
+	p.Dialog.EarlyMediaDetect = o.EarlyMediaDetect
+	if o.OnResponse != nil {
+		p.Dialog.OnResponse = o.OnResponse
+	}
+	if o.OnMediaUpdate != nil {
+		p.Dialog.OnMediaUpdate = o.OnMediaUpdate
+	}
+	if o.OnRefer != nil {
+		p.Dialog.OnRefer = o.OnRefer
+	}
+	return p, nil
+}
+
+func progressMediaSignalParams(opts ...ProgressMediaOptions) (*signalParams, error) {
+	return singleSignalParams("ProgressMedia", opts, ProgressMediaOptions.signalParams)
+}
+func answerSignalParams(opts ...AnswerOptions) (*signalParams, error) {
+	return singleSignalParams("Answer", opts, AnswerOptions.signalParams)
+}
+func inviteSignalParamsFrom(opts ...InviteOptions) (*signalParams, error) {
+	return singleSignalParams("Invite", opts, InviteOptions.signalParams)
+}
+func dialSignalParams(opts ...DialOptions) (*signalParams, error) {
+	return singleSignalParams("Dial", opts, DialOptions.signalParams)
+}
+func newCallSignalParams(opts ...NewCallOptions) (*signalParams, error) {
+	return singleSignalParams("NewCall", opts, NewCallOptions.signalParams)
+}
+func waitAnswerSignalParams(opts ...WaitAnswerOptions) (*signalParams, error) {
+	return singleSignalParams("WaitAnswer", opts, WaitAnswerOptions.signalParams)
+}
+
 // signalParams carries per-call signaling customizations applied by the With*
 // options. It is constructed by the library (newSignalParams); user code
 // customizes it through the constructors. A nil *signalParams means "use

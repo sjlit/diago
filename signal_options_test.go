@@ -162,13 +162,13 @@ func TestIntegrationSignalOptions(t *testing.T) {
 			// with custom user to prove the Contact was overridden
 			Address: sip.Uri{Scheme: "sip", User: "answered-custom", Host: "127.0.0.1", Port: int(srvPort.Load())},
 		}
-		if err := d.Answer(ctx,
-			WithContact(customContact),
-			WithResponseMutator(func(res *sip.Response) error {
+		if err := d.Answer(ctx, AnswerOptions{
+			Contact: customContact,
+			MutateResponse: func(res *sip.Response) error {
 				res.AppendHeader(sip.NewHeader("X-Mutated", "yes"))
 				return nil
-			}),
-		); err != nil {
+			},
+		}); err != nil {
 			t.Error(err)
 			return nil
 		}
@@ -198,11 +198,11 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	customContact := &sip.ContactHeader{
 		Address: sip.Uri{Scheme: "sip", User: "custom-caller", Host: "9.9.9.9", Port: 7777},
 	}
-	err = dialog.Invite(ctx,
-		WithContact(customContact),
-		WithMediaExternalIP(net.IPv4(7, 7, 7, 7)),
-		WithHeaders(sip.NewHeader("X-Custom-Header", "hello")),
-		WithOnResponse(func(res *sip.Response) error {
+	err = dialog.Invite(ctx, InviteOptions{
+		Contact: customContact,
+		Media:   MediaOptions{ExternalIP: net.IPv4(7, 7, 7, 7)},
+		Headers: []Header{sip.NewHeader("X-Custom-Header", "hello")},
+		OnResponse: func(res *sip.Response) error {
 			mu.Lock()
 			defer mu.Unlock()
 			switch res.StatusCode {
@@ -219,8 +219,8 @@ func TestIntegrationSignalOptions(t *testing.T) {
 				}
 			}
 			return nil
-		}),
-	)
+		},
+	})
 	require.NoError(t, err)
 	require.NoError(t, dialog.Ack(ctx))
 

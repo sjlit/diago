@@ -215,11 +215,7 @@ func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 // Options allow customizing Contact, From, custom headers, SDP body, media
 // (IP, codecs, fully custom media session) and a final request mutator.
 //
-// Scope: WithHeaders, WithContact, WithBody, WithRequestMutator, WithOriginator,
-// WithAuthCredentials, WithEarlyMediaDetect, WithOnResponse, WithOnMediaUpdate,
-// WithOnRefer, plus the media overrides (WithCodecs, WithRTPNAT, WithMediaBindIP,
-// WithMediaExternalIP, WithMediaDTLS, WithSDPSessionName, WithMediaSession,
-// WithMusicOnHold).
+// Scope: InviteOptions.
 //
 // Errors:
 // - sipgo.ErrDialogResponse
@@ -227,8 +223,8 @@ func (d *OutboundCall) remoteContactUnsafe() *ContactHeader {
 //
 // NOTE: It updates internal invite request so NOT THREAD SAFE.
 // If you pass originator it will use originator to set correct from header and avoid media transcoding
-func (d *OutboundCall) Invite(ctx context.Context, opts ...InviteOption) error {
-	params, err := newSignalParams(opts...)
+func (d *OutboundCall) Invite(ctx context.Context, opts ...InviteOptions) error {
+	params, err := inviteSignalParamsFrom(opts...)
 	if err != nil {
 		return err
 	}
@@ -440,9 +436,9 @@ func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
 // part of WaitAnswerOption: the media session was already negotiated by
 // Invite. Options allow receiving responses (WithOnResponse) and digest
 // credentials (WithAuthCredentials).
-// Scope: WithOnResponse, WithAuthCredentials.
-func (d *OutboundCall) WaitAnswer(ctx context.Context, opts ...WaitAnswerOption) error {
-	params, err := newSignalParams(opts...)
+// Scope: WaitAnswerOptions.
+func (d *OutboundCall) WaitAnswer(ctx context.Context, opts ...WaitAnswerOptions) error {
+	params, err := waitAnswerSignalParams(opts...)
 	if err != nil {
 		return err
 	}

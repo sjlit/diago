@@ -60,13 +60,12 @@ func TestProgressSemantics(t *testing.T) {
 	require.NoError(t, err)
 
 	d, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort},
-		WithOnResponse(func(res *sip.Response) error {
+		DialOptions{OnResponse: func(res *sip.Response) error {
 			mu.Lock()
 			responses = append(responses, seen{code: res.StatusCode, hasSDP: res.Body() != nil})
 			mu.Unlock()
 			return nil
-		}),
-	)
+		}})
 	require.NoError(t, err)
 	defer func() {
 		d.Close(ctx)

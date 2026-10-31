@@ -200,15 +200,13 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, err := dg.DialURI(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: port}, WithOnResponse(
-			func(res *sip.Response) error {
-				if res.StatusCode == sip.StatusRinging {
-					cancel()
-					// return context.Canceled
-				}
-				return nil
-			},
-		))
+		_, err := dg.DialURI(ctx, sip.Uri{User: "test", Host: "127.0.0.1", Port: port}, DialOptions{OnResponse: func(res *sip.Response) error {
+			if res.StatusCode == sip.StatusRinging {
+				cancel()
+				// return context.Canceled
+			}
+			return nil
+		}})
 		require.ErrorIs(t, err, context.Canceled)
 	}
 
@@ -283,7 +281,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 	require.NoError(t, err)
 	defer dialog.release()
 
-	err = dialog.Invite(ctx, WithEarlyMediaDetect(), WithAuthCredentials("test", "test123"))
+	err = dialog.Invite(ctx, InviteOptions{EarlyMediaDetect: true, Username: "test", Password: "test123"})
 	require.ErrorIs(t, err, ErrClientEarlyMedia)
 
 	// Now we should be able to read media
@@ -317,9 +315,9 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 
 	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 		t.Log("Call received")
-		d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
+		d.Answer(ctx, AnswerOptions{OnMediaUpdate: func(d *Media) {
 
-		}))
+		}})
 		<-d.Context().Done()
 		return nil
 	}, withUserAgent(uaSrv), withTransport(
@@ -444,9 +442,9 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 
 	_, srvPort := servingAgent(t, ctx, func(ctx context.Context, d *InboundCall) error {
 		t.Log("Call received")
-		d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {
+		d.Answer(ctx, AnswerOptions{OnMediaUpdate: func(d *Media) {
 
-		}))
+		}})
 		<-d.Context().Done()
 		return nil
 	}, withUserAgent(uaSrv), withTransport(
@@ -507,7 +505,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 				return nil
 			}
 
-			d.Answer(ctx, WithOnMediaUpdate(func(d *Media) {}))
+			d.Answer(ctx, AnswerOptions{OnMediaUpdate: func(d *Media) {}})
 
 			ar := d.rtpPacketReader
 			ctx, cancel := context.WithCancel(context.Background())
@@ -566,10 +564,11 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	require.NoError(t, err)
 	dialog, err := dg.NewCall(sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
-	err = dialog.Invite(ctx,
-		WithOnMediaUpdate(func(d *Media) {}),
-		WithAuthCredentials("test", "test"),
-	)
+	err = dialog.Invite(ctx, InviteOptions{
+		OnMediaUpdate: func(d *Media) {},
+		Username:      "test",
+		Password:      "test",
+	})
 	require.NoError(t, err)
 	err = dialog.Ack(ctx)
 	require.NoError(t, err)
@@ -603,11 +602,11 @@ func TestDialogClientInviteFailed(t *testing.T) {
 	t.Run("with callerid", func(t *testing.T) {
 		dialog, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
-		go dialog.Invite(context.Background(), WithHeaders(&sip.FromHeader{
+		go dialog.Invite(context.Background(), InviteOptions{Headers: []Header{&sip.FromHeader{
 			DisplayName: "Test",
 			Address:     sip.Uri{User: "123456", Host: "example.com"},
 			Params:      sip.NewParams(),
-		}))
+		}}})
 		req := <-reqCh
 		assert.Equal(t, "Test", req.From().DisplayName)
 		assert.Equal(t, "123456", req.From().Address.User)
@@ -617,11 +616,11 @@ func TestDialogClientInviteFailed(t *testing.T) {
 	t.Run("with anonymous", func(t *testing.T) {
 		dialog, err := dg.NewCall(sip.Uri{User: "alice", Host: "localhost"})
 		require.NoError(t, err)
-		go dialog.Invite(context.Background(), WithHeaders(&sip.FromHeader{
+		go dialog.Invite(context.Background(), InviteOptions{Headers: []Header{&sip.FromHeader{
 			DisplayName: "Anonymous",
 			Address:     sip.Uri{User: "anonymous", Host: "anonymous.invalid"},
 			Params:      sip.NewParams(),
-		}))
+		}}})
 		req := <-reqCh
 		assert.Equal(t, "Anonymous", req.From().DisplayName)
 		assert.Equal(t, "anonymous", req.From().Address.User)
@@ -680,13 +679,11 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Media negotiaton should fail and call should be terminated
-	_, err = dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort}, WithOnResponse(
-		func(res *sip.Response) error {
-			// Fake Bad SDP
-			res.SetBody([]byte("Bad SDP"))
-			return nil
-		},
-	))
+	_, err = dg.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort}, DialOptions{OnResponse: func(res *sip.Response) error {
+		// Fake Bad SDP
+		res.SetBody([]byte("Bad SDP"))
+		return nil
+	}})
 	t.Log(err)
 	require.Error(t, err)
 
@@ -735,7 +732,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 	// and the test issues REFER on the resulting OutboundCall.
 	env := newReferEnv(t, ctx, func(ctx context.Context, d *InboundCall) error {
 		t.Log("Call received")
-		d.Answer(ctx, WithOnRefer(func(referDialog *OutboundCall) error {
+		d.Answer(ctx, AnswerOptions{OnRefer: func(referDialog *OutboundCall) error {
 			if err := referDialog.Invite(referDialog.Context()); err != nil {
 				return err
 			}
@@ -743,7 +740,7 @@ func TestIntegrationDialogClientRefer(t *testing.T) {
 				return err
 			}
 			return referDialog.Close(referDialog.Context())
-		}))
+		}})
 		<-d.Context().Done()
 		return nil
 	})
