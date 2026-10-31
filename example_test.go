@@ -14,7 +14,9 @@ import (
 // ExampleNew creates an agent with a private UserAgent and a UDP transport.
 // Close stops the listeners and closes the private UserAgent.
 func ExampleNew() {
-	agent, err := diago.New(diago.WithDefaultTransport())
+	agent, err := diago.New(diago.Config{
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -26,7 +28,9 @@ func ExampleNew() {
 // ExampleAgent_Serve accepts incoming calls: ring, answer and keep the call
 // alive until either side ends it.
 func ExampleAgent_Serve() {
-	agent, err := diago.New(diago.WithDefaultTransport())
+	agent, err := diago.New(diago.Config{
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -49,7 +53,9 @@ func ExampleAgent_Serve() {
 // ExampleAgent_Dial places an outbound call. Dial performs Invite and the
 // final ACK; Hangup ends the signaling and Close releases local resources.
 func ExampleAgent_Dial() {
-	agent, err := diago.New(diago.WithDefaultTransport())
+	agent, err := diago.New(diago.Config{
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -69,7 +75,9 @@ func ExampleAgent_Dial() {
 // ExampleAgent_Register registers a contact and keeps the registration
 // refreshed until Close. WaitReady reports the first successful REGISTER.
 func ExampleAgent_Register() {
-	agent, err := diago.New(diago.WithDefaultTransport())
+	agent, err := diago.New(diago.Config{
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -91,7 +99,9 @@ func ExampleAgent_Register() {
 // ExampleAgent_Handle registers a handler for a SIP method diago does not
 // cover (MESSAGE here). Register before Serve.
 func ExampleAgent_Handle() {
-	agent, err := diago.New(diago.WithDefaultTransport())
+	agent, err := diago.New(diago.Config{
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

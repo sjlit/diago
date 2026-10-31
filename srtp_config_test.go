@@ -41,16 +41,16 @@ func TestMediaConfigDTLSAutoEnable(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	dtlsConf := media.DTLSConfig{Certificates: []tls.Certificate{testdata.ServerCertificate()}}
-	dg, err := New(WithUserAgent(ua),
-		WithMediaProfile("dtls", MediaConfig{
+	dg, err := newAgent(withUserAgent(ua),
+		withMediaProfile("dtls", MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
 			SRTP:   SRTPConfig{DTLS: dtlsConf},
 		}),
-		WithMediaProfile("sdes+dtls", MediaConfig{
+		withMediaProfile("sdes+dtls", MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
 			SRTP:   SRTPConfig{Mode: SecureRTPSDES, DTLS: dtlsConf},
 		}),
-		WithDefaultTransport(),
+		withDefaultTransport(),
 	)
 	require.NoError(t, err)
 

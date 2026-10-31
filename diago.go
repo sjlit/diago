@@ -48,11 +48,11 @@ type Agent struct {
 	mediaConf MediaConfig
 
 	// mediaProfiles holds the named media configurations registered with
-	// WithMediaProfile. Set up during New and read-only afterwards.
+	// withMediaProfile. Set up during New and read-only afterwards.
 	mediaProfiles map[string]MediaConfig
 
 	// httpClient is the agent-level fallback for MediaConfig.HTTPClient
-	// (WithHTTPClient). Nil means the playback default client.
+	// (withHTTPClient). Nil means the playback default client.
 	httpClient *http.Client
 
 	log *slog.Logger
@@ -85,10 +85,10 @@ type Agent struct {
 	stopped          atomic.Bool
 }
 
-// We can extend this WithClientOptions, WithServerOptions
+// Config can grow dedicated client/server options when needed.
 
-// AgentOption configures New. An option error aborts construction.
-type AgentOption func(dg *Agent) error
+// agentOption configures New. An option error aborts construction.
+type agentOption func(dg *Agent) error
 
 // Transport describes one SIP signaling listener. See NewTransport and
 // Transport.Validate for the accepted network values. Agent.Transports returns
@@ -111,8 +111,8 @@ type Transport struct {
 	ExternalHost string // SIP signaling and media external addr
 	ExternalPort int
 
-	// Profile names a MediaConfig registered with WithMediaProfile. Empty
-	// selects the agent default (WithMediaConfig). The profile is a complete
+	// Profile names a MediaConfig registered with withMediaProfile. Empty
+	// selects the agent default (withMediaConfig). The profile is a complete
 	// media configuration for dialogs carried over this transport; the
 	// transport-derived bind/advertise addresses fill profile fields left
 	// nil (see mediaConfigForTransport).
@@ -120,7 +120,7 @@ type Transport struct {
 
 	mediaBindIP net.IP
 
-	// mediaExternalIP is derived from ExternalHost/BindHost at WithTransport
+	// mediaExternalIP is derived from ExternalHost/BindHost at withTransport
 	// time and applied only when the selected profile leaves
 	// Network.ExternalIP unset.
 	mediaExternalIP net.IP
@@ -153,7 +153,7 @@ func NewTransport(network string) (Transport, error) {
 // rejected: the underlying SIP stack has no TLS-over-IPv6 listener. The
 // remaining suffix forms are translated by tlsListenNetwork at serve time.
 func (t Transport) Validate() error {
-	// WithTransport trims the 4/6 suffix from Transport and keeps the raw
+	// withTransport trims the 4/6 suffix from Transport and keeps the raw
 	// value in network, so validate the original spelling when present.
 	raw := strings.TrimSpace(t.Network)
 	if t.network != "" {
@@ -205,23 +205,23 @@ func tlsListenNetwork(network string) string {
 	return network
 }
 
-// WithDefaultTransport explicitly installs the built-in loopback default
+// withDefaultTransport explicitly installs the built-in loopback default
 // (udp on 127.0.0.1:5060). v2 never adds it implicitly: New fails
 // without at least one configured transport.
-func WithDefaultTransport() AgentOption {
-	return WithTransport(Transport{
+func withDefaultTransport() agentOption {
+	return withTransport(Transport{
 		Network:  "udp",
 		BindHost: "127.0.0.1",
 		BindPort: 5060,
 	})
 }
 
-// WithTransport adds a signaling transport to the agent. New requires at
+// withTransport adds a signaling transport to the agent. New requires at
 // least one; see Transport for the accepted networks and fields.
-func WithTransport(t Transport) AgentOption {
+func withTransport(t Transport) agentOption {
 	return func(dg *Agent) error {
 		if strings.TrimSpace(t.Network) == "" {
-			return fmt.Errorf("%w: WithTransport: network is empty", ErrInvalidOption)
+			return fmt.Errorf("%w: withTransport: network is empty", ErrInvalidOption)
 		}
 		t.bindIP = net.ParseIP(t.BindHost)
 		t.mediaBindIP = t.bindIP
@@ -402,33 +402,33 @@ func validateMediaConfig(conf MediaConfig) error {
 	return nil
 }
 
-// WithMediaConfig replaces the default media configuration (the profile used
+// withMediaConfig replaces the default media configuration (the profile used
 // by transports that do not name one). It is a whole struct replacement, not
 // a merge: zero fields keep their documented library defaults (see
 // NetworkConfig and SDPConfig). At least one codec is required.
-func WithMediaConfig(conf MediaConfig) AgentOption {
+func withMediaConfig(conf MediaConfig) agentOption {
 	return func(dg *Agent) error {
 		if err := validateMediaConfig(conf); err != nil {
-			return fmt.Errorf("%w: WithMediaConfig: %w", ErrInvalidOption, err)
+			return fmt.Errorf("%w: withMediaConfig: %w", ErrInvalidOption, err)
 		}
 		dg.mediaConf = conf
 		return nil
 	}
 }
 
-// WithMediaProfile registers a named, complete media configuration. A
+// withMediaProfile registers a named, complete media configuration. A
 // Transport selects one with Transport.Profile (empty selects the
-// WithMediaConfig default). Unlike the removed TransportMediaConfig there is
+// withMediaConfig default). Unlike the removed TransportMediaConfig there is
 // no field-level inheritance between profiles: the selected profile is used
 // as is, and only the transport-derived bind/advertise addresses fill fields
 // the profile leaves nil. Registering the same name twice replaces it.
-func WithMediaProfile(name string, conf MediaConfig) AgentOption {
+func withMediaProfile(name string, conf MediaConfig) agentOption {
 	return func(dg *Agent) error {
 		if strings.TrimSpace(name) == "" {
-			return fmt.Errorf("%w: WithMediaProfile: name is empty", ErrInvalidOption)
+			return fmt.Errorf("%w: withMediaProfile: name is empty", ErrInvalidOption)
 		}
 		if err := validateMediaConfig(conf); err != nil {
-			return fmt.Errorf("%w: WithMediaProfile %q: %w", ErrInvalidOption, name, err)
+			return fmt.Errorf("%w: withMediaProfile %q: %w", ErrInvalidOption, name, err)
 		}
 		if dg.mediaProfiles == nil {
 			dg.mediaProfiles = map[string]MediaConfig{}
@@ -438,120 +438,113 @@ func WithMediaProfile(name string, conf MediaConfig) AgentOption {
 	}
 }
 
-// WithHTTPClient sets the HTTP client used by URL playback
+// withHTTPClient sets the HTTP client used by URL playback
 // (AudioPlayback.PlayURL/PlayURLContext) on the dialogs of this agent. Nil is
 // rejected. The default client has a 20s timeout; set
 // MediaConfig.HTTPClient directly when a whole config is provided.
-func WithHTTPClient(client *http.Client) AgentOption {
+func withHTTPClient(client *http.Client) agentOption {
 	return func(dg *Agent) error {
 		if client == nil {
-			return fmt.Errorf("%w: WithHTTPClient: client is nil", ErrInvalidOption)
+			return fmt.Errorf("%w: withHTTPClient: client is nil", ErrInvalidOption)
 		}
 		dg.httpClient = client
 		return nil
 	}
 }
 
-// WithServer allows providing custom server handle. It must use the same UA
+// withServer allows providing custom server handle. It must use the same UA
 // as the agent.
-func WithServer(srv *Server) AgentOption {
+func withServer(srv *Server) agentOption {
 	return func(dg *Agent) error {
 		if srv == nil {
-			return fmt.Errorf("%w: WithServer: server is nil", ErrInvalidOption)
+			return fmt.Errorf("%w: withServer: server is nil", ErrInvalidOption)
 		}
 		dg.server = srv
 		return nil
 	}
 }
 
-// WithClient allows providing custom client handle. It must use the same UA
+// withClient allows providing custom client handle. It must use the same UA
 // as the agent.
-func WithClient(client *Client) AgentOption {
+func withClient(client *Client) agentOption {
 	return func(dg *Agent) error {
 		if client == nil {
-			return fmt.Errorf("%w: WithClient: client is nil", ErrInvalidOption)
+			return fmt.Errorf("%w: withClient: client is nil", ErrInvalidOption)
 		}
 		dg.client = client
 		return nil
 	}
 }
 
-// WithUserAgent supplies an externally created sipgo UserAgent. The caller
+// withUserAgent supplies an externally created sipgo UserAgent. The caller
 // keeps ownership: Close does not close it, so the same UserAgent can be
 // shared between agents. When not set, New creates a private UserAgent and
 // Close closes it.
-func WithUserAgent(ua *UserAgent) AgentOption {
+func withUserAgent(ua *UserAgent) agentOption {
 	return func(dg *Agent) error {
 		if ua == nil {
-			return fmt.Errorf("%w: WithUserAgent: user agent is nil", ErrInvalidOption)
+			return fmt.Errorf("%w: withUserAgent: user agent is nil", ErrInvalidOption)
 		}
 		dg.ua = ua
 		return nil
 	}
 }
 
-// WithUserAgentName sets the user name of the private UserAgent created by
-// New (default "diago"). It is ignored when WithUserAgent supplies one.
-func WithUserAgentName(name string) AgentOption {
+// withUserAgentName sets the user name of the private UserAgent created by
+// New (default "diago"). It is ignored when withUserAgent supplies one.
+func withUserAgentName(name string) agentOption {
 	return func(dg *Agent) error {
 		if name == "" {
-			return fmt.Errorf("%w: WithUserAgentName: name is empty", ErrInvalidOption)
+			return fmt.Errorf("%w: withUserAgentName: name is empty", ErrInvalidOption)
 		}
 		dg.uaName = name
 		return nil
 	}
 }
 
-// WithUserAgentHostname sets the hostname presented in From/Contact of the
+// withUserAgentHostname sets the hostname presented in From/Contact of the
 // private UserAgent created by New (default sipgo's "localhost"). It is
-// ignored when WithUserAgent supplies one.
-func WithUserAgentHostname(hostname string) AgentOption {
+// ignored when withUserAgent supplies one.
+func withUserAgentHostname(hostname string) agentOption {
 	return func(dg *Agent) error {
 		if hostname == "" {
-			return fmt.Errorf("%w: WithUserAgentHostname: hostname is empty", ErrInvalidOption)
+			return fmt.Errorf("%w: withUserAgentHostname: hostname is empty", ErrInvalidOption)
 		}
 		dg.uaHostname = hostname
 		return nil
 	}
 }
 
-// WithLogger sets the logger for sipgo, the Agent engine, and the media
+// withLogger sets the logger for sipgo, the Agent engine, and the media
 // pipeline logs (hold music, DTMF relay, playback and media internals) unless
 // MediaConfig.Logger explicitly overrides it. Nil is rejected (the default is
 // sip.DefaultLogger()).
-func WithLogger(l *slog.Logger) AgentOption {
+func withLogger(l *slog.Logger) agentOption {
 	return func(dg *Agent) error {
 		if l == nil {
-			return fmt.Errorf("%w: WithLogger: logger is nil", ErrInvalidOption)
+			return fmt.Errorf("%w: withLogger: logger is nil", ErrInvalidOption)
 		}
 		dg.log = l
 		return nil
 	}
 }
 
-// WithServerRequestMiddleware wraps every request handler registered by the
+// withServerRequestMiddleware wraps every request handler registered by the
 // agent.
-func WithServerRequestMiddleware(f func(next RequestHandler) RequestHandler) AgentOption {
+func withServerRequestMiddleware(f func(next RequestHandler) RequestHandler) agentOption {
 	return func(dg *Agent) error {
 		if f == nil {
-			return fmt.Errorf("%w: WithServerRequestMiddleware: middleware is nil", ErrInvalidOption)
+			return fmt.Errorf("%w: withServerRequestMiddleware: middleware is nil", ErrInvalidOption)
 		}
 		dg.serverMiddleware = f
 		return nil
 	}
 }
 
-// New constructs a b2b user agent that will act as server and client.
-//
-// The UserAgent is optional: without WithUserAgent, New creates a private one
-// (name "diago", WithUserAgentName/WithUserAgentHostname to customize) and
-// Close closes it. A UserAgent passed with WithUserAgent stays caller-owned
-// and is not closed by Close, so it can be shared between agents.
-//
-// New fails when no transport is configured (the v1 implicit 127.0.0.1:5060
-// default was removed), when a configured transport is invalid or when an
-// option rejects its configuration; use WithTransport or WithDefaultTransport.
-func New(opts ...AgentOption) (*Agent, error) {
+// newAgent constructs an Agent from the legacy functional options. New is the
+// public constructor; this helper remains for the internal option tests until
+// the option layer is removed.
+func newAgent(opts ...agentOption) (*Agent, error) {
 	dg := &Agent{
 		log:        sip.DefaultLogger(),
 		transports: []Transport{},
@@ -585,14 +578,14 @@ func New(opts ...AgentOption) (*Agent, error) {
 	if dg.mediaConf.Logger == nil {
 		dg.mediaConf.Logger = dg.log
 	}
-	// WithHTTPClient provides the agent-level default for the playback client
+	// withHTTPClient provides the agent-level default for the playback client
 	// unless the MediaConfig already carries one.
 	if dg.mediaConf.HTTPClient == nil {
 		dg.mediaConf.HTTPClient = dg.httpClient
 	}
 
 	if len(dg.transports) == 0 {
-		return nil, fmt.Errorf("diago: %w: use WithTransport or WithDefaultTransport", ErrNoTransport)
+		return nil, fmt.Errorf("diago: %w: use withTransport or withDefaultTransport", ErrNoTransport)
 	}
 	for i := range dg.transports {
 		if err := dg.transports[i].Validate(); err != nil {
@@ -600,12 +593,12 @@ func New(opts ...AgentOption) (*Agent, error) {
 		}
 		if p := dg.transports[i].Profile; p != "" {
 			if _, ok := dg.mediaProfiles[p]; !ok {
-				return nil, fmt.Errorf("diago: transport %d: media profile %q is not registered: use WithMediaProfile", i, p)
+				return nil, fmt.Errorf("diago: transport %d: media profile %q is not registered: use withMediaProfile", i, p)
 			}
 		}
 	}
 
-	// Resolve the UserAgent: an explicit WithUserAgent wins; otherwise create
+	// Resolve the UserAgent: an explicit withUserAgent wins; otherwise create
 	// a private one owned by this agent (Close closes it).
 	if dg.ua == nil {
 		uaName := dg.uaName
@@ -940,7 +933,7 @@ type MethodHandler func(req *Request, tx ServerTransaction) error
 
 // Handle registers a handler for a SIP method diago does not own (MESSAGE,
 // SUBSCRIBE, PUBLISH, ...). The handler is wrapped by the middleware given to
-// WithServerRequestMiddleware.
+// withServerRequestMiddleware.
 //
 // Handle must be called before Serve/Start: the sipgo method to
 // handler map is not safe to mutate while the server is dispatching, so
@@ -970,7 +963,7 @@ func (dg *Agent) Handle(method RequestMethod, handler MethodHandler) error {
 }
 
 // UA returns the sipgo UserAgent backing this agent. It is never nil after
-// New; it is caller-owned when WithUserAgent was used, otherwise the agent
+// New; it is caller-owned when withUserAgent was used, otherwise the agent
 // closes it in Close.
 func (dg *Agent) UA() *UserAgent {
 	return dg.ua
@@ -978,13 +971,13 @@ func (dg *Agent) UA() *UserAgent {
 
 // Server returns the sipgo SIP server used for incoming requests. It is the
 // escape hatch for sipgo features diago does not expose; prefer Handle for
-// registering additional methods and WithServer for a fully custom server.
+// registering additional methods and withServer for a fully custom server.
 // It is never nil after New.
 func (dg *Agent) Server() *Server {
 	return dg.server
 }
 
-// Client returns the shared sipgo client provided with WithClient, or nil
+// Client returns the shared sipgo client provided with withClient, or nil
 // when each transport uses its own client.
 func (dg *Agent) Client() *Client {
 	return dg.client
@@ -1245,7 +1238,7 @@ const shutdownDialogHangupTimeout = 3 * time.Second
 //  3. It stops the SIP listeners started by Serve/Start and waits
 //     for them to exit.
 //  4. It closes the private UserAgent created by New. A UserAgent passed with
-//     WithUserAgent is caller-owned and is NOT closed, so it can be shared
+//     withUserAgent is caller-owned and is NOT closed, so it can be shared
 //     between agents; call ua.Close() yourself when done.
 //
 // Ownership boundaries:
@@ -1307,7 +1300,7 @@ func (dg *Agent) Close(ctx context.Context) error {
 		errs = append(errs, fmt.Errorf("shutdown timed out waiting for listeners: %w", ctx.Err()))
 	}
 
-	// Phase 3: close the private UserAgent. A caller-owned one (WithUserAgent)
+	// Phase 3: close the private UserAgent. A caller-owned one (withUserAgent)
 	// is intentionally left open.
 	if dg.ownedUA && dg.ua != nil {
 		if err := dg.ua.Close(); err != nil {
@@ -1630,7 +1623,7 @@ func (dg *Agent) newDialogWithParams(recipient URI, params *signalParams) (d *Ou
 
 // mediaConfigForTransport selects the media config for dialogs carried over
 // the transport: the profile named by Transport.Profile, or the default
-// (WithMediaConfig) when no profile is selected. The selected profile is used
+// (withMediaConfig) when no profile is selected. The selected profile is used
 // as is; only the transport-derived bind/advertise addresses fill fields the
 // profile leaves nil (a concrete BindHost supplies the media bind IP, an
 // explicit ExternalHost supplies the advertised IP). A configured DTLS
@@ -1651,7 +1644,7 @@ func (dg *Agent) mediaConfigForTransport(tran *Transport) MediaConfig {
 		if bindIP := tran.bindIP; bindIP != nil && !bindIP.IsUnspecified() {
 			conf.Network.BindIP = bindIP
 		} else if bindIP := net.ParseIP(tran.BindHost); bindIP != nil && !bindIP.IsUnspecified() {
-			// A Transport built as a literal (not through WithTransport) still
+			// A Transport built as a literal (not through withTransport) still
 			// pins a concrete BindHost.
 			conf.Network.BindIP = bindIP
 		}

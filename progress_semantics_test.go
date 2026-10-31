@@ -30,7 +30,7 @@ func TestProgressSemantics(t *testing.T) {
 
 	uaSrv, _ := sipgo.NewUA()
 	defer uaSrv.Close()
-	dgSrv, err := New(WithUserAgent(uaSrv), WithTransport(Transport{
+	dgSrv, err := newAgent(withUserAgent(uaSrv), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestProgressSemantics(t *testing.T) {
 
 	uaCli, _ := sipgo.NewUA()
 	defer uaCli.Close()
-	dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
+	dgCli, err := newAgent(withUserAgent(uaCli), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)

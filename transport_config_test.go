@@ -99,7 +99,7 @@ func TestServeTLS4Transport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{
 		Network:  "tls4",
 		BindHost: "127.0.0.1",
 		TLSConf:  &tls.Config{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
@@ -121,11 +121,11 @@ func TestNewRequiresTransport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	_, err = New(WithUserAgent(ua))
+	_, err = newAgent(withUserAgent(ua))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no transport configured")
 
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 	require.Len(t, dg.transports, 1)
 	assert.Equal(t, "udp", dg.transports[0].Network)
@@ -138,21 +138,21 @@ func TestNewRejectsInvalidTransport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	_, err = New(WithUserAgent(ua), WithTransport(Transport{Network: "bogus"}))
+	_, err = newAgent(withUserAgent(ua), withTransport(Transport{Network: "bogus"}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid network")
 
-	_, err = New(WithUserAgent(ua), WithTransport(Transport{Network: "tls", BindPort: 0}))
+	_, err = newAgent(withUserAgent(ua), withTransport(Transport{Network: "tls", BindPort: 0}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires TLSConf")
 
-	// WithTransport trims the suffix from Transport, so New must validate
+	// withTransport trims the suffix from Transport, so New must validate
 	// the raw network it kept.
-	_, err = New(WithUserAgent(ua), WithTransport(Transport{Network: "tls6", TLSConf: &tls.Config{}}))
+	_, err = newAgent(withUserAgent(ua), withTransport(Transport{Network: "tls6", TLSConf: &tls.Config{}}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported by the sip stack")
 
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "tls4", BindHost: "127.0.0.1", TLSConf: &tls.Config{}}))
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{Network: "tls4", BindHost: "127.0.0.1", TLSConf: &tls.Config{}}))
 	require.NoError(t, err)
 	require.Len(t, dg.transports, 1)
 	assert.Equal(t, "tls4", dg.transports[0].network)
@@ -168,7 +168,7 @@ func TestAgentTransportsResolved(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "udp4", BindHost: "127.0.0.1"}))
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{Network: "udp4", BindHost: "127.0.0.1"}))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -209,7 +209,7 @@ func TestAgentTransportsResolved(t *testing.T) {
 func TestReaderWriterWithProps(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
-	}, WithMediaConfig(MediaConfig{
+	}, withMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 	}))
 

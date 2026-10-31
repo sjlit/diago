@@ -58,7 +58,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 	}
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	srv, err := New(WithUserAgent(ua), WithTransport(tran))
+	srv, err := newAgent(withUserAgent(ua), withTransport(tran))
 	require.NoError(t, err)
 
 	err = srv.ServeBackground(ctx, func(_ context.Context, d *InboundCall) error {
@@ -125,7 +125,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 				// Build UAC
 				ua, _ := sipgo.NewUA()
 				defer ua.Close()
-				phone, err := New(WithUserAgent(ua), WithDefaultTransport())
+				phone, err := newAgent(withUserAgent(ua), withDefaultTransport())
 				require.NoError(t, err)
 				id, _ := rand.Int(rand.Reader, big.NewInt(int64(runtime.GOMAXPROCS(0))))
 				for p.Next() {

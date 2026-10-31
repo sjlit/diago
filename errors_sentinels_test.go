@@ -57,13 +57,13 @@ func TestConfigSentinels(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	_, err = New(WithUserAgent(ua))
+	_, err = newAgent(withUserAgent(ua))
 	assert.ErrorIs(t, err, ErrNoTransport)
 
-	_, err = New(WithUserAgent(nil), WithDefaultTransport())
+	_, err = newAgent(withUserAgent(nil), withDefaultTransport())
 	assert.ErrorIs(t, err, ErrInvalidOption)
 
-	_, err = New(WithUserAgent(ua), WithDefaultTransport(), WithMediaConfig(MediaConfig{}))
+	_, err = newAgent(withUserAgent(ua), withDefaultTransport(), withMediaConfig(MediaConfig{}))
 	assert.ErrorIs(t, err, ErrInvalidOption)
 }
 
@@ -106,7 +106,7 @@ func TestServeSentinels(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1"}))
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1"}))
 	require.NoError(t, err)
 	require.NoError(t, dg.ServeBackground(ctx, nil))
 

@@ -23,26 +23,28 @@ func main() {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := diago.New(diago.WithUserAgent(ua),
-		diago.WithMediaProfile("dtls", diago.MediaConfig{
-			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
-			SRTP: diago.SRTPConfig{ // This enables SRTP DTLS
-				Mode: diago.SecureRTPDTLS,
-				DTLS: media.DTLSConfig{
-					Certificates:     []tls.Certificate{testdata.ServerCertificate()},
-					ServerClientAuth: media.ServerClientAuthRequireCert,
+	dg, err := diago.New(diago.Config{
+		UserAgent: ua,
+		MediaProfiles: map[string]diago.MediaConfig{
+			"dtls": {
+				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				SRTP: diago.SRTPConfig{ // This enables SRTP DTLS
+					Mode: diago.SecureRTPDTLS,
+					DTLS: media.DTLSConfig{
+						Certificates:     []tls.Certificate{testdata.ServerCertificate()},
+						ServerClientAuth: media.ServerClientAuthRequireCert,
+					},
 				},
 			},
-		}),
-		diago.WithTransport(
-			diago.Transport{
-				ID:       "tcp",
-				Network:  "tcp",
-				BindHost: "127.0.0.1",
-				BindPort: 16443,
-				Profile:  "dtls",
-			},
-		))
+		},
+		Transports: []diago.Transport{{
+			ID:       "tcp",
+			Network:  "tcp",
+			BindHost: "127.0.0.1",
+			BindPort: 16443,
+			Profile:  "dtls",
+		}},
+	})
 	if err != nil {
 		slog.Error("failed to create diago", "error", err)
 		return

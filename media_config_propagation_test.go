@@ -16,15 +16,15 @@ import (
 )
 
 // TestDiagoMediaProfileForTransport locks the profile selection contract: a
-// transport without a profile uses the WithMediaConfig default, and a named
+// transport without a profile uses the withMediaConfig default, and a named
 // profile is used as a complete configuration (no field-level inheritance).
 func TestDiagoMediaProfileForTransport(t *testing.T) {
 	ua, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua),
-		WithMediaConfig(MediaConfig{
+	dg, err := newAgent(withUserAgent(ua),
+		withMediaConfig(MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
 			Network: NetworkConfig{
 				RTPNAT:       media.RTPNATSymetric,
@@ -34,11 +34,11 @@ func TestDiagoMediaProfileForTransport(t *testing.T) {
 			SRTP: SRTPConfig{Alg: 1},
 			SDP:  SDPConfig{CodecPreferLocalOrder: 1},
 		}),
-		WithMediaProfile("sdes", MediaConfig{
+		withMediaProfile("sdes", MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			SRTP:   SRTPConfig{Mode: SecureRTPSDES, Alg: 2},
 		}),
-		WithDefaultTransport(),
+		withDefaultTransport(),
 	)
 	require.NoError(t, err)
 
@@ -77,13 +77,13 @@ func TestDiagoMediaProfileTransportAddressFill(t *testing.T) {
 		},
 		SRTP: SRTPConfig{Mode: SecureRTPSDES, Alg: 2},
 	}
-	dg, err := New(WithUserAgent(ua),
-		WithMediaConfig(global),
-		WithMediaProfile("public", MediaConfig{
+	dg, err := newAgent(withUserAgent(ua),
+		withMediaConfig(global),
+		withMediaProfile("public", MediaConfig{
 			Codecs:  []media.Codec{media.CodecAudioUlaw},
 			Network: NetworkConfig{ExternalIP: net.IPv4(203, 0, 113, 9)},
 		}),
-		WithDefaultTransport(),
+		withDefaultTransport(),
 	)
 	require.NoError(t, err)
 
@@ -111,7 +111,7 @@ func TestDiagoMediaProfileUnknownTransport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	_, err = New(WithUserAgent(ua), WithTransport(Transport{
+	_, err = newAgent(withUserAgent(ua), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 		Profile: "missing",
 	}))
@@ -124,7 +124,7 @@ func TestDiagoMediaProfileUnknownTransport(t *testing.T) {
 func TestDiagoMediaConfigAppliesToSession(t *testing.T) {
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
-	}, WithMediaConfig(MediaConfig{
+	}, withMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 		Network: NetworkConfig{
 			RTPNAT:       media.RTPNATSymetric,
@@ -152,7 +152,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 	t.Run("custom", func(t *testing.T) {
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 			return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
-		}, WithMediaConfig(MediaConfig{
+		}, withMediaConfig(MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			SDP:    SDPConfig{SessionName: "AcmePBX"},
 		}))
@@ -170,7 +170,7 @@ func TestDiagoMediaConfigSDPSessionNamePropagation(t *testing.T) {
 	t.Run("default when empty", func(t *testing.T) {
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 			return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
-		}, WithMediaConfig(MediaConfig{
+		}, withMediaConfig(MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 		}))
 

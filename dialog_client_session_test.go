@@ -23,7 +23,7 @@ import (
 
 func newDialer(t *testing.T, ua *sipgo.UserAgent) *Agent {
 	t.Helper()
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
 	return dg
 }
@@ -56,7 +56,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 	)
 	defer ua.Close()
 
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 
 	err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
@@ -171,7 +171,7 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 	port := 15000 + rand.IntN(999)
-	dg, err := New(WithUserAgent(ua), WithTransport(
+	dg, err := newAgent(withUserAgent(ua), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
@@ -262,7 +262,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 			slog.Error("Failed to hangup", "error", err)
 		}
 		return nil
-	}, WithUserAgent(uaSrv), WithTransport(
+	}, withUserAgent(uaSrv), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
@@ -322,7 +322,7 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 		}))
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(uaSrv), WithTransport(
+	}, withUserAgent(uaSrv), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
@@ -372,13 +372,13 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 		}
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(uaSrv), WithTransport(
+	}, withUserAgent(uaSrv), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
 			BindPort: 0,
 		},
-	), WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+	), withServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 		return func(req *sip.Request, tx sip.ServerTransaction) {
 			if req.Method == sip.ACK {
 				mu.Lock()
@@ -449,7 +449,7 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 		}))
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(uaSrv), WithTransport(
+	}, withUserAgent(uaSrv), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
@@ -544,7 +544,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 
 			<-ctx.Done()
 			return nil
-		}, WithUserAgent(uaSrv), WithTransport(
+		}, withUserAgent(uaSrv), withTransport(
 			Transport{
 				Network:  "udp",
 				BindHost: "127.0.0.1",
@@ -655,7 +655,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 			}
 			<-d.Context().Done()
 			return nil
-		}, WithUserAgent(ua), WithTransport(
+		}, withUserAgent(ua), withTransport(
 			Transport{
 				Network:  "udp",
 				BindHost: "127.0.0.1",

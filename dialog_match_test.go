@@ -34,7 +34,7 @@ func newDialogRequest(callID, fromTag, toTag string) *sip.Request {
 
 func TestDiagoMatchDialog_NilAndOutOfDialog(t *testing.T) {
 	ua, _ := sipgo.NewUA()
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
@@ -72,7 +72,7 @@ func TestDiagoMatchDialog_NilAndOutOfDialog(t *testing.T) {
 
 func TestDiagoMatchDialog_ServerAndClient(t *testing.T) {
 	ua, _ := sipgo.NewUA()
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
@@ -107,7 +107,7 @@ func TestDiagoMatchDialog_ServerAndClient(t *testing.T) {
 
 func TestDiagoMatchDialog_ServerPriority(t *testing.T) {
 	ua, _ := sipgo.NewUA()
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 

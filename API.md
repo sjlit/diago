@@ -8,7 +8,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - Call legs are `InboundCall` (UAS) and `OutboundCall` (UAC); the shared
   contract is the `Call` interface. Do not re-introduce `Dialog*` types.
 - The engine is `Agent`, constructed by `New`. Options are per-domain types
-  (`AgentOption`, `SignalOption`, `MediaConfig`, `ReaderOption`, ...).
+  (`Config`, `SignalOption`, `MediaConfig`, `ReaderOption`, ...).
 - Methods follow one verb per intent:
   - `New*` constructs an object or a media handle (`New`, `NewCall`,
     `NewBridge`, `NewPlayback`, `NewDTMFReader`, ...). A playback handle
@@ -44,8 +44,7 @@ Conventions used by the public API. New code (and reviews) should follow them;
   error wraps `ErrInvalidOption`.
 - Nil options are skipped; slices of options must use the operation's
   interface type (`[]diago.RegisterOption`, not `[]diago.SignalOption`).
-- Agent-level options validate in `New` and abort construction
-  (`AgentOption` returns an error).
+- Agent-level configuration validates in `New` and aborts construction.
 
 ## Errors
 
@@ -81,22 +80,22 @@ Conventions used by the public API. New code (and reviews) should follow them;
   dialog (media, cache entry) when it ends.
 - `Agent.Close` hangs up dialogs, unregisters and stops the registrations it
   created (`Register`/`RegisterURI`), stops listeners and closes the private
-  UserAgent. A UserAgent supplied with `WithUserAgent` stays caller-owned.
+  UserAgent. A UserAgent supplied with `Config.UserAgent` stays caller-owned.
 - Caller-owned resources are explicit: the UserAgent (when supplied),
   registrations created with `WithRegistrationDetached`, REGISTER
   transactions, outgoing calls that never got a response, bridge objects.
 
 ## Configuration
 
-- No package-level mutable configuration: settings live in `AgentOption`,
+- No package-level mutable configuration: settings live in `Config`,
   `MediaConfig`, `media.MediaSession` fields or per-call options. Tracers,
   debug switches, loggers and HTTP clients are per instance.
 - Media configs are complete values; `Transport.Profile` selects a named
-  profile registered with `WithMediaProfile` and there is no field-level merge
+  profile registered in `Config.MediaProfiles` and there is no field-level merge
   between profiles. Transport-derived bind/advertise addresses only fill
   fields a profile leaves nil.
 - Defaults are documented next to the field (`NetworkConfig.RTPPortStart`,
-  `MediaConfig.Debug`, `WithHTTPClient`, ...).
+  `MediaConfig.Debug`, `Config.HTTPClient`, ...).
 
 ## Concurrency
 
@@ -115,12 +114,12 @@ Conventions used by the public API. New code (and reviews) should follow them;
 - sipgo types are exposed through aliases in `aliases.go` (`URI`, `Header`,
   `Request`, `Response`, `ServerTransaction`, `RequestHandler`, ...); keep new
   signatures on the aliases so applications can use diago without importing
-  sipgo. Escape hatches are explicit: `WithUserAgent`, `WithServer`,
-  `WithClient`, `Agent.Server`, `Agent.UA`, `call.SIP`.
+  sipgo. Escape hatches are explicit: `Config.UserAgent`, `Config.Server`,
+  `Config.Client`, `Agent.Server`, `Agent.UA`, `call.SIP`.
 - `media` and `audio` are subpackages of this module, not third-party
   dependencies: they stay explicit imports and are intentionally not aliased.
 - Accessors: `Agent.UA` and `Agent.Server` never return nil; `Agent.Client` is
-  nil unless `WithClient` was used (each transport then uses its own client).
+  nil unless `Config.Client` was used (each transport then uses its own client).
   `Agent.Transports` returns resolved copies of the transport configuration.
 - `git grep 'sipgo\.' -- '*_test.go'` is fine; production signatures should
   not grow new direct sipgo types.

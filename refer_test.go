@@ -65,13 +65,13 @@ func newReferEnv(t *testing.T, ctx context.Context, onTransferor CallHandler) *r
 
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	}, withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
 	uaTransferor, _ := sipgo.NewUA(sipgo.WithUserAgent("transferor"))
 	t.Cleanup(func() { uaTransferor.Close() })
 	_, env.transferorPort = servingAgent(t, ctx, onTransferor,
-		WithUserAgent(uaTransferor),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		withUserAgent(uaTransferor),
+		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 	)
 
 	// The dialer listens for re-INVITEs of its own call, so it needs a
@@ -79,8 +79,8 @@ func newReferEnv(t *testing.T, ctx context.Context, onTransferor CallHandler) *r
 	uaDialer, _ := sipgo.NewUA()
 	t.Cleanup(func() { uaDialer.Close() })
 	env.dialer, _ = servingAgent(t, ctx, nil,
-		WithUserAgent(uaDialer),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0, ID: "udp"}),
+		withUserAgent(uaDialer),
+		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0, ID: "udp"}),
 	)
 
 	return env

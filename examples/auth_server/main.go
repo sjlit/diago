@@ -33,7 +33,10 @@ func main() {
 
 func start(ctx context.Context) error {
 	ua, _ := sipgo.NewUA()
-	dg, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
+	dg, err := diago.New(diago.Config{
+		UserAgent:  ua,
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		return err
 	}

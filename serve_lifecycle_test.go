@@ -36,7 +36,7 @@ func TestServeCallerContextCancelDuringStartup(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{
 		Network:  "udp",
 		BindHost: "127.0.0.1",
 		BindPort: port,

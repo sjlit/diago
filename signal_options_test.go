@@ -128,9 +128,9 @@ func TestIntegrationSignalOptions(t *testing.T) {
 	uaSrv, _ := sipgo.NewUA(sipgo.WithUserAgent("server"))
 	defer uaSrv.Close()
 
-	dgSrv, err := New(WithUserAgent(uaSrv),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
-		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+	dgSrv, err := newAgent(withUserAgent(uaSrv),
+		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		withServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				switch req.Method {
 				case sip.INVITE, sip.BYE:

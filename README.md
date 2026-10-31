@@ -35,8 +35,10 @@ func main() {
 	defer cancel()
 
 	// No sipgo UserAgent needed: New creates a private one and Close owns it.
-	// (WithUserAgent supplies a shared, caller-owned UserAgent instead.)
-	agent, err := diago.New(diago.WithDefaultTransport())
+	// (Config.UserAgent supplies a shared, caller-owned UserAgent instead.)
+	agent, err := diago.New(diago.Config{
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -97,8 +99,8 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 - **Lifecycle**: `Agent.Close` hangs up tracked dialogs, unregisters the
   registrations it created, stops the listeners
   started by `Serve`/`Start` and closes the private UserAgent. A
-  UserAgent supplied with `WithUserAgent` (and servers/clients from
-  `WithServer`/`WithClient`) stay caller-owned.
+  UserAgent supplied with `Config.UserAgent` (and servers/clients from
+  `Config.Server`/`Config.Client`) stay caller-owned.
 - **Media**: `call.Media()` is the single owner of the media session.
   Components (`NewPlayback`, `StartStereoRecording`, `StartMusicOnHold`,
   `SendDTMF`, `PlayTone`, ...) resolve the reader/writer at use time, so re-INVITEs
@@ -116,7 +118,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
 - **Configuration**: construction-time media settings live in `MediaConfig`
   (`Codecs`, `SRTP`, `Network`, `SDP`, `MusicOnHold`, `Logger`, `Debug`,
   `Tracer`, `HTTPClient`). Transports can select a complete named profile with
-  `WithMediaProfile` + `Transport.Profile`; there is no package-level mutable
+  `Config.MediaProfiles` + `Transport.Profile`; there is no package-level mutable
   configuration.
 - **REGISTER**: `Agent.Register` returns a `*Registration` handle
   (`WaitReady`/`Wait`/`Close`) that keeps the registration refreshed and
@@ -125,7 +127,7 @@ bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
   exposes single attempts (`Register`/`Qualify`/`Unregister`).
 - **sipgo interop**: sipgo types in signatures are aliases (`diago.URI`,
   `diago.Header`, `diago.Request`, `diago.Response`, ...), so importing sipgo
-  is optional. Escape hatches: `WithUserAgent`, `WithServer`, `WithClient`,
+  is optional. Escape hatches: `Config.UserAgent`, `Config.Server`, `Config.Client`,
   `Agent.Server`, `Agent.UA`, `call.SIP`.
 - **Background helpers**: `ListenBackground`, `AudioRingtone.PlayBackground`,
   `PauseAudioRead/Write` and `Bridge.ProxyMediaControl` return `StopFunc`
@@ -140,8 +142,8 @@ v1 imported `github.com/sjlit/diago`; v2 is `github.com/sjlit/diago/v2`.
 
 | v1 | current |
 | --- | --- |
-| `diago.NewDiago(ua, opts...) *Diago` | `diago.New(opts...) (*Agent, error)`; `ua` is optional (`WithUserAgent`) |
-| implicit loopback transport | `WithDefaultTransport()` or `WithTransport(...)` |
+| `diago.NewDiago(ua, opts...) *Diago` | `diago.New(Config) (*Agent, error)`; `ua` is optional (`Config.UserAgent`) |
+| implicit loopback transport | `Config.Transports` (`DefaultTransport()` for the loopback default) |
 | `ServeDialogFunc func(d)` | `CallHandler func(ctx, *InboundCall) error` (error → SIP response) |
 | `HandleFunc(f)` | handler is passed to `Serve`/`Start` |
 | `Invite` / `InviteBridge` | `Dial` / `DialBridge` (string target; `DialURI` for a parsed URI) |
@@ -150,7 +152,7 @@ v1 imported `github.com/sjlit/diago`; v2 is `github.com/sjlit/diago/v2`.
 | `Answer/Progress/...` without ctx | all signaling methods take `ctx` |
 | `WaitAnswer(ctx, sipgo.AnswerOptions)` | `WaitAnswer(ctx, ...WaitAnswerOption)` |
 | `MediaConfig.SecureRTP/SecureRTPAlg/BindIP/ExternalIP/RTPNAT/DTLSConf/...` | grouped into `MediaConfig.SRTP/Network/SDP` |
-| `Transport.MediaSRTP/MediaExternalIP/MediaDTLSConf` | `WithMediaProfile` + `Transport.Profile` |
+| `Transport.MediaSRTP/MediaExternalIP/MediaDTLSConf` | `Config.MediaProfiles` + `Transport.Profile` |
 | `AudioStereoRecordingCreate` | `Media.StartStereoRecording` |
 | `DialogCacheServer/Client`, cache `MatchDialog*` | removed; `Agent.FindCall(req)` |
 | `Bridge.GetDialogs` | removed; track the sessions you add (`Bridge.Add/Remove`) |

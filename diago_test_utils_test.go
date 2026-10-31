@@ -90,9 +90,9 @@ func agentPort(t *testing.T, dg *Agent) int {
 // atomic: the test goroutine writes the value while handler goroutines run
 // concurrently, which the race detector flags without that edge (see
 // bridge_test.go for the atomic.Int32 pattern).
-func servingAgent(t *testing.T, ctx context.Context, h CallHandler, opts ...AgentOption) (*Agent, int) {
+func servingAgent(t *testing.T, ctx context.Context, h CallHandler, opts ...agentOption) (*Agent, int) {
 	t.Helper()
-	dg, err := New(opts...)
+	dg, err := newAgent(opts...)
 	require.NoError(t, err)
 	require.NoError(t, dg.ServeBackground(ctx, h))
 	return dg, agentPort(t, dg)

@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Response, opts ...AgentOption) *Agent {
+func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Response, opts ...agentOption) *Agent {
 	// Create client transaction request
 	cTxReq := &clientTxRequester{
 		onRequest: onRequest,
@@ -39,8 +39,8 @@ func testDiagoClient(t *testing.T, onRequest func(req *sip.Request) *sip.Respons
 		ua.Close()
 	})
 
-	opts = append(opts, WithDefaultTransport(), WithClient(client), WithUserAgent(ua))
-	dg, err := New(opts...)
+	opts = append(opts, withDefaultTransport(), withClient(client), withUserAgent(ua))
+	dg, err := newAgent(opts...)
 	require.NoError(t, err)
 	return dg
 }
@@ -339,12 +339,12 @@ func TestDiagoTransportConfs(t *testing.T) {
 
 	doTest := func(tc testCase) {
 		tran := tc.tran
-		opts := []AgentOption{}
+		opts := []agentOption{}
 		if tc.profile != nil {
 			tran.Profile = "test"
-			opts = append(opts, WithMediaProfile("test", *tc.profile))
+			opts = append(opts, withMediaProfile("test", *tc.profile))
 		}
-		opts = append(opts, WithTransport(tran))
+		opts = append(opts, withTransport(tran))
 		reqCh := make(chan *sip.Request)
 		dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 			reqCh <- req
@@ -453,7 +453,7 @@ func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
 
-	dg, err := New(WithUserAgent(ua), WithTransport(tran))
+	dg, err := newAgent(withUserAgent(ua), withTransport(tran))
 	require.NoError(t, err)
 
 	err = dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
@@ -494,8 +494,8 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
-		}, WithUserAgent(ua),
-			WithTransport(
+		}, withUserAgent(ua),
+			withTransport(
 				Transport{
 					ID:       "tcp",
 					Network:  "tcp",
@@ -503,7 +503,7 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 					BindPort: 0,
 				},
 			),
-			WithMediaConfig(
+			withMediaConfig(
 				MediaConfig{
 					Codecs: []media.Codec{l16Codec, media.CodecAudioAlaw},
 				},
@@ -512,15 +512,15 @@ func TestIntegrationDiagoCallWithCustomCodecs(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := New(WithUserAgent(ua),
-		WithTransport(
+	dg, err := newAgent(withUserAgent(ua),
+		withTransport(
 			Transport{
 				ID:       "tcp",
 				Network:  "tcp",
 				BindHost: "127.0.0.1",
 			},
 		),
-		WithMediaConfig(
+		withMediaConfig(
 			MediaConfig{
 				Codecs: []media.Codec{l16Codec, media.CodecAudioAlaw},
 			},
@@ -561,12 +561,12 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
-		}, WithUserAgent(ua),
-			WithMediaProfile("secure", MediaConfig{
+		}, withUserAgent(ua),
+			withMediaProfile("secure", MediaConfig{
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 				SRTP:   SRTPConfig{Mode: SecureRTPSDES}, // This enables SRTP
 			}),
-			WithTransport(
+			withTransport(
 				Transport{
 					ID:       "tcp",
 					Network:  "tcp",
@@ -579,12 +579,12 @@ func TestIntegrationDiagoSRTPCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := New(WithUserAgent(ua),
-		WithMediaProfile("secure", MediaConfig{
+	dg, err := newAgent(withUserAgent(ua),
+		withMediaProfile("secure", MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			SRTP:   SRTPConfig{Mode: SecureRTPSDES}, // USE SRTP
 		}),
-		WithTransport(
+		withTransport(
 			Transport{
 				ID:       "tcp",
 				Network:  "tcp",
@@ -633,8 +633,8 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 			slog.Info("Echo finished with", "error", err)
 
 			return nil
-		}, WithUserAgent(ua),
-			WithMediaProfile("secure", MediaConfig{
+		}, withUserAgent(ua),
+			withMediaProfile("secure", MediaConfig{
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 				SRTP: SRTPConfig{ // This enables SRTP DTLS
 					Mode: SecureRTPDTLS,
@@ -644,7 +644,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 					},
 				},
 			}),
-			WithTransport(
+			withTransport(
 				Transport{
 					ID:       "tcp",
 					Network:  "tcp",
@@ -657,8 +657,8 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 
 	ua, _ := sipgo.NewUA()
 	defer ua.Close()
-	dg, err := New(WithUserAgent(ua),
-		WithMediaProfile("secure", MediaConfig{
+	dg, err := newAgent(withUserAgent(ua),
+		withMediaProfile("secure", MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 			SRTP: SRTPConfig{ // USE DTLS
 				Mode: SecureRTPDTLS,
@@ -668,7 +668,7 @@ func TestIntegrationDiagoDTLSCall(t *testing.T) {
 				},
 			},
 		}),
-		WithTransport(
+		withTransport(
 			Transport{
 				ID:       "tcp",
 				Network:  "tcp",

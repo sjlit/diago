@@ -57,8 +57,8 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 
 		// Run listener to accepte reinvites, but it should not receive any request
 		dialer, _ = servingAgent(t, ctx, nil,
-			WithUserAgent(ua),
-			WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+			withUserAgent(ua),
+			withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 		)
 	}
 
@@ -71,7 +71,7 @@ func TestIntegrationDialogServerEarlyMedia(t *testing.T) {
 		waitDialog <- d
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	}, withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
 	allResponses := []sip.Response{}
 	// The peer must observe the 183 before the 180 is sent: they travel in
@@ -146,8 +146,8 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 
 		// Run listener to accepte reinvites, but it should not receive any request
 		dialer, _ := servingAgent(t, ctx, nil,
-			WithUserAgent(ua),
-			WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+			withUserAgent(ua),
+			withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 		)
 
 		uaSrv, _ := sipgo.NewUA()
@@ -158,7 +158,7 @@ func TestIntegrationDialogServerReinvite(t *testing.T) {
 			waitDialog <- d
 			<-d.Context().Done()
 			return nil
-		}, WithUserAgent(uaSrv), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+		}, withUserAgent(uaSrv), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
 		go func() {
 			dialog, err := dialer.DialURI(ctx, sip.Uri{User: "dialer", Host: "127.0.0.1", Port: srvPort})
@@ -212,12 +212,12 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 		}()
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(ua),
-		WithMediaProfile("public", MediaConfig{
+	}, withUserAgent(ua),
+		withMediaProfile("public", MediaConfig{
 			Codecs:  []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw, media.CodecTelephoneEvent8000},
 			Network: NetworkConfig{ExternalIP: net.IPv4(203, 0, 113, 10)},
 		}),
-		WithTransport(Transport{
+		withTransport(Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
 			BindPort: 0,
@@ -550,7 +550,7 @@ func TestIntegrationDialogServerAnswerLate(t *testing.T) {
 		}()
 		<-d.Context().Done()
 		return nil
-	}, WithUserAgent(uaSrv), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	}, withUserAgent(uaSrv), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
 	uac := startLateOfferUAC(t, ctx, srvPort, "lateoffer-uac")
 
@@ -775,7 +775,7 @@ func TestIntegrationDialogServerLateOfferInvalidAckSDP(t *testing.T) {
 		case <-time.After(3 * time.Second):
 		}
 		return nil
-	}, WithUserAgent(ua), WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
+	}, withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 
 	uac := startLateOfferUAC(t, ctx, srvPort, "late-ack-uac")
 

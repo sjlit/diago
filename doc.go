@@ -50,7 +50,7 @@
 // is no process-wide mutable media configuration.
 //
 // Transports can carry a different, complete configuration: register one with
-// WithMediaProfile and select it with Transport.Profile. Profiles never merge
+// Config.MediaProfiles and select it with Transport.Profile. Profiles never merge
 // field-by-field; only the transport-derived bind/advertise addresses fill
 // fields a profile leaves nil.
 //
@@ -77,9 +77,9 @@
 //
 // # Lifecycle
 //
-// The UserAgent is optional: without WithUserAgent, New creates a private one
-// and Close closes it. A UserAgent, Server or Client supplied by the caller
-// (WithUserAgent/WithServer/WithClient) stays caller-owned and is not closed.
+// The UserAgent is optional: without Config.UserAgent, New creates a private
+// one and Close closes it. A UserAgent, Server or Client supplied through
+// Config stays caller-owned and is not closed.
 // Close hangs up and closes every tracked dialog, unregisters and stops the
 // registrations created by Register, stops the listeners started by Serve and
 // then closes the private UserAgent. In-flight handlers keep running
@@ -90,7 +90,7 @@
 // The sipgo types in public signatures are aliased in aliases.go (URI, Header,
 // Request, Response, ...), so applications can build on diago without
 // importing sipgo; escape hatches stay explicit (Agent.Server, Agent.UA,
-// call.SIP, WithUserAgent, WithServer, WithClient). API conventions are
+// call.SIP, Config.UserAgent, Config.Server, Config.Client). API conventions are
 // documented in API.md. The media and audio packages belong to this module and
 // are imported explicitly; only sipgo is aliased.
 package diago

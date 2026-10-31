@@ -15,7 +15,7 @@ import (
 
 func startTestAgent(t *testing.T) *Agent {
 	t.Helper()
-	dg, err := New(WithTransport(Transport{
+	dg, err := newAgent(withTransport(Transport{
 		Network:  "udp",
 		BindHost: "127.0.0.1",
 		BindPort: 0,
@@ -60,7 +60,7 @@ func TestStartReportsStartupFailure(t *testing.T) {
 	defer conn.Close()
 	port := conn.LocalAddr().(*net.UDPAddr).Port
 
-	dg, err := New(WithTransport(Transport{
+	dg, err := newAgent(withTransport(Transport{
 		Network:  "udp",
 		BindHost: "127.0.0.1",
 		BindPort: port,

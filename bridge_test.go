@@ -110,7 +110,7 @@ func TestIntegrationBridging(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := New(WithUserAgent(ua), WithTransport(
+	tu, err := newAgent(withUserAgent(ua), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
@@ -165,7 +165,7 @@ func TestIntegrationBridging(t *testing.T) {
 		ua, _ := sipgo.NewUA()
 		defer ua.Close()
 
-		dg, err := New(WithUserAgent(ua), WithTransport(
+		dg, err := newAgent(withUserAgent(ua), withTransport(
 			Transport{
 				Network:  "udp",
 				BindHost: "127.0.0.1",
@@ -239,7 +239,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 		sipgo.WithUserAgent("inbound"),
 	)
 	defer ua.Close()
-	tu, err := New(WithUserAgent(ua), WithTransport(
+	tu, err := newAgent(withUserAgent(ua), withTransport(
 		Transport{
 			Network:  "udp",
 			BindHost: "127.0.0.1",

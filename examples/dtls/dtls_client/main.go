@@ -24,20 +24,22 @@ func main() {
 	examples.SetupLogger()
 
 	ua, _ := sipgo.NewUA()
-	dg, err := diago.New(diago.WithUserAgent(ua),
-		diago.WithMediaProfile("dtls", diago.MediaConfig{
-			Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
-			SRTP:   diago.SRTPConfig{Mode: diago.SecureRTPDTLS}, // USE DTLS
-		}),
-		diago.WithTransport(
-			diago.Transport{
-				ID:       "tcp",
-				Network:  "tcp",
-				BindHost: "127.0.0.1",
-				BindPort: 16441,
-				Profile:  "dtls",
+	dg, err := diago.New(diago.Config{
+		UserAgent: ua,
+		MediaProfiles: map[string]diago.MediaConfig{
+			"dtls": {
+				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
+				SRTP:   diago.SRTPConfig{Mode: diago.SecureRTPDTLS}, // USE DTLS
 			},
-		))
+		},
+		Transports: []diago.Transport{{
+			ID:       "tcp",
+			Network:  "tcp",
+			BindHost: "127.0.0.1",
+			BindPort: 16441,
+			Profile:  "dtls",
+		}},
+	})
 	if err != nil {
 		panic(err)
 	}

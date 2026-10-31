@@ -43,7 +43,10 @@ func main() {
 func start(ctx context.Context, recipientUri string) error {
 	// Setup our main transaction user
 	ua, _ := sipgo.NewUA()
-	d, err := diago.New(diago.WithUserAgent(ua), diago.WithDefaultTransport())
+	d, err := diago.New(diago.Config{
+		UserAgent:  ua,
+		Transports: []diago.Transport{diago.DefaultTransport()},
+	})
 	if err != nil {
 		return err
 	}

@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDialogLoggerPropagation verifies that WithLogger reaches the media
+// TestDialogLoggerPropagation verifies that withLogger reaches the media
 // config (and therefore every media session) unless MediaConfig.Logger
 // explicitly overrides it.
 func TestDialogLoggerPropagation(t *testing.T) {
@@ -26,7 +26,7 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport(), WithLogger(logger))
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport(), withLogger(logger))
 	require.NoError(t, err)
 	require.Same(t, logger, dg.mediaConf.Logger)
 
@@ -35,7 +35,7 @@ func TestDialogLoggerPropagation(t *testing.T) {
 	require.Same(t, logger, dg.mediaConfigForTransport(tran).Logger)
 
 	custom := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dg2, err := New(WithUserAgent(ua), WithDefaultTransport(), WithLogger(logger), WithMediaConfig(MediaConfig{
+	dg2, err := newAgent(withUserAgent(ua), withDefaultTransport(), withLogger(logger), withMediaConfig(MediaConfig{
 		Codecs: []media.Codec{media.CodecAudioUlaw},
 		Logger: custom,
 	}))

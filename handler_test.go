@@ -149,14 +149,14 @@ func TestIntegrationHandlerErrorMapping(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { uaSrv.Close() })
 			_, srvPort := servingAgent(t, ctx, tc.handler,
-				WithUserAgent(uaSrv),
-				WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+				withUserAgent(uaSrv),
+				withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 			)
 
 			uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 			require.NoError(t, err)
 			t.Cleanup(func() { uaCli.Close() })
-			dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
+			dgCli, err := newAgent(withUserAgent(uaCli), withTransport(Transport{
 				Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 			}))
 			require.NoError(t, err)
@@ -188,14 +188,14 @@ func TestIntegrationHandlerContextCanceled(t *testing.T) {
 		<-hctx.Done()
 		handlerCtxErr <- hctx.Err()
 		return nil
-	}, WithUserAgent(uaSrv), WithTransport(Transport{
+	}, withUserAgent(uaSrv), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := New(WithUserAgent(uaCli), WithTransport(Transport{
+	dgCli, err := newAgent(withUserAgent(uaCli), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 		}
 		// The call was answered: the error must turn into BYE + Reason header.
 		return ErrBusy
-	}, WithUserAgent(uaSrv), WithTransport(Transport{
+	}, withUserAgent(uaSrv), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 
@@ -239,9 +239,9 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := New(WithUserAgent(uaCli),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
-		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+	dgCli, err := newAgent(withUserAgent(uaCli),
+		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		withServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				if req.Method == sip.BYE {
 					mu.Lock()
@@ -301,9 +301,9 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 
 	handlerReturned := make(chan struct{})
 	var serverBye atomic.Int32
-	dgSrv, err := New(WithUserAgent(uaSrv),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
-		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+	dgSrv, err := newAgent(withUserAgent(uaSrv),
+		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		withServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				if req.Method == sip.BYE {
 					serverBye.Add(1)
@@ -327,9 +327,9 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 	uaCli, err := sipgo.NewUA(sipgo.WithUserAgent("client"))
 	require.NoError(t, err)
 	t.Cleanup(func() { uaCli.Close() })
-	dgCli, err := New(WithUserAgent(uaCli),
-		WithTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
-		WithServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
+	dgCli, err := newAgent(withUserAgent(uaCli),
+		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
+		withServerRequestMiddleware(func(next sipgo.RequestHandler) sipgo.RequestHandler {
 			return func(req *sip.Request, tx sip.ServerTransaction) {
 				if req.Method == sip.BYE {
 					clientBye.Add(1)

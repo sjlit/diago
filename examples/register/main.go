@@ -64,13 +64,14 @@ func start(ctx context.Context, recipientURI string, username string, regOpts ..
 	)
 	defer ua.Close()
 
-	tu, err := diago.New(diago.WithUserAgent(ua), diago.WithTransport(
-		diago.Transport{
+	tu, err := diago.New(diago.Config{
+		UserAgent: ua,
+		Transports: []diago.Transport{{
 			Network:  "udp",
 			BindHost: "127.0.0.1",
 			BindPort: 15060,
-		},
-	))
+		}},
+	})
 	if err != nil {
 		return err
 	}

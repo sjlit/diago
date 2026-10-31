@@ -23,7 +23,7 @@ type testMediaTracer struct{}
 func (testMediaTracer) RTPTraceRead(string, string, *rtp.Packet)  {}
 func (testMediaTracer) RTPTraceWrite(string, string, *rtp.Packet) {}
 
-// TestNewOptionValidation locks the AgentOption contract: options validate
+// TestNewOptionValidation locks the agentOption contract: options validate
 // their own input and abort construction instead of failing later.
 func TestNewOptionValidation(t *testing.T) {
 	ua, err := sipgo.NewUA()
@@ -31,25 +31,25 @@ func TestNewOptionValidation(t *testing.T) {
 	t.Cleanup(func() { ua.Close() })
 
 	t.Run("nil user agent", func(t *testing.T) {
-		_, err := New(WithUserAgent(nil), WithDefaultTransport())
+		_, err := newAgent(withUserAgent(nil), withDefaultTransport())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "user agent is nil")
 	})
 
 	t.Run("empty transport network", func(t *testing.T) {
-		_, err := New(WithUserAgent(ua), WithTransport(Transport{}))
+		_, err := newAgent(withUserAgent(ua), withTransport(Transport{}))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "network is empty")
 	})
 
 	t.Run("media config without codecs", func(t *testing.T) {
-		_, err := New(WithUserAgent(ua), WithDefaultTransport(), WithMediaConfig(MediaConfig{}))
+		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withMediaConfig(MediaConfig{}))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no codecs")
 	})
 
 	t.Run("media config inverted port range", func(t *testing.T) {
-		_, err := New(WithUserAgent(ua), WithDefaultTransport(), WithMediaConfig(MediaConfig{
+		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withMediaConfig(MediaConfig{
 			Codecs:  []media.Codec{media.CodecAudioUlaw},
 			Network: NetworkConfig{RTPPortStart: 20000, RTPPortEnd: 19000},
 		}))
@@ -58,19 +58,19 @@ func TestNewOptionValidation(t *testing.T) {
 	})
 
 	t.Run("nil logger", func(t *testing.T) {
-		_, err := New(WithUserAgent(ua), WithDefaultTransport(), WithLogger(nil))
+		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withLogger(nil))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "logger is nil")
 	})
 
 	t.Run("nil http client", func(t *testing.T) {
-		_, err := New(WithUserAgent(ua), WithDefaultTransport(), WithHTTPClient(nil))
+		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withHTTPClient(nil))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "client is nil")
 	})
 
 	t.Run("nil options are skipped", func(t *testing.T) {
-		dg, err := New(WithUserAgent(ua), WithDefaultTransport(), nil, WithMediaConfig(MediaConfig{
+		dg, err := newAgent(withUserAgent(ua), withDefaultTransport(), nil, withMediaConfig(MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
 		}))
 		require.NoError(t, err)
@@ -78,10 +78,10 @@ func TestNewOptionValidation(t *testing.T) {
 	})
 }
 
-// TestNewPrivateUserAgent locks the zero-setup path: without WithUserAgent,
+// TestNewPrivateUserAgent locks the zero-setup path: without withUserAgent,
 // New creates a private UserAgent that Close owns.
 func TestNewPrivateUserAgent(t *testing.T) {
-	dg, err := New(WithDefaultTransport(), WithUserAgentName("diago-test"))
+	dg, err := newAgent(withDefaultTransport(), withUserAgentName("diago-test"))
 	require.NoError(t, err)
 	require.NotNil(t, dg.UA())
 	require.True(t, dg.ownedUA, "private UserAgent must be owned by the agent")
@@ -96,7 +96,7 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	server, err := New(WithTransport(Transport{
+	server, err := newAgent(withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 		return nil
 	}))
 
-	client, err := New(WithTransport(Transport{
+	client, err := newAgent(withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
@@ -125,14 +125,14 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 	require.NoError(t, call.Close())
 }
 
-// TestNewCallerOwnedUserAgent locks the shared-UA path: WithUserAgent keeps
+// TestNewCallerOwnedUserAgent locks the shared-UA path: withUserAgent keeps
 // ownership with the caller and Close does not close it.
 func TestNewCallerOwnedUserAgent(t *testing.T) {
 	ua, err := sipgo.NewUA()
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua), WithDefaultTransport())
+	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 	require.False(t, dg.ownedUA)
 	require.Same(t, ua, dg.UA())
@@ -152,7 +152,7 @@ func TestAgentHandle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua), WithTransport(Transport{
+	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
@@ -183,7 +183,7 @@ func TestMediaConfigPropagation(t *testing.T) {
 
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		return sip.NewResponseFromRequest(req, 200, "OK", shutdownTestSDP())
-	}, WithMediaConfig(MediaConfig{
+	}, withMediaConfig(MediaConfig{
 		Codecs:     []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
 		Debug:      true,
 		Tracer:     tracer,
@@ -210,7 +210,7 @@ func TestMediaConfigPropagation(t *testing.T) {
 	require.Same(t, httpClient, pb.httpClient)
 }
 
-// TestWithHTTPClientFallback locks that WithHTTPClient fills
+// TestWithHTTPClientFallback locks that withHTTPClient fills
 // MediaConfig.HTTPClient when the media config does not carry one, regardless
 // of option order.
 func TestWithHTTPClientFallback(t *testing.T) {
@@ -220,10 +220,10 @@ func TestWithHTTPClientFallback(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { ua.Close() })
 
-	dg, err := New(WithUserAgent(ua),
-		WithDefaultTransport(),
-		WithMediaConfig(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}}),
-		WithHTTPClient(httpClient),
+	dg, err := newAgent(withUserAgent(ua),
+		withDefaultTransport(),
+		withMediaConfig(MediaConfig{Codecs: []media.Codec{media.CodecAudioUlaw}}),
+		withHTTPClient(httpClient),
 	)
 	require.NoError(t, err)
 	require.Same(t, httpClient, dg.mediaConf.HTTPClient)
