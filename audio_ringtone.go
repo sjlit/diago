@@ -14,7 +14,8 @@ import (
 	"github.com/sjlit/diago/v2/media"
 )
 
-// AudioRingtone is playback for ringtone
+// AudioRingtone plays the library's pre-generated ringtone on a Media handle.
+// For synthesized tones use Media.PlayTone; for files use Media.NewPlayback.
 type AudioRingtone struct {
 	writer     *audio.PCMEncoderWriter
 	ringtone   []byte

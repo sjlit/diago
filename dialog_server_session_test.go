@@ -239,7 +239,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 
 	// The initial peer offer contains PCMU, PCMA and telephone-event. The
 	// post-answer offer intentionally prunes PCMA, matching the SBC behavior.
-	prunedMedia := dialog.MediaSession().Fork()
+	prunedMedia := dialog.currentMediaSession().Fork()
 	prunedMedia.Codecs = []media.Codec{
 		media.CodecAudioUlaw,
 		media.CodecTelephoneEvent8000,

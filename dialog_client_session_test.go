@@ -519,7 +519,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 			// so the fork interrupts an active RTP flow.
 			time.Sleep(60 * time.Millisecond)
 			var err error
-			ms := d.MediaSession().Fork()
+			ms := d.currentMediaSession().Fork()
 			// Forked session must advertise the address it actually binds:
 			// LocalSDP prefers ExternalIP (inherited from the parent session)
 			// over Laddr, so a mismatched ExternalIP silently redirects the

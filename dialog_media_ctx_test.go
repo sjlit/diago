@@ -19,7 +19,7 @@ import (
 // payload) to the dialog media session.
 func ctxSender(t *testing.T, d *Media) func(n int) {
 	t.Helper()
-	ms := d.MediaSession()
+	ms := d.currentMediaSession()
 	require.NotNil(t, ms)
 	conn, err := net.DialUDP("udp", nil, &ms.Laddr)
 	require.NoError(t, err)

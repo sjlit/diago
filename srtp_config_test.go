@@ -124,14 +124,14 @@ func TestIntegrationDTLSAutoNegotiation(t *testing.T) {
 	}))
 	defer answerer.close()
 
-	offerSDP := offerer.MediaSession().LocalSDP()
+	offerSDP := offerer.currentMediaSession().LocalSDP()
 	require.Contains(t, string(offerSDP), "UDP/TLS/RTP/SAVP")
 	require.Contains(t, string(offerSDP), "a=fingerprint:SHA-256")
 
-	require.NoError(t, answerer.MediaSession().RemoteSDP(offerSDP))
-	answerSDP := answerer.MediaSession().LocalSDP()
+	require.NoError(t, answerer.currentMediaSession().RemoteSDP(offerSDP))
+	answerSDP := answerer.currentMediaSession().LocalSDP()
 	assert.Contains(t, string(answerSDP), "UDP/TLS/RTP/SAVP")
 	assert.Contains(t, string(answerSDP), "a=fingerprint:SHA-256")
 
-	require.NoError(t, offerer.MediaSession().RemoteSDP(answerSDP))
+	require.NoError(t, offerer.currentMediaSession().RemoteSDP(answerSDP))
 }

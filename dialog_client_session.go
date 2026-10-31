@@ -584,7 +584,7 @@ func (d *OutboundCall) Ack(ctx context.Context, opts ...AckOptions) error {
 
 	// NOTE it generally advisable todo this after successfull ACK:
 	// Server may not even listen yet as it is waiting for ACK
-	if ms := d.MediaSession(); ms != nil {
+	if ms := d.currentMediaSession(); ms != nil {
 		if err := ms.Finalize(); err != nil {
 			return err
 		}
@@ -825,7 +825,7 @@ func (d *OutboundCall) handleReInviteACK(req *Request, tx ServerTransaction) err
 
 	// Read via locked getter: sdpUpdateUnsafe above may have replaced the media
 	// session, and a BYE/re-INVITE on another transaction goroutine writes it too
-	if ms := d.MediaSession(); ms != nil {
+	if ms := d.currentMediaSession(); ms != nil {
 		return ms.Finalize()
 	}
 	return nil
@@ -850,7 +850,7 @@ func (d *OutboundCall) Hold(ctx context.Context, opts ...HoldOptions) error {
 	if err != nil {
 		return err
 	}
-	ms := d.MediaSession()
+	ms := d.currentMediaSession()
 	if ms == nil {
 		return ErrDialogNotAnswered
 	}
@@ -871,7 +871,7 @@ func (d *OutboundCall) Unhold(ctx context.Context, opts ...RequestOptions) error
 	if err != nil {
 		return err
 	}
-	ms := d.MediaSession()
+	ms := d.currentMediaSession()
 	if ms == nil {
 		return ErrDialogNotAnswered
 	}

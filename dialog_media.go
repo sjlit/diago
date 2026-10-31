@@ -32,8 +32,8 @@ import (
 // Media at use time and never capture a *media.MediaSession pointer.
 //
 // Concurrency contract: all mutable media state is
-// guarded by mu; accessor methods (MediaSession, RTPSession, AudioReader,
-// AudioWriter) are safe from any goroutine. ReaderOptions/WriterOptions are
+// guarded by mu; accessor methods (AudioReader, AudioWriter, RTPPacketReader,
+// RTPPacketWriter) are safe from any goroutine. ReaderOptions/WriterOptions are
 // declarative data; applying them happens under mu. The setup phase of a
 // dialog (Invite/Answer/ProgressMedia) is single-threaded by contract.
 type Media struct {
@@ -417,21 +417,6 @@ func (d *Media) setMohTone(t audio.Tone) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.mohTone = t
-}
-
-// RTPSession returns underhood rtp session
-// NOTE: this can be nil
-func (d *Media) RTPSession() *media.RTPSession {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.rtpSession
-}
-
-// MediaSession returns the current media session, or nil before negotiation.
-func (d *Media) MediaSession() *media.MediaSession {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.mediaSession
 }
 
 func (d *Media) handleMediaUpdate(req *Request, tx ServerTransaction, contactHDR Header) error {
@@ -876,7 +861,8 @@ func (d *Media) armPlaybackTimestampReset(p *playbackStream) {
 // NewRingtone creates the ringtone handle. Playing starts with Play or
 // PlayBackground on the returned handle.
 //
-// Experimental
+// For synthesized tones use PlayTone; for file or stream playback use
+// NewPlayback.
 func (d *Media) NewRingtone() (*AudioRingtone, error) {
 	mprops := MediaProps{}
 	w, err := d.audioWriterProps(&mprops)
@@ -996,23 +982,6 @@ func (d *Media) currentReadHandle() *media.RTPPacketReader {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.rtpPacketReader
-}
-
-// Listen keeps reading stream until it gets closed or deadlined
-// Use ListenBackground or ListenContext for better control
-func (d *Media) Listen() (err error) {
-	buf := make([]byte, media.RTPBufSize)
-	audioReader, err := d.AudioReader()
-	if err != nil {
-		return err
-	}
-
-	for {
-		_, err := audioReader.Read(buf)
-		if err != nil {
-			return err
-		}
-	}
 }
 
 // ListenBackground listens on stream in background and allows correct stoping of stream on network layer

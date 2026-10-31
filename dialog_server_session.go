@@ -1231,7 +1231,7 @@ func (d *InboundCall) Hold(ctx context.Context, opts ...HoldOptions) error {
 	if err != nil {
 		return err
 	}
-	ms := d.MediaSession()
+	ms := d.currentMediaSession()
 	if ms == nil {
 		return ErrDialogNotAnswered
 	}
@@ -1252,7 +1252,7 @@ func (d *InboundCall) Unhold(ctx context.Context, opts ...RequestOptions) error 
 	if err != nil {
 		return err
 	}
-	ms := d.MediaSession()
+	ms := d.currentMediaSession()
 	if ms == nil {
 		return ErrDialogNotAnswered
 	}
