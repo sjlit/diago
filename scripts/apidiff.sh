@@ -35,4 +35,13 @@ echo "Comparing public API of $base_ref with the working tree (apidiff ${apidiff
 	apidiff -w "$tmp/head.api" github.com/sjlit/diago/v2
 )
 
-apidiff "$tmp/base.api" "$tmp/head.api"
+# apidiff prints differences but does not set a non-zero exit status, so treat
+# any output as a mismatch.
+if ! output=$(apidiff "$tmp/base.api" "$tmp/head.api" 2>&1); then
+	printf '%s\n' "$output"
+	exit 1
+fi
+if [ -n "$output" ]; then
+	printf '%s\n' "$output"
+	exit 1
+fi

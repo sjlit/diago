@@ -15,4 +15,14 @@ apidiff() { go run "golang.org/x/exp/cmd/apidiff@${apidiff_version}" "$@"; }
 cd "$root"
 
 apidiff -m -w "$tmp/current.api" github.com/sjlit/diago/v2
-apidiff -m api/v2.api "$tmp/current.api"
+
+# apidiff prints differences but does not set a non-zero exit status, so treat
+# any output as a mismatch with the frozen baseline.
+if ! output=$(apidiff -m api/v2.api "$tmp/current.api" 2>&1); then
+	printf '%s\n' "$output"
+	exit 1
+fi
+if [ -n "$output" ]; then
+	printf '%s\n' "$output"
+	exit 1
+fi
