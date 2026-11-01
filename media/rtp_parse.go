@@ -79,10 +79,6 @@ func RTCPUnmarshal(data []byte, packets []rtcp.Packet) (n int, err error) {
 	return n, nil
 }
 
-func rtcpMarshal(packets []rtcp.Packet) ([]byte, error) {
-	return rtcp.Marshal(packets)
-}
-
 // TODO this would be nice that pion exports
 func rtcpTypedPacket(htype rtcp.PacketType) rtcp.Packet {
 	// Currently we are not interested

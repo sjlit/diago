@@ -129,19 +129,6 @@ func RTPDTMFEncode(codec Codec, char rune, opts DTMFEncodeOptions) ([]DTMFEvent,
 	return events, nil
 }
 
-// RTPDTMFEncode8000 creates series of DTMF redudant events which should be encoded as payload
-// It is currently only 8000 sample rate considered for telophone event
-//
-// Deprecated: Use RTPDTMFEncode with the negotiated codec.
-func RTPDTMFEncode8000(char rune) []DTMFEvent {
-	evs, err := RTPDTMFEncode(CodecTelephoneEvent8000, char, DTMFEncodeOptions{})
-	if err != nil {
-		// legacy behavior: unknown characters encoded as event 0
-		evs, _ = RTPDTMFEncode(CodecTelephoneEvent8000, '0', DTMFEncodeOptions{})
-	}
-	return evs
-}
-
 // DTMFEvent represents a DTMF event
 type DTMFEvent struct {
 	Event      uint8

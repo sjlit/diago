@@ -56,8 +56,10 @@ a=sendrecv`
 	}
 
 	// DTMF must resolve to the negotiated payload type, not the PT 101 default
-	assert.Equal(t, uint8(100), m.DTMFCodec().PayloadType)
-	assert.Equal(t, uint32(8000), m.DTMFCodec().SampleRate)
+	dtmf, ok := m.DTMFCodecNegotiated()
+	require.True(t, ok)
+	assert.Equal(t, uint8(100), dtmf.PayloadType)
+	assert.Equal(t, uint32(8000), dtmf.SampleRate)
 
 	// Generated answer must carry rtpmap/fmtp for the negotiated payload types
 	lsd := sdp.SessionDescription{}

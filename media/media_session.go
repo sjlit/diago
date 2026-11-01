@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/emiago/dtls/v3"
-	"github.com/emiago/sipgo/sip"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/srtp/v3"
@@ -120,7 +119,7 @@ func logRTCPWrite(m *MediaSession, p rtcp.Packet) {
 //   - Config phase: fields may be set freely before Init().
 //   - Active phase: after a completed offer/answer exchange the session is
 //     FROZEN. Only IO (ReadRTP/WriteRTP/ReadRTCP/WriteRTCP/StopRTP/StartRTP)
-//     and read-only queries (CommonCodecs, DTMFCodec) are allowed. Any change
+//     and read-only queries (CommonCodecs, DTMFCodecNegotiated) are allowed. Any change
 //     (codecs, direction, addresses) requires Fork() and installing the fork
 //     through diago's Media.
 //
@@ -276,20 +275,6 @@ func (s *MediaSession) Init() error {
 	return nil
 }
 
-// InitWithListeners wires pre-created RTP/RTCP listeners into the session.
-//
-// Deprecated: MediaSession setup is performed by diago's signaling layer
-// Construct sessions through diago APIs instead;
-// manual init is not part of the supported flow.
-func (s *MediaSession) InitWithListeners(lRTP net.PacketConn, lRTCP net.PacketConn, raddr *net.UDPAddr) {
-	s.Mode = sdp.ModeSendrecv
-	s.rtpConn = lRTP
-	s.rtcpConn = lRTCP
-	laddr, port, _ := sip.ParseAddr(lRTCP.LocalAddr().String())
-	s.Laddr = net.UDPAddr{IP: net.ParseIP(laddr), Port: port}
-	s.SetRemoteAddr(raddr)
-}
-
 // logger returns the session logger with the package default as fallback.
 func (s *MediaSession) logger() *slog.Logger {
 	if s.Logger != nil {
@@ -304,34 +289,6 @@ func (s *MediaSession) String() string {
 		"rtcp.connection", s.rtcpConn.LocalAddr().String(),
 		"remote.addr", s.Raddr.String(),
 	)
-}
-
-// InitWithSDP allows creating media session with own SDP and bypassing other needs
-//
-// Deprecated: MediaSession setup is performed by diago's signaling layer
-// Construct sessions through diago APIs instead.
-func (s *MediaSession) InitWithSDP(localSDP []byte) error {
-	s.sdp = localSDP
-	sd := sdp.SessionDescription{}
-	if err := sdp.Unmarshal(localSDP, &sd); err != nil {
-		return fmt.Errorf("fail to parse received sdp: %w", err)
-	}
-
-	ci, err := sd.ConnectionInformation()
-	if err != nil {
-		return err
-	}
-	md, err := sd.MediaDescription("audio")
-	if err != nil {
-		return err
-	}
-	s.Laddr = net.UDPAddr{IP: ci.IP, Port: md.Port}
-	s.Mode = sdp.ModeSendrecv
-	// TODO check sendrecv from attributes
-	codecs := make([]Codec, len(md.Formats))
-	n, _ := CodecsFromSDPRead(md.Formats, sd.Values("a"), codecs)
-	s.Codecs = codecs[:n]
-	return nil
 }
 
 // StopRTP pauses reading and/or writing by expiring the shared conn deadline.
@@ -1009,32 +966,10 @@ func (s *MediaSession) CommonCodecs() []Codec {
 	return s.filterCodecs
 }
 
-// DTMFCodec returns negotiated telephone-event codec. DTMF payload type is
-// negotiated per peer (RFC 4733), so it may differ from the default constant.
-// Falls back to the default codec when DTMF was not negotiated.
-// NOTE: Not thread safe, should be called after negotiation Only!
-//
-// Deprecated: The silent PT 101 fallback cannot distinguish "negotiated"
-// from "peer has no telephone-event" — events sent on an unnegotiated
-// payload type are dropped by most peers. Use DTMFCodecNegotiated, which
-// reports ok=false so callers can fall back to inband tones or SIP INFO.
-func (s *MediaSession) DTMFCodec() Codec {
-	codecs := s.filterCodecs
-	if len(codecs) == 0 {
-		codecs = s.Codecs
-	}
-	for _, c := range codecs {
-		if strings.EqualFold(c.Name, CodecTelephoneEvent8000.Name) {
-			return c
-		}
-	}
-	return CodecTelephoneEvent8000
-}
-
 // DTMFCodecNegotiated resolves the telephone-event codec from the effective
 // codec list (negotiated filterCodecs when present, otherwise the local list).
 // ok=false means the peer does not support RFC 4733 — callers should fall back
-// to inband tones or SIP INFO. Unlike DTMFCodec it never invents PT 101.
+// to inband tones or SIP INFO. It never invents PT 101.
 func (s *MediaSession) DTMFCodecNegotiated() (Codec, bool) {
 	codecs := s.filterCodecs
 	if len(codecs) == 0 {
@@ -1195,15 +1130,6 @@ func (m *MediaSession) ReadRTPRaw(buf []byte) (int, error) {
 	return n, err
 }
 
-// ReadRTPRawDeadline reads raw RTP bytes with a one-shot read deadline.
-//
-// Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
-// gates on RTPPacketReader (PauseRead, ReadContext).
-func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) {
-	_ = m.rtpConn.SetReadDeadline(t)
-	return m.ReadRTPRaw(buf)
-}
-
 // DiscardQueuedRTP drains datagrams already queued on the RTP socket and
 // returns how many were discarded. It exists for the moment a media consumer
 // starts (ex. a Bridge about to proxy): without it, whatever arrived while
@@ -1327,20 +1253,6 @@ func (m *MediaSession) ReadRTCPRaw(buf []byte) (int, net.Addr, error) {
 	return n, a, err
 }
 
-// ReadRTCPRawDeadline reads raw RTCP bytes with a one-shot read deadline.
-//
-// Deprecated: Deadline-based cancellation is superseded by the pause/interrupt
-// gates on RTPPacketReader (PauseRead, ReadContext).
-func (m *MediaSession) ReadRTCPRawDeadline(buf []byte, t time.Time) (int, error) {
-	if m.rtcpConn == nil {
-		// just block
-		return 0, fmt.Errorf("no connection present")
-	}
-	n, _, err := m.rtcpConn.ReadFrom(buf)
-
-	return n, err
-}
-
 func (m *MediaSession) WriteRTP(p *rtp.Packet) error {
 	if m.writeBlockedByDirection() {
 		// We block here as we would violate our media direction
@@ -1415,35 +1327,6 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 		if err != nil {
 			return err
 		}
-	}
-
-	n, err := m.WriteRTCPRaw(data)
-	if err != nil {
-		return err
-	}
-
-	if n != len(data) {
-		return io.ErrShortWrite
-	}
-	return nil
-}
-
-// WriteRTCPDeadline writes an RTCP packet with a one-shot write deadline.
-//
-// Deprecated: Use RTPPacketWriter (stable handle) for writing; deadline pokes
-// from component code are forbidden.
-func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) error {
-	_ = m.rtcpConn.SetWriteDeadline(deadline)
-	return m.WriteRTCP(p)
-}
-
-// Use this to write Multi RTCP packets if they can fit in MTU=1500
-//
-// Deprecated: Use RTPPacketWriter (stable handle) for writing.
-func (m *MediaSession) WriteRTCPs(pkts []rtcp.Packet) error {
-	data, err := rtcpMarshal(pkts)
-	if err != nil {
-		return err
 	}
 
 	n, err := m.WriteRTCPRaw(data)

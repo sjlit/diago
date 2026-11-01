@@ -90,17 +90,6 @@ func TestRTPDTMFEncodeVolumeSentinel(t *testing.T) {
 	}
 }
 
-func TestRTPDTMFEncode8000Legacy(t *testing.T) {
-	// legacy wrapper keeps working, unknown char maps to '0' as before
-	evs := RTPDTMFEncode8000('x')
-	if evs[0].Event != 0 {
-		t.Fatal("legacy unknown char must encode 0")
-	}
-	if len(evs) != 7 || evs[0].Duration != 160 {
-		t.Fatalf("legacy layout changed: %+v", evs)
-	}
-}
-
 func TestRTPDTMFEncodeZeroRateFallback(t *testing.T) {
 	// A hand-built codec without a sample rate must fall back to the
 	// canonical 8 kHz telephone-event clock, not put zero durations on the

@@ -23,10 +23,6 @@ import (
 const (
 	ServerClientAuthNoCert      = int(dtls.NoClientCert)
 	ServerClientAuthRequireCert = int(dtls.RequireAnyClientCert)
-	// ServerClientAuthRequestCert keeps the previous (misleading) mapping
-	// of ServerClientAuthRequireCert for compatibility: request but not require.
-	// Deprecated: use ServerClientAuthRequireCert.
-	ServerClientAuthRequestCert = int(dtls.RequestClientCert)
 
 	EllipticCurveP256   uint16 = uint16(elliptic.P256)
 	EllipticCurveP384   uint16 = uint16(elliptic.P384)

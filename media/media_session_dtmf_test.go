@@ -18,13 +18,10 @@ func TestDTMFCodecNegotiated(t *testing.T) {
 		t.Fatalf("expected tel-event PT101, got %+v ok=%v", cod, ok)
 	}
 
-	// no telephone-event offered -> false (unlike DTMFCodec's silent fallback)
+	// no telephone-event offered -> false; there is no silent PT 101 fallback
 	sess2 := &MediaSession{Codecs: []Codec{CodecAudioUlaw}}
 	if _, ok := sess2.DTMFCodecNegotiated(); ok {
 		t.Fatal("must report no dtmf codec")
-	}
-	if got := sess2.DTMFCodec(); got != CodecTelephoneEvent8000 {
-		t.Fatal("legacy DTMFCodec fallback must not change")
 	}
 
 	// negotiated list (filterCodecs) takes precedence over the offered one —
