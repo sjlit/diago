@@ -1113,13 +1113,6 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) (int, error) {
 	return n, err
 }
 
-// Deprecated
-// Will be replaced with readRTPDeadlineNoAlloc in next releases
-// func (m *MediaSession) ReadRTPDeadline(t time.Time) (rtp.Packet, error) {
-// 	m.rtpConn.SetReadDeadline(t)
-// 	return m.ReadRTP()
-// }
-
 func (m *MediaSession) ReadRTPRaw(buf []byte) (int, error) {
 	n, from, err := m.rtpConn.ReadFrom(buf)
 

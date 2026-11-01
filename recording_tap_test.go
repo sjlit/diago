@@ -58,7 +58,7 @@ func TestStartStereoRecordingNotAnswered(t *testing.T) {
 }
 
 // TestStartStereoRecordingInstallsAndUninstalls pins the core contract: the
-// tap is atomic-installed into both chains at Start (no deprecated setter, no
+// tap is atomic-installed into both chains at Start (no legacy setter, no
 // half-wired window) and removed at Close when nothing wrapped on top.
 func TestStartStereoRecordingInstallsAndUninstalls(t *testing.T) {
 	d, probeR, probeW := tapTestDialog()
