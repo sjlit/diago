@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 	"github.com/sjlit/diago/v2/testdata"
@@ -33,9 +32,7 @@ func main() {
 
 func start(ctx context.Context) error {
 	// Setup our main transaction user
-	ua, _ := sipgo.NewUA()
 	tu, err := diago.New(diago.Config{
-		UserAgent:  ua,
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
 	if err != nil {
@@ -57,7 +54,10 @@ func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 	inDialog.Trying(ctx)  // 100 Trying
 	inDialog.Ringing(ctx) // 180 Ringing
 
-	playfile, _ := testdata.OpenFile("demo-echotest.wav")
+	playfile, err := testdata.OpenFile("demo-echotest.wav")
+	if err != nil {
+		return err
+	}
 	defer playfile.Close()
 
 	slog.Info("Playing a file", "file", "demo-echotest.wav")
@@ -70,11 +70,12 @@ func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 	if err != nil {
 		return err
 	}
+	defer pb.Close()
 
-	playFinished := make(chan error)
+	playFinished := make(chan error, 1)
 	go func() {
-		_, err = pb.PlayContext(ctx, playfile, "audio/wav")
-		playFinished <- err
+		_, playErr := pb.PlayContext(ctx, playfile, "audio/wav")
+		playFinished <- playErr
 	}()
 
 	t1 := time.After(3 * time.Second)

@@ -1,8 +1,10 @@
 # Frozen public API
 
 `v2.api` is the [apidiff](https://pkg.go.dev/golang.org/x/exp/cmd/apidiff)
-export-data baseline for the public API of the whole module
+export-data baseline for the public API of the library module
 (`github.com/sjlit/diago/v2`, including `audio`, `media` and `media/sdp`).
+`examples` is a separate Go module and is intentionally not part of this
+baseline.
 
 It is not human-editable. CI runs `scripts/api-check.sh` and fails when the
 current public API differs from this file in any way.

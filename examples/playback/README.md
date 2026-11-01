@@ -1,7 +1,7 @@
 
 Run playback as server
 ```bash
-go run ./examples/playback
+cd examples && go run ./playback
 ```
 
 Dial in and you should hear audio on your speakers

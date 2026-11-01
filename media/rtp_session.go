@@ -319,7 +319,6 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) (n int, err error) {
 
 	s.rtcpMU.Lock()
 	defer s.rtcpMU.Unlock()
-	// pktArrival := time.Now()
 	stats := &s.readStats
 	now := time.Now()
 
@@ -779,10 +778,6 @@ func (s *RTPSession) parseReceptionReport(receptionReport *rtcp.ReceptionReport,
 		LastSenderReport:   uint32(readStats.lastSenderReportNTP >> 16), // LSR
 		Delay:              uint32(delay.Seconds() * 65536),             // DLSR
 	}
-}
-
-func FractionLostFloat(f uint8) float64 {
-	return float64(f) / 256
 }
 
 func calcRTT(now time.Time, lastSenderReport uint32, delaySenderReport uint32) (rtt time.Duration, skewed bool) {

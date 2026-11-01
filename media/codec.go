@@ -120,21 +120,6 @@ func filterUnsupportedCodecs(in []Codec) []Codec {
 	return out
 }
 
-// func CodecsFromSDP(log *slog.Logger, sd sdp.SessionDescription, codecsAudio []Codec) error {
-// 	md, err := sd.MediaDescription("audio")
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	codecs := make([]Codec, len(md.Formats))
-// 	attrs := sd.Values("a")
-// 	n, err := CodecsFromSDPRead(log, md, attrs, codecs)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	codecs = codecs[:n]
-// }
-
 // CodecsFromSDP will try to parse as much as possible, but it will return also error in case
 // some properties could not be read
 // You can take what is parsed or return error

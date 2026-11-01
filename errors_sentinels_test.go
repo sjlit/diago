@@ -53,17 +53,16 @@ func TestReinviteNoContactError(t *testing.T) {
 }
 
 func TestConfigSentinels(t *testing.T) {
-	ua, err := sipgo.NewUA()
-	require.NoError(t, err)
-	t.Cleanup(func() { ua.Close() })
-
-	_, err = newAgent(withUserAgent(ua))
+	_, err := New(Config{})
 	assert.ErrorIs(t, err, ErrNoTransport)
 
-	_, err = newAgent(withUserAgent(nil), withDefaultTransport())
+	_, err = New(Config{Transports: []Transport{{}}})
 	assert.ErrorIs(t, err, ErrInvalidOption)
 
-	_, err = newAgent(withUserAgent(ua), withDefaultTransport(), withMediaConfig(MediaConfig{}))
+	_, err = New(Config{
+		Transports: []Transport{DefaultTransport()},
+		Media:      MediaConfig{SRTP: SRTPConfig{Mode: 99}},
+	})
 	assert.ErrorIs(t, err, ErrInvalidOption)
 }
 
@@ -105,7 +104,7 @@ func TestServeSentinels(t *testing.T) {
 
 	dg, err := newAgent(withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1"}))
 	require.NoError(t, err)
-	require.NoError(t, dg.ServeBackground(ctx, nil))
+	require.NoError(t, serveBackground(dg, ctx, nil))
 
 	err = dg.serve(ctx, nil, func() {})
 	assert.ErrorIs(t, err, ErrAgentServing)

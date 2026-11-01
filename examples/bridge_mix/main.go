@@ -5,25 +5,23 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 )
 
-// Have receiver running:
-// gophone answer -l "127.0.0.1:5090"
+// Run the N-party mixer:
 //
-// Run app:
-// go run . sip:uas@127.0.0.1:5090
+//	go run .
 //
-// Run dialer:
-// gophone dial sip:bob@127.0.0.1
+// Dial in from two or more softphones:
+//
+//	gophone dial -ua alice sip:112@127.0.0.1
+//	gophone dial -ua bob sip:112@127.0.0.1
 
 var bridge *diago.BridgeMix
 
@@ -33,7 +31,6 @@ func main() {
 
 	examples.SetupLogger()
 
-	flag.Parse()
 	bridge = diago.NewBridgeMix()
 
 	err := start(ctx)
@@ -44,16 +41,16 @@ func main() {
 
 func start(ctx context.Context) error {
 	// Setup our main transaction user
-	ua, _ := sipgo.NewUA()
 	d, err := diago.New(diago.Config{
-		UserAgent:  ua,
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
 	if err != nil {
 		return err
 	}
 	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
-		BridgeCall(ctx, d, inDialog)
+		if err := BridgeCall(ctx, d, inDialog); err != nil {
+			return err
+		}
 
 		fmt.Println("Bridge state", bridge.String())
 		return nil

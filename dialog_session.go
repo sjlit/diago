@@ -275,13 +275,8 @@ func dialogReferInvite(d Call, dg *Agent, referToUri URI, remoteTarget URI, onRe
 
 	// FROM, TO, CALLID must be same to make SUBSCRIBE working
 
-	// onReferRequest(referToUri, )
-
 	// Check is this REFER RFC 3892 compatible
 	// https://datatracker.ietf.org/doc/html/rfc3892#autoid-3
-	// if referredBy != nil {
-	// 	opts.Headers = append(opts.Headers, sip.HeaderClone(referredBy))
-	// }
 
 	referDialog, err := dg.NewCall(referToUri)
 	if err != nil {

@@ -51,7 +51,7 @@ func ExampleAgent_Serve() {
 }
 
 // ExampleAgent_Dial places an outbound call. Dial performs Invite and the
-// final ACK; Hangup ends the signaling and Close releases local resources.
+// final ACK; Close ends the signaling and releases local resources.
 func ExampleAgent_Dial() {
 	agent, err := diago.New(diago.Config{
 		Transports: []diago.Transport{diago.DefaultTransport()},

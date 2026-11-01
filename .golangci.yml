@@ -40,12 +40,9 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
-      - path: ^examples/
-        linters:
-          - errcheck
       # The exported-doc rule is enforced on the root diago package. The
-      # lower-level packages still have undocumented exports; document them and
-      # remove this exclusion.
-      - path: ^(audio|media|testdata|examples)/
+      # lower-level audio/media packages still have undocumented exports;
+      # document them and remove this exclusion.
+      - path: ^(audio|media)/
         linters:
           - revive

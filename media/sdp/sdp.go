@@ -68,15 +68,6 @@ type MediaDescription struct {
 	Formats []string
 }
 
-func (m *MediaDescription) String() string {
-	ports := strconv.Itoa(m.Port)
-	if m.PortNumbers > 0 {
-		ports += "/" + strconv.Itoa(m.PortNumbers)
-	}
-
-	return fmt.Sprintf("m=%s %s %s %s", m.MediaType, ports, m.Proto, strings.Join(m.Formats, " "))
-}
-
 func (sd SessionDescription) MediaDescription(mediaType string) (MediaDescription, error) {
 	md, _, err := sd.mediaDescriptionIdx(mediaType)
 	return md, err

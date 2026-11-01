@@ -227,7 +227,7 @@ func TestIntegrationDialogServerPeerCodecPruneReinvite(t *testing.T) {
 	peerUA, _ := sipgo.NewUA(sipgo.WithUserAgent("peer"))
 	defer peerUA.Close()
 	peer := newDialer(t, peerUA)
-	err := peer.ServeBackground(ctx, func(ctx context.Context, _ *InboundCall) error {
+	err := serveBackground(peer, ctx, func(ctx context.Context, _ *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)

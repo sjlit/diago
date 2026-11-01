@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/audio"
 	"github.com/sjlit/diago/v2/examples"
@@ -33,9 +32,7 @@ func main() {
 
 func start(ctx context.Context) error {
 	// Setup our main transaction user
-	ua, _ := sipgo.NewUA()
 	tu, err := diago.New(diago.Config{
-		UserAgent:  ua,
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
 	if err != nil {

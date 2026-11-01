@@ -61,7 +61,7 @@ func BenchmarkIntegrationClientServer(t *testing.B) {
 	srv, err := newAgent(withUserAgent(ua), withTransport(tran))
 	require.NoError(t, err)
 
-	err = srv.ServeBackground(ctx, func(_ context.Context, d *InboundCall) error {
+	err = serveBackground(srv, ctx, func(_ context.Context, d *InboundCall) error {
 		wg.Add(1)
 		defer wg.Done()
 

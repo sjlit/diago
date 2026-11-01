@@ -49,10 +49,6 @@ func (r *WavReader) readHeaders() error {
 }
 
 func (r *WavReader) readDataChunk() error {
-	// if r.Size == 0 {
-	// 	r.Parser.ParseHeaders()
-	// }
-
 	for {
 		chunk, err := r.NextChunk()
 		if err != nil {

@@ -16,7 +16,6 @@ import (
 
 type toneConfig struct {
 	isLoop bool
-	volume float64
 }
 
 // ToneOption tunes Media.PlayTone.
@@ -27,18 +26,6 @@ type ToneOption func(*toneConfig) error
 func WithToneLoop() ToneOption {
 	return func(c *toneConfig) error {
 		c.isLoop = true
-		return nil
-	}
-}
-
-// WithToneVolume scales every segment volume (0..1, values above 1 are
-// clamped). Default tone volume is applied when segments set none.
-func WithToneVolume(scale float64) ToneOption {
-	return func(c *toneConfig) error {
-		if scale <= 0 {
-			return fmt.Errorf("%w: WithToneVolume: scale must be greater than 0", ErrInvalidOption)
-		}
-		c.volume = scale
 		return nil
 	}
 }
@@ -65,10 +52,6 @@ func (d *Media) PlayTone(ctx context.Context, tone audio.Tone, opts ...ToneOptio
 			return err
 		}
 	}
-	if cfg.volume > 0 {
-		tone = tone.WithVolume(cfg.volume)
-	}
-
 	props := MediaProps{}
 	w, err := d.audioWriterProps(&props)
 	if err != nil {

@@ -30,29 +30,12 @@ const (
 )
 
 type PCMDecoder struct {
-	codec       uint8
-	samplesSize int
-
 	// DecoderTo Must know size in advance!
 	DecoderTo func(lpcm []byte, encoded []byte) (int, error)
 }
 
-// PCM decoder is streamer implementing io.Reader. It reads from underhood reader and returns decoded codec data
-// This constructor uses default codec supported by media package.
-func NewPCMDecoder(codec uint8) (*PCMDecoder, error) {
-	cod, err := media.CodecAudioFromPayloadType(codec)
-	if err != nil {
-		return nil, err
-	}
-	dec := &PCMDecoder{}
-	return dec, dec.Init(cod)
-}
-
 // Init should be called only once after creating PCMDecode
 func (dec *PCMDecoder) Init(codec media.Codec) error {
-	dec.codec = codec.PayloadType
-	dec.samplesSize = codec.SamplesPCM(16) // for now we only support 16 bit
-
 	switch codec.PayloadType {
 	case FormatTypeULaw:
 		dec.DecoderTo = DecodeUlawTo
@@ -181,27 +164,10 @@ func (d *PCMDecoderBuffer) ReadFull() []byte {
 	return bytes
 }
 
-func (d *PCMDecoderBuffer) ReadAll() []byte {
-	bytes := d.buf.Bytes()
-	d.buf.Reset()
-	return bytes
-}
-
 type PCMEncoder struct {
 	EncoderTo func(encoded []byte, lpcm []byte) (int, error)
 
 	samplesSize int
-}
-
-// PCMEncoder encodes data from pcm to codec and passes to writer
-func NewPCMEncoder(payloadType uint8) (*PCMEncoder, error) {
-	enc := &PCMEncoder{}
-	codec, err := media.CodecAudioFromPayloadType(payloadType)
-	if err != nil {
-		return nil, err
-	}
-
-	return enc, enc.Init(codec)
 }
 
 func (enc *PCMEncoder) Init(codec media.Codec) error {
@@ -241,15 +207,6 @@ func NewPCMEncoderWriter(payloadType uint8, writer io.Writer) (*PCMEncoderWriter
 	}
 
 	return enc, enc.Init(codec, writer)
-	// d, err := NewPCMEncoder(codec)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// enc := &PCMEncoderWriter{
-	// 	PCMEncoder: *d,
-	// 	Writer:     writer,
-	// }
-	// return enc, enc.Init()
 }
 
 func (d *PCMEncoderWriter) Init(codec media.Codec, writer io.Writer) error {

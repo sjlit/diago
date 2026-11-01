@@ -53,8 +53,6 @@ func NewRTPDTMFReader(codec Codec, packetReader *RTPPacketReader, reader io.Read
 func (w *RTPDTMFReader) Read(b []byte) (int, error) {
 	n, err := w.reader.Read(b)
 	if err != nil {
-		// Signal our reader that no more dtmfs will be read
-		// close(w.dtmfCh)
 		return n, err
 	}
 
@@ -122,11 +120,6 @@ func (w *RTPDTMFReader) processDTMFEvent(ev DTMFEvent, mbit bool) {
 		return
 	}
 
-	// if ev.Duration == 0 {
-	// 	// Should be ignored
-	// 	return
-	// }
-
 	// Keep playing until new marker is set
 	if !mbit {
 		return
@@ -150,6 +143,4 @@ func (w *RTPDTMFReader) completeEvent(ev DTMFEvent) {
 func (w *RTPDTMFReader) ReadDTMF() (rune, bool) {
 	defer func() { w.isDTMFEnd = false }()
 	return w.dtmf, w.isDTMFEnd
-	// dtmf, ok := <-w.dtmfCh
-	// return DTMFToRune(dtmf), ok
 }

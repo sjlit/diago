@@ -1,6 +1,6 @@
 Run record as server
 ```bash
-go run ./examples/wav_record
+cd examples && go run ./wav_record
 ```
 
 Dial in and after terminating call you should find recording under 

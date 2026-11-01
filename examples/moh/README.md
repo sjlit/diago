@@ -5,7 +5,7 @@ Music on Hold example.
 Build and run:
 
 ```
-go run ./examples/moh
+cd examples && go run ./moh
 ```
 
 Dial `sip:alice@127.0.0.1`. Once the call is up:

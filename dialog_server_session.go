@@ -660,7 +660,7 @@ func (d *InboundCall) RespondSDP(ctx context.Context, body []byte, opts ...Respo
 // processed, media finalized) before proceeding. Calling Answer twice fails
 // with ErrAlreadyAnswered.
 // applyDialogCallbacks records the per-dialog callbacks carried by
-// SignalOptions. Callers must hold d.mu.
+// signalParams. Callers must hold d.mu.
 func (d *InboundCall) applyDialogCallbacks(params *signalParams) {
 	if params == nil {
 		return
@@ -765,10 +765,6 @@ func (d *InboundCall) answerSession(ctx context.Context, rtpSess *media.RTPSessi
 
 	d.mu.Lock()
 	ierr := d.initRTPSessionUnsafe(sess, rtpSess)
-	// Close RTP session
-	// d.onCloseUnsafe(func() error {
-	// 	return rtpSess.Close()
-	// })
 	d.mu.Unlock()
 	if ierr != nil {
 		return errors.Join(ierr, rtpSess.Close())
@@ -817,10 +813,6 @@ func (d *InboundCall) setupRTPSession(rtpSess *media.RTPSession) error {
 
 	d.mu.Lock()
 	err := d.initRTPSessionUnsafe(sess, rtpSess)
-	// Close RTP session
-	// d.onCloseUnsafe(func() error {
-	// 	return rtpSess.Close()
-	// })
 	d.mu.Unlock()
 	if err != nil {
 		return errors.Join(err, rtpSess.Close())
@@ -856,10 +848,6 @@ func (d *InboundCall) AnswerLate(ctx context.Context, opts ...AnswerOptions) err
 
 	d.mu.Lock()
 	err = d.initRTPSessionUnsafe(sess, rtpSess)
-	// Close RTP session
-	// d.onCloseUnsafe(func() error {
-	// 	return rtpSess.Close()
-	// })
 	d.mu.Unlock()
 	if err != nil {
 		return errors.Join(err, rtpSess.Close())
@@ -1092,16 +1080,11 @@ func (d *InboundCall) reInviteMediaSession(ctx context.Context, ms *media.MediaS
 
 // writeReInviteACK sends the final ACK of a re-INVITE exchange without
 // options; see reInviteExchange.
-func (d *InboundCall) writeReInviteACK(ctx context.Context, target URI) error {
-	return d.ack(ctx, target, nil)
+func (d *InboundCall) writeReInviteACK(_ context.Context, target URI) error {
+	return d.ack(target, nil)
 }
 
-func (d *InboundCall) ack(ctx context.Context, remoteTarget URI, body []byte) error {
-	// inviteRequest := d.sess.InviteRequest
-	// recipient := &inviteRequest.Recipient
-	// if contact := d.sess.InviteResponse.Contact(); contact != nil {
-	// 	recipient = &contact.Address
-	// }
+func (d *InboundCall) ack(remoteTarget URI, body []byte) error {
 	ackRequest := sip.NewRequest(
 		sip.ACK,
 		remoteTarget,
@@ -1116,18 +1099,6 @@ func (d *InboundCall) ack(ctx context.Context, remoteTarget URI, body []byte) er
 	if err := d.sess.WriteRequest(ackRequest); err != nil {
 		return err
 	}
-
-	// if err := d.sess.WriteAck(ctx, ackRequest); err != nil {
-	// 	return err
-	// }
-
-	// Now dialog is established and can be add into store
-	// if err := DialogsClientCache.DialogStore(ctx, d.ID, d); err != nil {
-	// 	return err
-	// }
-	// d.OnClose(func() error {
-	// 	return DialogsClientCache.DialogDelete(context.Background(), d.ID)
-	// })
 	return nil
 }
 

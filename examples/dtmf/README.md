@@ -1,7 +1,7 @@
 
 Run playback as server
 ```bash
-go run ./examples/dtmf
+cd examples && go run ./dtmf
 ```
 
 Dial in and send DTMF. On upper terminal you should see DTMF detected and printed

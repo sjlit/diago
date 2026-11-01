@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: Copyright (c) 2024, Emir Aganovic
+
 // Package examples contains runnable diago examples. Subdirectories are
 // separate main packages; this file holds shared logging setup.
 package examples

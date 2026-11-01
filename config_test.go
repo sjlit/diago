@@ -23,58 +23,55 @@ type testMediaTracer struct{}
 func (testMediaTracer) RTPTraceRead(string, string, *rtp.Packet)  {}
 func (testMediaTracer) RTPTraceWrite(string, string, *rtp.Packet) {}
 
-// TestNewOptionValidation locks the agentOption contract: options validate
-// their own input and abort construction instead of failing later.
-func TestNewOptionValidation(t *testing.T) {
-	ua, err := sipgo.NewUA()
-	require.NoError(t, err)
-	t.Cleanup(func() { ua.Close() })
-
-	t.Run("nil user agent", func(t *testing.T) {
-		_, err := newAgent(withUserAgent(nil), withDefaultTransport())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "user agent is nil")
-	})
-
+// TestNewConfigValidation locks the Config contract: invalid construction
+// input is rejected with ErrInvalidOption instead of failing later.
+func TestNewConfigValidation(t *testing.T) {
 	t.Run("empty transport network", func(t *testing.T) {
-		_, err := newAgent(withUserAgent(ua), withTransport(Transport{}))
-		require.Error(t, err)
+		_, err := New(Config{Transports: []Transport{{}}})
+		require.ErrorIs(t, err, ErrInvalidOption)
 		assert.Contains(t, err.Error(), "network is empty")
 	})
 
-	t.Run("media config without codecs", func(t *testing.T) {
-		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withMediaConfig(MediaConfig{}))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no codecs")
-	})
-
 	t.Run("media config inverted port range", func(t *testing.T) {
-		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withMediaConfig(MediaConfig{
+		conf := testConfig()
+		conf.Media = MediaConfig{
 			Codecs:  []media.Codec{media.CodecAudioUlaw},
 			Network: NetworkConfig{RTPPortStart: 20000, RTPPortEnd: 19000},
-		}))
-		require.Error(t, err)
+		}
+		_, err := New(conf)
+		require.ErrorIs(t, err, ErrInvalidOption)
 		assert.Contains(t, err.Error(), "inverted")
 	})
 
-	t.Run("nil logger", func(t *testing.T) {
-		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withLogger(nil))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "logger is nil")
-	})
-
-	t.Run("nil http client", func(t *testing.T) {
-		_, err := newAgent(withUserAgent(ua), withDefaultTransport(), withHTTPClient(nil))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "client is nil")
-	})
-
-	t.Run("nil options are skipped", func(t *testing.T) {
-		dg, err := newAgent(withUserAgent(ua), withDefaultTransport(), nil, withMediaConfig(MediaConfig{
+	t.Run("invalid srtp mode", func(t *testing.T) {
+		conf := testConfig()
+		conf.Media = MediaConfig{
 			Codecs: []media.Codec{media.CodecAudioUlaw},
-		}))
+			SRTP:   SRTPConfig{Mode: 99},
+		}
+		_, err := New(conf)
+		require.ErrorIs(t, err, ErrInvalidOption)
+		assert.Contains(t, err.Error(), "invalid srtp mode")
+	})
+
+	t.Run("empty media profile name", func(t *testing.T) {
+		conf := testConfig()
+		conf.MediaProfiles = map[string]MediaConfig{
+			"": {Codecs: []media.Codec{media.CodecAudioUlaw}},
+		}
+		_, err := New(conf)
+		require.ErrorIs(t, err, ErrInvalidOption)
+		assert.Contains(t, err.Error(), "name is empty")
+	})
+
+	t.Run("nil logger and http client use defaults", func(t *testing.T) {
+		conf := testConfig()
+		conf.Logger = nil
+		conf.HTTPClient = nil
+		dg, err := New(conf)
 		require.NoError(t, err)
 		require.NotNil(t, dg)
+		closeTestAgent(t, dg)
 	})
 }
 
@@ -101,7 +98,7 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { server.Close(context.Background()) })
-	require.NoError(t, server.ServeBackground(ctx, func(ctx context.Context, call *InboundCall) error {
+	require.NoError(t, serveBackground(server, ctx, func(ctx context.Context, call *InboundCall) error {
 		if err := call.Answer(ctx); err != nil {
 			return err
 		}
@@ -114,7 +111,7 @@ func TestIntegrationPrivateUserAgentsCall(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close(context.Background()) })
-	require.NoError(t, client.ServeBackground(ctx, nil))
+	require.NoError(t, serveBackground(client, ctx, nil))
 
 	port := server.transports[0].BindPort
 	require.NotZero(t, port)
@@ -166,7 +163,7 @@ func TestAgentHandle(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "managed by the agent")
 
-	require.NoError(t, dg.ServeBackground(context.Background(), nil))
+	require.NoError(t, serveBackground(dg, context.Background(), nil))
 	t.Cleanup(func() { dg.Close(context.Background()) })
 
 	err = dg.Handle(sip.SUBSCRIBE, func(req *Request, tx ServerTransaction) error { return nil })

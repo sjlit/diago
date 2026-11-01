@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 	"github.com/sjlit/diago/v2/testdata"
@@ -36,9 +35,7 @@ func main() {
 
 func start(ctx context.Context) error {
 	// Setup our main transaction user
-	ua, _ := sipgo.NewUA()
 	tu, err := diago.New(diago.Config{
-		UserAgent:  ua,
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
 	if err != nil {
@@ -74,7 +71,11 @@ func PlaybackDTMF(ctx context.Context, inDialog *diago.InboundCall) error {
 	slog.Info("Playing prompt. Press * to replay, any other key to continue")
 
 	go func() {
-		playfile, _ := testdata.OpenFile("demo-echotest.wav")
+		playfile, err := testdata.OpenFile("demo-echotest.wav")
+		if err != nil {
+			slog.Error("Failed to open prompt", "error", err)
+			return
+		}
 		defer playfile.Close()
 
 		if _, err := pb.PlayContext(inDialog.Context(), playfile, "audio/wav"); err != nil {

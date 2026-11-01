@@ -1,6 +1,6 @@
 Run bridge app that always bridges with bob on port `5090`
 ```bash
-go run ./examples/bridge sip:bob@127.0.0.1:5090
+cd examples && go run ./bridge sip:bob@127.0.0.1:5090
 ```
 
 Run receiver:

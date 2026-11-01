@@ -105,7 +105,7 @@ func TestServeTLS4Transport(t *testing.T) {
 		TLSConf:  &tls.Config{Certificates: []tls.Certificate{testdata.ServerCertificate()}},
 	}))
 	require.NoError(t, err)
-	require.NoError(t, dg.ServeBackground(context.Background(), nil))
+	require.NoError(t, serveBackground(dg, context.Background(), nil))
 	t.Cleanup(func() { require.NoError(t, dg.Close(context.Background())) })
 
 	port := dg.transports[0].BindPort
@@ -188,7 +188,7 @@ func TestAgentTransportsResolved(t *testing.T) {
 			}
 		}
 	}()
-	err = dg.ServeBackground(ctx, nil)
+	err = serveBackground(dg, ctx, nil)
 	close(stop)
 	wg.Wait()
 	require.NoError(t, err)

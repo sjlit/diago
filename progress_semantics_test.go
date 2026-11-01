@@ -34,7 +34,7 @@ func TestProgressSemantics(t *testing.T) {
 		Network: "udp", BindHost: "127.0.0.1", BindPort: 0,
 	}))
 	require.NoError(t, err)
-	err = dgSrv.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	err = serveBackground(dgSrv, ctx, func(ctx context.Context, d *InboundCall) error {
 		if err := d.Trying(ctx); err != nil {
 			return err
 		}

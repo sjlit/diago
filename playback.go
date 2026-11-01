@@ -209,26 +209,3 @@ func (p *playbackStream) calcPlayoutSize() int {
 	sampleRate := codec.SampleRate
 	return int(bitsPerSample) / 8 * int(numChannels) * int(sampleRate) / 1000 * sampleDurMS
 }
-
-// func wavCopy(dec *audio.WavReader, playWriter io.Writer, payloadBuf []byte) (int64, error) {
-// 	var totalWritten int64
-// 	for {
-// 		ch, err := dec.NextChunk()
-// 		if err != nil {
-// 			return totalWritten, err
-// 		}
-// 		fmt.Println("Chunk wav", ch)
-// 		if ch.ID != riff.DataFormatID && ch.ID != [4]byte{} {
-// 			// Until we reach data chunk we will draining
-// 			ch.Drain()
-// 			continue
-// 		}
-
-// 		fmt.Println("copy buf", len(payloadBuf))
-// 		n, err := copyWithBuf(ch, playWriter, payloadBuf)
-// 		totalWritten += n
-// 		if err != nil {
-// 			return totalWritten, err
-// 		}
-// 	}
-// }

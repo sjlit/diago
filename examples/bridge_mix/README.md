@@ -1,14 +1,15 @@
-Run bridge app that always bridges with bob on port `5090`
+Run the N-party mixer: every caller that dials in is added to the same
+`BridgeMix`.
 ```bash
-go run ./examples/bridge sip:bob@127.0.0.1:5090
+cd examples && go run ./bridge_mix
 ```
 
-Run receiver:
-```bash 
-gophone answer -ua bob -l 127.0.0.1:5090
+Dial the mixer from two or more softphones:
+
+```sh
+gophone dial -ua alice sip:112@127.0.0.1
+gophone dial -ua bob sip:112@127.0.0.1
 ```
 
-Dial server on `5060` be bridged with bob on `5090`
-```sh 
-gophone dial -ua alice sip:bob@127.0.0.1:5060
-```
+Once two callers are joined, audio is mixed between all legs; each leg is
+removed when its call ends.

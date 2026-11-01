@@ -792,9 +792,6 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 		switch setup {
 		case "actpass", "passive":
 			// we are client, as remote wants to be server
-			// if s.dtlsConn == nil {
-			// 	panic("No dtls connection")
-			// }
 			s.dtlsConn, err = dtls.Client(s.rtpConn, &s.Raddr, dtlsConf)
 			if err != nil {
 				return fmt.Errorf("failed to setup dlts client conn: %w", err)
@@ -807,7 +804,6 @@ func (s *MediaSession) RemoteSDP(sdpReceived []byte) error {
 			if err != nil {
 				return fmt.Errorf("failed to setup dlts server conn: %w", err)
 			}
-			// return nil
 
 			// NOTE: setup:active allows the answer and the DTLS handshake to occur in parallel.
 		default:
@@ -1399,7 +1395,6 @@ type dtlsSetup struct {
 }
 
 func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile string, originIP net.IP, connectionIP net.IP, rtpPort int, mode string, codecs []Codec, sdes sdesInline, dtlsSet *dtlsSetup, sessionName string, log *slog.Logger) []byte {
-	// ntpTime := CurrentNTPTimestamp()
 	if len(codecs) == 0 {
 		// Nothing usable to advertise (ex. opus-only configuration without
 		// with_opus_c). RFC 4566 requires at least one fmt; emit a rejected
@@ -1470,29 +1465,6 @@ func generateSDPForAudio(sessionID uint64, sessionVersion uint64, rtpProfile str
 			s = append(s, fmt.Sprintf("a=fingerprint:%s %s", d.alg, d.fingerprint))
 		}
 	}
-
-	// s := []string{
-	// 	"v=0",
-	// 	fmt.Sprintf("o=- %d %d IN IP4 %s", ntpTime, ntpTime, originIP),
-	// 	"s=Sip Go Media",
-	// 	// "b=AS:84",
-	// 	fmt.Sprintf("c=IN IP4 %s", connectionIP),
-	// 	"t=0 0",
-	// 	fmt.Sprintf("m=audio %d RTP/AVP 96 97 98 99 3 0 8 9 120 121 122", rtpPort),
-	// 	"a=" + string(mode),
-	// 	"a=rtpmap:96 speex/16000",
-	// 	"a=rtpmap:97 speex/8000",
-	// 	"a=rtpmap:98 speex/32000",
-	// 	"a=rtpmap:99 iLBC/8000",
-	// 	"a=fmtp:99 mode=30",
-	// 	"a=rtpmap:120 telephone-event/16000",
-	// 	"a=fmtp:120 0-16",
-	// 	"a=rtpmap:121 telephone-event/8000",
-	// 	"a=fmtp:121 0-16",
-	// 	"a=rtpmap:122 telephone-event/32000",
-	// 	"a=rtcp-mux",
-	// 	fmt.Sprintf("a=rtcp:%d IN IP4 %s", rtpPort+1, connectionIP),
-	// }
 
 	res := strings.Join(s, "\r\n") + "\r\n"
 	return []byte(res)

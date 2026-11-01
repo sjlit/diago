@@ -18,7 +18,7 @@ import (
 )
 
 func shutdownTestSDP() []byte {
-	return sdp.GenerateForAudio(net.IPv4(127, 0, 0, 1), net.IPv4(127, 0, 0, 1), 34455, sdp.ModeSendrecv, []string{sdp.FormatTypeALaw}, "")
+	return testSDP(34455, sdp.ModeSendrecv, sdp.FormatTypeALaw)
 }
 
 func cacheCountClientDialogs(dg *Agent) int {
@@ -77,7 +77,7 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	require.NoError(t, dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	require.NoError(t, serveBackground(dg, ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	}))
 	require.NotZero(t, dg.transports[0].BindPort, "listener must have bound an ephemeral port")
@@ -89,7 +89,7 @@ func TestDiagoShutdownStopsListeners(t *testing.T) {
 	// Already-serving must be rejected while up.
 	dg2, err := newAgent(withUserAgent(ua), withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}))
 	require.NoError(t, err)
-	require.NoError(t, dg2.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	require.NoError(t, serveBackground(dg2, ctx, func(ctx context.Context, d *InboundCall) error {
 		return nil
 	}))
 	t.Cleanup(func() { dg2.Close(context.Background()) })
@@ -200,7 +200,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	require.NoError(t, dgS.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	require.NoError(t, serveBackground(dgS, ctx, func(ctx context.Context, d *InboundCall) error {
 		d.Trying(ctx)
 		// Serve handler goroutine: return the error instead of require
 		// (FailNow would abandon the handler before it signals handlerDone).
@@ -276,7 +276,7 @@ func TestIntegrationDiagoShutdownServerDialog(t *testing.T) {
 }
 
 // TestDiagoServePartialFailureReturnsError locks that a transport bind failure
-// surfaces through ServeBackground instead of hanging behind healthy
+// surfaces through Start instead of hanging behind healthy
 // listeners.
 func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 	ua, err := sipgo.NewUA()
@@ -298,7 +298,7 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 
 	chErr := make(chan error, 1)
 	go func() {
-		chErr <- dg.ServeBackground(context.Background(), func(ctx context.Context, d *InboundCall) error {
+		chErr <- serveBackground(dg, context.Background(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 	}()
@@ -306,7 +306,7 @@ func TestDiagoServePartialFailureReturnsError(t *testing.T) {
 	case err := <-chErr:
 		require.Error(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("ServeBackground did not report the bind failure")
+		t.Fatal("Start did not report the bind failure")
 	}
 
 	// The failure must stop the working listener too: Serve returning an

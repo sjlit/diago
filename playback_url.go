@@ -95,11 +95,6 @@ func (p *playbackStream) playURL(ctx context.Context, urlStr string, written *in
 
 	// Check can be streamed
 	if res.StatusCode == http.StatusPartialContent {
-		// acceptRanges := res.Header.Get("Accept-Ranges")
-		// if acceptRanges != "bytes" {
-		// 	return fmt.Errorf("header Accept-Ranges != bytes. Value=%q", acceptRanges)
-		// }
-
 		contentRange := res.Header.Get("Content-Range")
 		ind := strings.LastIndex(contentRange, "/")
 		if ind < 0 {

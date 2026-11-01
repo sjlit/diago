@@ -243,7 +243,7 @@ func (d *OutboundCall) Invite(ctx context.Context, opts ...InviteOptions) error 
 
 // inviteWithParams performs the Invite flow using a pre-computed *signalParams.
 // It exists so callers (e.g. Agent.Dial, DialBridge) can compute params once
-// and avoid running user-supplied SignalOption funcs twice.
+// and reuse them.
 func (d *OutboundCall) inviteWithParams(ctx context.Context, params *signalParams) error {
 	if params == nil {
 		return fmt.Errorf("invite: signal params are nil")
@@ -403,13 +403,6 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 	med.onMediaUpdate = params.Dialog.OnMediaUpdate
 	d.onReferDialog = params.Dialog.OnRefer
 	d.mu.Unlock()
-	// reuse UDP listener
-	// Problem if listener is unspecified IP sipgo will not map this to listener
-	// Code below only works if our bind host is specified
-	// For now let SIPgo create 1 UDP connection and it will reuse it
-	// via := inviteReq.Via()
-	// if via.Host == "" {
-	// }
 	err := d.sess.Invite(ctx, func(c *Client, req *Request) error {
 		// Do nothing
 		return nil
@@ -427,8 +420,7 @@ func (d *OutboundCall) invite(ctx context.Context, med *Media, params *signalPar
 }
 
 // answerOptionsFromParams extracts the sipgo-level answer options from parsed
-// signalParams. It is the bridge between diago's SignalOption surface and the
-// sipgo OutboundCall API.
+// signalParams. It adapts the parsed parameters to the sipgo OutboundCall API.
 func answerOptionsFromParams(params *signalParams) sipgo.AnswerOptions {
 	if params == nil {
 		return sipgo.AnswerOptions{}
@@ -551,9 +543,6 @@ func (d *OutboundCall) applyRemoteSDP(med *Media, remoteSDP []byte) error {
 	rtpSess := media.NewRTPSession(sess)
 	med.mu.Lock()
 	err := med.initRTPSessionUnsafe(sess, rtpSess)
-	// d.onCloseUnsafe(func() error {
-	// 	return rtpSess.Close()
-	// })
 	med.mu.Unlock()
 	if err != nil {
 		return errors.Join(err, rtpSess.Close())

@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: Copyright (c) 2024, Emir Aganovic
+
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -10,11 +14,11 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/audio"
 	"github.com/sjlit/diago/v2/examples"
 	"github.com/sjlit/diago/v2/media"
+	"github.com/sjlit/diago/v2/testdata"
 )
 
 func main() {
@@ -23,13 +27,16 @@ func main() {
 	defer cancel()
 	examples.SetupLogger()
 
-	ua, _ := sipgo.NewUA()
 	dg, err := diago.New(diago.Config{
-		UserAgent: ua,
 		MediaProfiles: map[string]diago.MediaConfig{
 			"dtls": {
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},
-				SRTP:   diago.SRTPConfig{Mode: diago.SecureRTPDTLS}, // USE DTLS
+				SRTP: diago.SRTPConfig{
+					Mode: diago.SecureRTPDTLS,
+					DTLS: media.DTLSConfig{
+						Certificates: []tls.Certificate{testdata.ClientCertificate()},
+					},
+				},
 			},
 		},
 		Transports: []diago.Transport{{
@@ -49,7 +56,6 @@ func main() {
 		panic(err)
 	}
 	defer d.Close(context.Background())
-	defer d.Close(d.Context())
 
 	ulaw := make([]byte, 160)
 

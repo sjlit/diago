@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: Copyright (c) 2024, Emir Aganovic
+
 package main
 
 import (
@@ -7,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 	"github.com/sjlit/diago/v2/media"
@@ -20,11 +22,7 @@ func main() {
 	defer cancel()
 	examples.SetupLogger()
 
-	ua, _ := sipgo.NewUA()
-	defer ua.Close()
-
 	dg, err := diago.New(diago.Config{
-		UserAgent: ua,
 		MediaProfiles: map[string]diago.MediaConfig{
 			"dtls": {
 				Codecs: []media.Codec{media.CodecAudioUlaw, media.CodecAudioAlaw},

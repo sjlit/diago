@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 	"github.com/sjlit/diago/v2/testdata"
@@ -32,9 +31,7 @@ func main() {
 
 func start(ctx context.Context) error {
 	// Setup our main transaction user
-	ua, _ := sipgo.NewUA()
 	tu, err := diago.New(diago.Config{
-		UserAgent:  ua,
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
 	if err != nil {
@@ -58,13 +55,18 @@ func Playback(ctx context.Context, inDialog *diago.InboundCall) error {
 		return err
 	} // Answer -> 200 Response
 
-	playfile, _ := testdata.OpenFile("demo-echodone.wav")
+	playfile, err := testdata.OpenFile("demo-echodone.wav")
+	if err != nil {
+		return err
+	}
+	defer playfile.Close()
 	slog.Info("Playing a file", "file", "demo-echodone.wav")
 
 	pb, err := inDialog.NewPlayback()
 	if err != nil {
 		return err
 	}
+	defer pb.Close()
 	_, err = pb.PlayContext(ctx, playfile, "audio/wav")
 	if err != nil {
 		return err

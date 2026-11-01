@@ -248,7 +248,7 @@ func TestIntegrationHandlerErrorAfterAnswerSendsByeReason(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	require.NoError(t, dgCli.ServeBackground(ctx, nil))
+	require.NoError(t, serveBackground(dgCli, ctx, nil))
 
 	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	require.NoError(t, dgSrv.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	require.NoError(t, serveBackground(dgSrv, ctx, func(ctx context.Context, d *InboundCall) error {
 		if err := d.Answer(ctx); err != nil {
 			return err
 		}
@@ -334,7 +334,7 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	require.NoError(t, dgCli.ServeBackground(ctx, nil))
+	require.NoError(t, serveBackground(dgCli, ctx, nil))
 
 	dlg, err := dgCli.DialURI(ctx, sip.Uri{User: "alice", Host: "127.0.0.1", Port: srvPort})
 	require.NoError(t, err)
@@ -359,7 +359,7 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 	select {
 	case <-dlg.Context().Done():
 	case <-time.After(5 * time.Second):
-		t.Fatal("client dialog did not end after Hangup")
+		t.Fatal("client dialog did not end after Close")
 	}
 	require.Eventually(t, func() bool { return serverBye.Load() == 1 }, 5*time.Second, 10*time.Millisecond,
 		"server must receive the client's BYE")
@@ -375,7 +375,7 @@ func TestIntegrationHandlerAnswerReturnKeepsCallAlive(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond, "server dialog must be evicted when the call ends")
 }
 
-func TestHangupCloseClient(t *testing.T) {
+func TestCloseClientSendsBYE(t *testing.T) {
 	var byeCount atomic.Int32
 	dg := testDiagoClient(t, func(req *sip.Request) *sip.Response {
 		if req.Method == sip.BYE {
@@ -392,7 +392,7 @@ func TestHangupCloseClient(t *testing.T) {
 	require.Equal(t, 1, cacheCountClientDialogs(dg))
 
 	require.NoError(t, d.Close(ctx))
-	assert.EqualValues(t, 1, byeCount.Load(), "Hangup must send BYE")
+	assert.EqualValues(t, 1, byeCount.Load(), "Close must send BYE")
 	require.NoError(t, d.release())
 	assert.Equal(t, 0, cacheCountClientDialogs(dg), "Close must evict the dialog")
 

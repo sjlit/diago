@@ -1,6 +1,6 @@
 Run playback as server
 ```bash
-go run ./examples/playback_control
+cd examples && go run ./playback_control
 ```
 
 Dial in and you should:

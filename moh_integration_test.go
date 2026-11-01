@@ -50,7 +50,7 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	err = uas.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	err = serveBackground(uas, ctx, func(ctx context.Context, d *InboundCall) error {
 		if err := d.Answer(ctx); err != nil {
 			handlerErr <- err
 			return err
@@ -66,9 +66,9 @@ func TestIntegrationMusicOnHoldServerHold(t *testing.T) {
 	defer ua2.Close()
 	caller := newDialer(t, ua2)
 	// The UAC needs a SIP server registered so it can answer re-INVITEs from
-	// the UAS after our Hold. ServeBackground with an empty handler is the
+	// the UAS after our Hold. Start with an empty handler is the
 	// minimal hook.
-	require.NoError(t, caller.ServeBackground(ctx, func(ctx context.Context, _ *InboundCall) error {
+	require.NoError(t, serveBackground(caller, ctx, func(ctx context.Context, _ *InboundCall) error {
 		return nil
 	}))
 
@@ -129,7 +129,7 @@ func TestIntegrationMusicOnHoldRemoteHoldIsDetected(t *testing.T) {
 		withTransport(Transport{Network: "udp", BindHost: "127.0.0.1", BindPort: 0}),
 	)
 	require.NoError(t, err)
-	err = uas.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	err = serveBackground(uas, ctx, func(ctx context.Context, d *InboundCall) error {
 		heldCb := func(dm *Media) {
 			// Negotiated recvonly means the remote put us on hold.
 			if dm.IsRemoteHeld() {

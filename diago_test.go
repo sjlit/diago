@@ -18,7 +18,6 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sjlit/diago/v2/audio"
-	"github.com/sjlit/diago/v2/examples"
 	"github.com/sjlit/diago/v2/media"
 	"github.com/sjlit/diago/v2/media/sdp"
 	"github.com/sjlit/diago/v2/testdata"
@@ -51,11 +50,6 @@ func testRegisterTransaction(dg *Agent, recipient URI, opts ...RegisterOptions) 
 		return nil, err
 	}
 	return dg.registerTransaction(recipient, params)
-}
-
-func TestMain(m *testing.M) {
-	examples.SetupLogger()
-	m.Run()
 }
 
 // skipShort skips tests that take multiple seconds of real (wall-clock) time,
@@ -136,8 +130,8 @@ func registerTestHeaderValue(t *testing.T, req *sip.Request, name string) string
 }
 
 // TestDiagoRegisterTransactionOptions locks the transaction-level
-// SignalOption contract: WithRegister* options shape the Origin template, the
-// transaction-level WithRequestMutator runs on every REGISTER attempt
+// register option contract: RegisterOptions shape the Origin template, the
+// transaction-level MutateRequest runs on every REGISTER attempt
 // (initial + qualify) before per-call options, and OnRegistered fires after a
 // successful initial REGISTER.
 func TestDiagoRegisterTransactionOptions(t *testing.T) {
@@ -455,7 +449,7 @@ func TestIntegrationDiagoTransportEmpheralPort(t *testing.T) {
 	dg, err := newAgent(withUserAgent(ua), withTransport(tran))
 	require.NoError(t, err)
 
-	err = dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err = serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)

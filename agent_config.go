@@ -6,8 +6,6 @@ package diago
 import (
 	"log/slog"
 	"net/http"
-
-	"github.com/sjlit/diago/v2/media"
 )
 
 // Config is the construction-time configuration of an Agent.
@@ -77,49 +75,5 @@ func DefaultTransport() Transport {
 // an unregistered media profile, or when the configuration is otherwise
 // invalid.
 func New(cfg Config) (*Agent, error) {
-	opts := make([]agentOption, 0, 8+len(cfg.Transports)+len(cfg.MediaProfiles))
-
-	if cfg.UserAgent != nil {
-		opts = append(opts, withUserAgent(cfg.UserAgent))
-	}
-	if cfg.Server != nil {
-		opts = append(opts, withServer(cfg.Server))
-	}
-	if cfg.Client != nil {
-		opts = append(opts, withClient(cfg.Client))
-	}
-	if cfg.Logger != nil {
-		opts = append(opts, withLogger(cfg.Logger))
-	}
-	if cfg.HTTPClient != nil {
-		opts = append(opts, withHTTPClient(cfg.HTTPClient))
-	}
-	if cfg.UserAgentName != "" {
-		opts = append(opts, withUserAgentName(cfg.UserAgentName))
-	}
-	if cfg.UserAgentHostname != "" {
-		opts = append(opts, withUserAgentHostname(cfg.UserAgentHostname))
-	}
-	if cfg.Middleware != nil {
-		opts = append(opts, withServerRequestMiddleware(cfg.Middleware))
-	}
-
-	mediaConf := cfg.Media
-	if len(mediaConf.Codecs) == 0 {
-		mediaConf.Codecs = []media.Codec{
-			media.CodecAudioUlaw,
-			media.CodecAudioAlaw,
-			media.CodecTelephoneEvent8000,
-		}
-	}
-	opts = append(opts, withMediaConfig(mediaConf))
-
-	for name, conf := range cfg.MediaProfiles {
-		opts = append(opts, withMediaProfile(name, conf))
-	}
-	for _, tran := range cfg.Transports {
-		opts = append(opts, withTransport(tran))
-	}
-
-	return newAgent(opts...)
+	return newAgentFromConfig(cfg)
 }

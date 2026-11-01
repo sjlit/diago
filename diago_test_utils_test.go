@@ -5,8 +5,10 @@ package diago
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -69,9 +71,25 @@ func (r *clientTxRequester) Request(ctx context.Context, req *sip.Request) (sip.
 	return tx, nil
 }
 
+// testSDP builds the minimal audio SDP used by signaling-only tests. The
+// formats are static payload types (0/8), so no rtpmap is needed.
+func testSDP(port int, mode string, formats ...string) []byte {
+	return []byte(fmt.Sprintf(
+		"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP %s\r\na=ptime:20\r\na=maxptime:20\r\na=%s\r\n",
+		port, strings.Join(formats, " "), mode,
+	))
+}
+
+// serveBackground is the test-side wrapper around Agent.Start. It keeps the
+// pre-Start test call sites readable while production code uses Start directly.
+func serveBackground(dg *Agent, ctx context.Context, h CallHandler) error {
+	_, err := dg.Start(ctx, h)
+	return err
+}
+
 // agentPort returns the port the agent's first transport actually bound.
-// ServeBackground only returns once every listener is ready, so the resolved
-// port can be read immediately afterwards; no polling is needed.
+// Start only returns once every listener is ready, so the resolved port can be
+// read immediately afterwards; no polling is needed.
 func agentPort(t *testing.T, dg *Agent) int {
 	t.Helper()
 	port := dg.transports[0].BindPort
@@ -85,7 +103,7 @@ func agentPort(t *testing.T, dg *Agent) int {
 // test binaries run on the same host (ex. go test ./... in two shells), which
 // surfaces as "bind: address already in use".
 //
-// The port is known only after ServeBackground returns, so a serve handler
+// The port is known only after Start returns, so a serve handler
 // that needs it (ex. to build a routable Contact) must read it through an
 // atomic: the test goroutine writes the value while handler goroutines run
 // concurrently, which the race detector flags without that edge (see
@@ -94,7 +112,7 @@ func servingAgent(t *testing.T, ctx context.Context, h CallHandler, opts ...agen
 	t.Helper()
 	dg, err := newAgent(opts...)
 	require.NoError(t, err)
-	require.NoError(t, dg.ServeBackground(ctx, h))
+	require.NoError(t, serveBackground(dg, ctx, h))
 	return dg, agentPort(t, dg)
 }
 
@@ -124,13 +142,4 @@ func canBindUDPAddr(addr *net.UDPAddr) bool {
 		return false
 	}
 	return conn.Close() == nil
-}
-
-// ServeBackground is a test-only shim for the tests that predate
-// Agent.Start. Production code uses Start and observes the returned
-// ServerHandle; keeping the shim here avoids rewriting the whole suite while
-// the public API is being reshaped.
-func (dg *Agent) ServeBackground(ctx context.Context, h CallHandler) error {
-	_, err := dg.Start(ctx, h)
-	return err
 }

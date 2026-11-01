@@ -128,5 +128,5 @@ Conventions used by the public API. New code (and reviews) should follow them;
   concurrency) in the comment next to the method. CI enforces this with
   `revive`'s `exported` rule on the root package.
 - Run `scripts/apidiff.sh <git-ref>` before opening a PR: it prints the public
-  API diff against the ref. CI runs it against the PR base commit
-  (informational until the API is frozen).
+  API diff against the ref. CI runs `scripts/api-check.sh` against the frozen
+  `api/v2.api` baseline and fails on any difference.

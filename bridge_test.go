@@ -118,7 +118,7 @@ func TestIntegrationBridging(t *testing.T) {
 	))
 	require.NoError(t, err)
 
-	err = tu.ServeBackground(ctx, func(ctx context.Context, in *InboundCall) error {
+	err = serveBackground(tu, ctx, func(ctx context.Context, in *InboundCall) error {
 		in.Trying(ctx)
 		in.Ringing(ctx)
 		in.Answer(ctx)
@@ -175,7 +175,7 @@ func TestIntegrationBridging(t *testing.T) {
 
 		// The handler runs on the request goroutine: keep its error off the
 		// test goroutine's variables (sharing err here was a data race).
-		serveErr := dg.ServeBackground(context.Background(), func(_ context.Context, d *InboundCall) error {
+		serveErr := serveBackground(dg, context.Background(), func(_ context.Context, d *InboundCall) error {
 			ctx := d.Context()
 			if err := d.Answer(ctx); err != nil {
 				return err
@@ -254,7 +254,7 @@ func TestIntegrationBridgingMix(t *testing.T) {
 	var bridgePtr atomic.Pointer[BridgeMix]
 	bridgePtr.Store(NewBridgeMix())
 	dialogExit := make(chan string, 10)
-	err = tu.ServeBackground(ctx, func(ctx context.Context, in *InboundCall) error {
+	err = serveBackground(tu, ctx, func(ctx context.Context, in *InboundCall) error {
 		defer func() { dialogExit <- in.ID() }()
 
 		in.Trying(ctx)

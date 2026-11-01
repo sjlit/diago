@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/emiago/sipgo"
 	"github.com/sjlit/diago/v2"
 	"github.com/sjlit/diago/v2/examples"
 )
@@ -42,9 +41,7 @@ func main() {
 
 func start(ctx context.Context, recipientUri string) error {
 	// Setup our main transaction user
-	ua, _ := sipgo.NewUA()
 	d, err := diago.New(diago.Config{
-		UserAgent:  ua,
 		Transports: []diago.Transport{diago.DefaultTransport()},
 	})
 	if err != nil {
@@ -52,8 +49,7 @@ func start(ctx context.Context, recipientUri string) error {
 	}
 
 	return d.Serve(ctx, func(ctx context.Context, inDialog *diago.InboundCall) error {
-		BridgeCall(ctx, d, inDialog, recipientUri)
-		return nil
+		return BridgeCall(ctx, d, inDialog, recipientUri)
 	})
 }
 
@@ -78,11 +74,9 @@ func BridgeCall(ctx context.Context, d *diago.Agent, inDialog *diago.InboundCall
 	if err != nil {
 		return err
 	}
-	defer outDialog.Close(context.Background())
+	defer inDialog.Close(context.Background())
 	outCtx := outDialog.Context()
-
-	defer inDialog.Close(inCtx)
-	defer outDialog.Close(outCtx)
+	defer outDialog.Close(context.Background())
 
 	// You can even easily detect who hangups
 	select {

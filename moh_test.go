@@ -5,7 +5,6 @@ package diago
 
 import (
 	"context"
-	"net"
 	"testing"
 	"time"
 
@@ -147,11 +146,10 @@ func TestMusicOnHoldWaitsWritePause(t *testing.T) {
 // answer) never trips it.
 func TestRemoteHeldTracksInboundSDP(t *testing.T) {
 	d := newTestMedia(t)
-	ip := net.ParseIP("127.0.0.1")
 	require.False(t, d.IsRemoteHeld())
 
 	// Peer offers sendonly: we are held.
-	offer := sdp.GenerateForAudio(ip, ip, 41001, sdp.ModeSendonly, []string{sdp.FormatTypeULaw}, "")
+	offer := testSDP(41001, sdp.ModeSendonly, sdp.FormatTypeULaw)
 	d.mu.Lock()
 	err := d.sdpUpdateUnsafe(offer)
 	d.mu.Unlock()
@@ -160,7 +158,7 @@ func TestRemoteHeldTracksInboundSDP(t *testing.T) {
 	assert.Equal(t, sdp.ModeRecvonly, d.currentMediaSession().NegotiatedDirection())
 
 	// Peer offers sendrecv again: unheld.
-	offer = sdp.GenerateForAudio(ip, ip, 41001, sdp.ModeSendrecv, []string{sdp.FormatTypeULaw}, "")
+	offer = testSDP(41001, sdp.ModeSendrecv, sdp.FormatTypeULaw)
 	d.mu.Lock()
 	err = d.sdpUpdateUnsafe(offer)
 	d.mu.Unlock()
@@ -171,7 +169,7 @@ func TestRemoteHeldTracksInboundSDP(t *testing.T) {
 	// (the standard hold answer) — negotiated sendonly, flag untouched.
 	msess := d.currentMediaSession().Fork()
 	msess.Mode = sdp.ModeSendonly
-	answer := sdp.GenerateForAudio(ip, ip, 41001, sdp.ModeRecvonly, []string{sdp.FormatTypeULaw}, "")
+	answer := testSDP(41001, sdp.ModeRecvonly, sdp.FormatTypeULaw)
 	require.NoError(t, msess.RemoteSDP(answer))
 	d.mu.Lock()
 	err = d.mediaUpdateUnsafe(msess)

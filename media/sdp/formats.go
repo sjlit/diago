@@ -3,57 +3,9 @@
 
 package sdp
 
-import (
-	"strconv"
-	"strings"
-)
-
 const (
 	FormatTypeULaw           = "0"
 	FormatTypeALaw           = "8"
 	FormatTypeOpus           = "96"
 	FormatTypeTelephoneEvent = "101"
 )
-
-type Formats []string
-
-func NewFormats(fmts ...string) Formats {
-	return Formats(fmts)
-}
-
-//	If the <proto> sub-field is "RTP/AVP" or "RTP/SAVP" the <fmt>//
-//
-// sub-fields contain RTP payload type numbers.
-func (fmts Formats) ToNumeric() (nfmts []int, err error) {
-	nfmt := make([]int, len(fmts))
-	for i, f := range fmts {
-		nfmt[i], err = strconv.Atoi(f)
-		if err != nil {
-			return
-		}
-	}
-	return nfmt, nil
-}
-
-func (fmts Formats) String() string {
-	out := make([]string, len(fmts))
-	for i, v := range fmts {
-		switch v {
-		case FormatTypeULaw:
-			out[i] = "0(ulaw)"
-		case FormatTypeALaw:
-			out[i] = "8(alaw)"
-		case FormatTypeOpus:
-			out[i] = "96(opus)"
-		default:
-			// Unknown then just use as number
-			out[i] = v
-		}
-	}
-	return strings.Join(out, ",")
-}
-
-func FormatNumeric(f string) (uint8, error) {
-	num, err := strconv.Atoi(f)
-	return uint8(num), err
-}

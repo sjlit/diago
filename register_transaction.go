@@ -85,7 +85,7 @@ type registerTransaction struct {
 	register signalRegisterParams
 	username string
 	password string
-	// mutateRequest is the transaction-level WithRequestMutator hook. It runs
+	// mutateRequest is the transaction-level MutateRequest hook. It runs
 	// on every request cloned from Origin, before per-call options.
 	mutateRequest func(*Request) error
 	Origin        *Request
@@ -115,7 +115,6 @@ func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader
 	}
 	reg := params.Register
 	expiry, allowHDRS := reg.Expiry, reg.AllowHeaders
-	// log := p.getLoggerCtx(ctx, "Register")
 	req := sip.NewRequest(sip.REGISTER, recipient)
 	if params.Msg.Contact != nil {
 		// Per registration Contact override
@@ -161,7 +160,7 @@ func newRegisterTransaction(client *Client, recipient URI, contact ContactHeader
 }
 
 // cloneOrigin clones the transaction request template, applying the
-// transaction-level WithRequestMutator hook so it shapes every REGISTER of
+// transaction-level MutateRequest hook so it shapes every REGISTER of
 // this transaction. Per-call options are applied afterwards and keep the last
 // word.
 func (t *registerTransaction) cloneOrigin() (*Request, error) {
@@ -195,7 +194,7 @@ func (t *registerTransaction) Register(ctx context.Context, opts ...RegisterAtte
 }
 
 // signalCredentials overlays credentials passed via RegisterAttemptOptions on top
-// of the transaction ones. Empty SignalOption fields fall back to the
+// of the transaction ones. Empty override fields fall back to the
 // transaction values.
 func (t *registerTransaction) signalCredentials(params *signalParams) (string, string) {
 	username, password := t.username, t.password
@@ -444,7 +443,6 @@ func (t *registerTransaction) Qualify(ctx context.Context, opts ...RegisterAttem
 }
 
 func (t *registerTransaction) doRequest(ctx context.Context, req *Request, params *signalParams) error {
-	// log := p.getLoggerCtx(ctx, "Register")
 	client := t.client
 	username, password := t.signalCredentials(params)
 	// Send request and parse response

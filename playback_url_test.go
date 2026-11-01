@@ -48,7 +48,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	var handled atomic.Bool
-	err = tu.ServeBackground(ctx, func(ctx context.Context, in *InboundCall) error {
+	err = serveBackground(tu, ctx, func(ctx context.Context, in *InboundCall) error {
 		// Stray retransmissions from other tests used to reach this fixed
 		// port; only the first dialog is the one under test.
 		if !handled.CompareAndSwap(false, true) {
@@ -82,7 +82,7 @@ func TestIntegrationPlaybackURL(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		// Just to have handled BYE
-		err = phone.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+		err = serveBackground(phone, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 		require.NoError(t, err)

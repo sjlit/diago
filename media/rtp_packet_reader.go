@@ -173,18 +173,12 @@ func (r *RTPPacketReader) Read(b []byte) (int, error) {
 		return 0, nil
 	}
 
-	// payloadSize := rtpN - pkt.Header.MarshalSize() - int(pkt.PaddingSize)
 	payloadSize := len(pkt.Payload)
 
 	// Keeping this for double check
 	if calcPayloadSize := rtpN - pkt.Header.MarshalSize() - int(pkt.PaddingSize); calcPayloadSize != payloadSize {
 		return 0, fmt.Errorf("payload size calc does not match. calc=%d payload=%d header=%+v", calcPayloadSize, payloadSize, pkt.Header)
 	}
-	// payloadSize := len(pkt.Payload)
-	// In case of DTMF we can receive different payload types
-	// if pt != pkt.PayloadType {
-	// 	return 0, fmt.Errorf("payload type does not match. expected=%d, actual=%d", pt, pkt.PayloadType)
-	// }
 	if payloadSize <= 0 {
 		r.log.Debug("Invalid payload size", "rtpN", rtpN, "headerSize", pkt.Header.MarshalSize(), "padding", pkt.PaddingSize)
 		return 0, nil

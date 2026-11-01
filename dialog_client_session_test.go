@@ -59,7 +59,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 	dg, err := newAgent(withUserAgent(ua), withDefaultTransport())
 	require.NoError(t, err)
 
-	err = dg.ServeBackground(ctx, func(ctx context.Context, d *InboundCall) error {
+	err = serveBackground(dg, ctx, func(ctx context.Context, d *InboundCall) error {
 		// Add some routing
 		if d.ToUser() == "alice" {
 			d.Trying(ctx)
@@ -105,13 +105,13 @@ func TestIntegrationDialogClient(t *testing.T) {
 
 		phone := newDialer(t, ua)
 		// listening but stil with empheral port
-		err := phone.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+		err := serveBackground(phone, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 		require.NoError(t, err)
 
 		// Transport registration completes asynchronously after
-		// ServeBackground returns
+		// Start returns
 		require.Eventually(t, func() bool {
 			ports := phone.server.TransportLayer().ListenPorts("udp")
 			return len(ports) == 1
@@ -129,7 +129,7 @@ func TestIntegrationDialogClient(t *testing.T) {
 
 		phone := newDialer(t, ua)
 		// Start listener in order to reuse UDP listener
-		err := phone.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+		err := serveBackground(phone, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 		require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 	))
 	require.NoError(t, err)
 
-	dg.ServeBackground(ctx, func(_ context.Context, d *InboundCall) error {
+	serveBackground(dg, ctx, func(_ context.Context, d *InboundCall) error {
 		ctx := d.Context()
 		d.Trying(ctx)
 		d.Ringing(ctx)
@@ -194,7 +194,7 @@ func TestIntegrationDialogClientCancel(t *testing.T) {
 		defer ua.Close()
 
 		dg := newDialer(t, ua)
-		dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+		serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 			return nil
 		})
 
@@ -272,7 +272,7 @@ func TestIntegrationDialogClientEarlyMedia(t *testing.T) {
 	defer ua.Close()
 
 	dg := newDialer(t, ua)
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err := serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -332,7 +332,7 @@ func TestIntegrationDialogClientReinvite(t *testing.T) {
 	defer ua.Close()
 
 	dg := newDialer(t, ua)
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err := serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -391,7 +391,7 @@ func TestIntegrationDialogClientReinviteSingleAck(t *testing.T) {
 	defer ua.Close()
 
 	dg := newDialer(t, ua)
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err := serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -459,7 +459,7 @@ func TestIntegrationDialogClientReinviteKeepAlive(t *testing.T) {
 	defer ua.Close()
 
 	dg := newDialer(t, ua)
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err := serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -558,7 +558,7 @@ func TestIntegrationDialogClientReinviteMedia(t *testing.T) {
 	// Client must serve: without a bound listener the server re-INVITE
 	// (media fork to 127.0.0.2:39999) can never be answered and the SIP
 	// transaction FSM deadlocks.
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err := serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -673,7 +673,7 @@ func TestIntegrationDialogClientBadMediaNegotiation(t *testing.T) {
 	})
 
 	dg := newDialer(t, ua)
-	err := dg.ServeBackground(context.TODO(), func(ctx context.Context, d *InboundCall) error {
+	err := serveBackground(dg, context.TODO(), func(ctx context.Context, d *InboundCall) error {
 		return nil
 	})
 	require.NoError(t, err)

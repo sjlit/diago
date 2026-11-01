@@ -36,6 +36,27 @@ jobs:
       - name: Test (race)
         run: go test -race -count=1 -timeout 15m ./...
 
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/go.sum
+
+      - name: Vet
+        run: go vet ./...
+        working-directory: examples
+
+      - name: Build and test
+        run: go test ./...
+        working-directory: examples
+
   api-baseline:
     name: API baseline
     runs-on: ubuntu-latest

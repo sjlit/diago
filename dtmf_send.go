@@ -82,8 +82,8 @@ func WithDTMFEventDuration(d time.Duration) DTMFSendOption {
 
 // WithDTMFVolume sets the RFC 4733 signal volume, 0-63 relative dBov
 // (default 10 when the option is not given; 0 is the loudest). Ignored by the
-// inband method (tone level is fixed by the audio engine; use PlayTone with
-// WithToneVolume for custom levels).
+// inband method (tone level is fixed by the audio engine; use
+// audio.Tone.WithVolume for custom PlayTone levels).
 func WithDTMFVolume(v uint8) DTMFSendOption {
 	return func(c *dtmfSendConfig) error {
 		if v > 63 {

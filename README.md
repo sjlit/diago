@@ -80,7 +80,9 @@ if err := call.Close(ctx); err != nil {
 ```
 
 See [`examples/`](examples) for runnable programs (playback, recording, DTMF,
-bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...).
+bridge, bridge mix, MoH, TLS/DTLS, REGISTER, ...). The examples are a separate
+Go module; run them from the `examples` directory (for example
+`cd examples && go run ./playback`).
 
 ## Key concepts
 
